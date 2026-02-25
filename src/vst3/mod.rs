@@ -1,4 +1,6 @@
 pub mod cache;
+#[cfg(target_os = "macos")]
+pub mod cf_bundle;
 pub mod com;
 pub mod component_handler;
 pub mod event_list;

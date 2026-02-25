@@ -244,8 +244,7 @@ impl Vst3Instance {
                 sample_rate,
             };
 
-            let result =
-                (proc_vtbl.setup_processing)(self.processor as *mut c_void, &mut setup);
+            let result = (proc_vtbl.setup_processing)(self.processor as *mut c_void, &mut setup);
 
             if result != K_RESULT_OK {
                 return Err(Vst3Error::Factory(format!(

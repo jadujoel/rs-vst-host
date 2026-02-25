@@ -11,6 +11,10 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
+#[cfg(target_os = "macos")]
+use crate::vst3::cf_bundle;
+
+
 use super::scanner;
 
 // ─── COM vtable definitions for VST3 IPluginFactory ───────────────────────
@@ -104,16 +108,45 @@ const IPLUGIN_FACTORY2_IID: [u8; 16] = [
     0xBB,
 ];
 
+/// IPluginFactory3 IID: {4555A2AB-C123-4E57-9B12-291036878931}
+#[cfg(not(target_os = "windows"))]
+const IPLUGIN_FACTORY3_IID: [u8; 16] = [
+    0x45, 0x55, 0xA2, 0xAB, 0xC1, 0x23, 0x4E, 0x57, 0x9B, 0x12, 0x29, 0x10, 0x36, 0x87, 0x89,
+    0x31,
+];
+
+/// IPluginFactory3 IID in COM-compatible byte order (Windows).
+#[cfg(target_os = "windows")]
+const IPLUGIN_FACTORY3_IID: [u8; 16] = [
+    0xAB, 0xA2, 0x55, 0x45, 0x57, 0x4E, 0x23, 0xC1, 0x9B, 0x12, 0x29, 0x10, 0x36, 0x87, 0x89,
+    0x31,
+];
+
+/// IPluginFactory3 vtable (extends IPluginFactory2).
+#[repr(C)]
+struct IPluginFactory3Vtbl {
+    base: IPluginFactory2Vtbl,
+    /// setHostContext(context: FUnknown*) -> tresult
+    set_host_context:
+        unsafe extern "system" fn(this: *mut c_void, context: *mut c_void) -> i32,
+}
+
 // ─── Vst3Module ───────────────────────────────────────────────────────────
 
 /// A loaded VST3 module with access to its plugin factory.
 pub struct Vst3Module {
     /// Keep the dynamic library alive as long as the module is in use.
+    /// Must be dropped AFTER factory release and bundleExit.
     _library: Library,
     /// Raw COM pointer to IPluginFactory.
     factory: *mut ComObj<IPluginFactoryVtbl>,
     /// Path to the .vst3 bundle.
     bundle_path: PathBuf,
+    /// Host context for factory (IPluginFactory3::setHostContext).
+    host_context: *mut crate::vst3::host_context::HostApplication,
+    /// CFBundleRef handle (macOS only). Passed to bundleEntry, released on drop.
+    #[cfg(target_os = "macos")]
+    cf_bundle_ref: *mut c_void,
 }
 
 // Safety: COM pointers are only accessed from the loading thread.
@@ -135,7 +168,7 @@ impl Vst3Module {
 
         // Platform-specific module entry
         #[cfg(target_os = "macos")]
-        call_bundle_entry(&library);
+        let cf_bundle_ref = call_bundle_entry(&library, bundle_path);
 
         #[cfg(target_os = "linux")]
         call_module_entry(&library);
@@ -153,10 +186,29 @@ impl Vst3Module {
             raw as *mut ComObj<IPluginFactoryVtbl>
         };
 
+        // If the factory supports IPluginFactory3, call setHostContext
+        // so the plugin can access host services during createInstance.
+        let host_context = crate::vst3::host_context::HostApplication::new();
+        let factory3 = Self::query_factory3_raw(factory);
+        if let Some(f3) = factory3 {
+            unsafe {
+                let f3_vtbl = &*(*f3).vtbl;
+                let result = (f3_vtbl.set_host_context)(
+                    f3 as *mut c_void,
+                    crate::vst3::host_context::HostApplication::as_unknown(host_context),
+                );
+                debug!(result, "IPluginFactory3::setHostContext");
+                (f3_vtbl.base.base.base.release)(f3 as *mut c_void);
+            }
+        }
+
         Ok(Self {
             _library: library,
             factory,
             bundle_path: bundle_path.to_path_buf(),
+            #[cfg(target_os = "macos")]
+            cf_bundle_ref,
+            host_context,
         })
     }
 
@@ -255,6 +307,25 @@ impl Vst3Module {
         }
     }
 
+    /// Attempt to QueryInterface for IPluginFactory3 (host context support).
+    fn query_factory3_raw(factory: *mut ComObj<IPluginFactoryVtbl>) -> Option<*mut ComObj<IPluginFactory3Vtbl>> {
+        let this = factory as *mut c_void;
+        let vtbl = unsafe { &*(*factory).vtbl };
+        let mut obj: *mut c_void = std::ptr::null_mut();
+
+        let result = unsafe {
+            (vtbl.base.query_interface)(this, IPLUGIN_FACTORY3_IID.as_ptr(), &mut obj)
+        };
+
+        if result == K_RESULT_OK && !obj.is_null() {
+            debug!("Factory supports IPluginFactory3");
+            Some(obj as *mut ComObj<IPluginFactory3Vtbl>)
+        } else {
+            debug!("Factory does not support IPluginFactory3");
+            None
+        }
+    }
+
     /// Create a VST3 plugin instance from a class ID.
     ///
     /// Instantiates IComponent from the factory and sets up IAudioProcessor.
@@ -283,20 +354,51 @@ impl Drop for Vst3Module {
         unsafe {
             (vtbl.base.release)(self.factory as *mut c_void);
         }
+
+        // Destroy host context
+        unsafe {
+            crate::vst3::host_context::HostApplication::destroy(self.host_context);
+        }
+
+        // Platform-specific module exit (must happen before library unload)
+        #[cfg(target_os = "macos")]
+        {
+            call_bundle_exit(&self._library, self.cf_bundle_ref);
+            cf_bundle::release(self.cf_bundle_ref);
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn call_bundle_entry(library: &Library) {
+fn call_bundle_entry(library: &Library, bundle_path: &Path) -> *mut c_void {
+    let bundle_ref = cf_bundle::create(bundle_path);
+    if bundle_ref.is_null() {
+        warn!(path = %bundle_path.display(), "Failed to create CFBundleRef, falling back to null");
+    }
+
     unsafe {
         if let Ok(entry) =
             library.get::<unsafe extern "C" fn(*mut c_void) -> bool>(b"bundleEntry\0")
         {
-            // TODO: Pass a proper CFBundleRef for full compatibility.
-            // Many plugins accept a null bundle ref for basic scanning.
-            let ok = entry(std::ptr::null_mut());
+            let ok = entry(bundle_ref);
             if !ok {
                 warn!("bundleEntry returned false");
+            }
+        }
+    }
+
+    bundle_ref
+}
+
+#[cfg(target_os = "macos")]
+fn call_bundle_exit(library: &Library, bundle_ref: *mut c_void) {
+    unsafe {
+        if let Ok(exit) =
+            library.get::<unsafe extern "C" fn(*mut c_void) -> bool>(b"bundleExit\0")
+        {
+            let ok = exit(bundle_ref);
+            if !ok {
+                warn!("bundleExit returned false");
             }
         }
     }
