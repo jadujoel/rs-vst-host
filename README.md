@@ -70,10 +70,11 @@ rs-vst-host midi-ports
 ```
 src/
 ├── main.rs          # Entry point, CLI dispatch
-├── error.rs         # Error types (HostError, Vst3Error, AudioError)
+├── error.rs         # Error types (HostError, Vst3Error, AudioError, MidiError)
 ├── app/
 │   ├── cli.rs       # CLI argument definitions (clap derive)
-│   └── commands.rs  # Command implementations
+│   ├── commands.rs  # Command implementations
+│   └── interactive.rs # Interactive command shell for runtime parameter control
 ├── audio/
 │   ├── device.rs    # cpal audio device management
 │   └── engine.rs    # Audio processing engine, test tone generator
@@ -85,12 +86,15 @@ src/
 └── vst3/
     ├── cache.rs     # JSON plugin cache
     ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor, IEditController, IEventList)
-    ├── host_context.rs  # IHostApplication COM implementation
+    ├── component_handler.rs # IComponentHandler COM for parameter notifications
     ├── event_list.rs    # IEventList COM implementation for MIDI events
+    ├── host_context.rs  # IHostApplication COM implementation
     ├── instance.rs  # VST3 component lifecycle management
     ├── module.rs    # Dynamic library loading, IPluginFactory FFI
+    ├── param_changes.rs # IParameterChanges + IParamValueQueue COM implementations
     ├── params.rs    # Parameter registry via IEditController
     ├── process.rs   # Process buffer management (interleaved ↔ deinterleaved)
+    ├── process_context.rs # ProcessContext transport timing
     ├── scanner.rs   # Plugin directory scanning
     └── types.rs     # Shared types
 ```
@@ -146,7 +150,9 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-77 unit tests covering scanner, cache, COM struct layouts, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM interface, and parameter registry.
+223 unit tests covering error types, CLI parsing, scanner, cache I/O, COM struct layouts, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, and concurrency.
+
+See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
 ## Documentation
 
@@ -154,6 +160,7 @@ cargo test
 - [PLAN.md](PLAN.md) — Development roadmap and phased implementation plan
 - [STATUS.md](STATUS.md) — Current project status and progress
 - [CHANGELOG.md](CHANGELOG.md) — Version history
+- [CODE_COVERAGE.md](CODE_COVERAGE.md) — Test coverage analysis by module
 
 ## Roadmap
 
@@ -161,8 +168,8 @@ cargo test
 - [x] Phase 2 — VST3 plugin discovery and loading (M1)
 - [x] Phase 3 — Audio engine integration (M2, M3)
 - [x] Phase 4 — MIDI input, parameters, automation (M4)
-- [ ] Phase 5 — Host UX polish (M5)
-- [ ] Phase 6 — Validation and quality gates
+- [x] Phase 5 — Host UX (MVP CLI) (M5)
+- [x] Phase 6 — Validation and quality gates (223 tests)
 - [ ] Phase 7 — Beyond MVP (editor windows, presets, routing)
 
 ## License

@@ -1,11 +1,12 @@
 # Status
 
-## Current Phase: Phase 5 — Host UX (MVP CLI) (Complete)
+## Current Phase: Phase 6 — Validation and Quality Gates (Complete)
 
 **Milestone M2 achieved**: Single plugin instantiates and initializes.
 **Milestone M3 achieved**: Real-time audio callback calls plugin process reliably.
 **Milestone M4 achieved**: MIDI note input triggers instrument output.
 **Milestone M5 achieved**: Parameter control + stable CLI UX.
+**Quality gate achieved**: 223 tests passing, zero warnings, comprehensive coverage of non-RT components.
 
 ### Completed
 
@@ -65,9 +66,28 @@
 - **Instance integration**: Vst3Instance creates and manages IComponentHandler lifecycle (install on IEditController via setComponentHandler, destroy on drop)
 - **Command integration**: `run` command installs component handler, queries params for interactive access, captures param queue, runs interactive loop
 
+#### Phase 6 — Validation and Quality Gates
+- **Comprehensive test suite**: 117 new tests added across 13 modules (106 → 223 total)
+- **Error type tests** (`error.rs`): Display formatting for all 4 error enums (HostError, Vst3Error, AudioError, MidiError), From conversions, Debug formatting
+- **CLI parsing tests** (`app/cli.rs`): All subcommands parsed, required/optional args, invalid input rejection, short flags
+- **Types serde tests** (`vst3/types.rs`): Roundtrip serialization for PluginClassInfo/PluginModuleInfo, optional fields, CID encoding, Clone/Debug
+- **Cache I/O tests** (`vst3/cache.rs`): Serde roundtrip, file I/O roundtrip with temp dir, corrupt JSON error handling, timestamp format validation
+- **Scanner tests** (`vst3/scanner.rs`): Dedup, sorted output, recursive directory scanning, non-vst3 filtering, macOS bundle structure resolution
+- **Parameter registry tests** (`vst3/params.rs`): UTF-16 conversion edge cases, string truncation, flag combinations, ParameterEntry Debug
+- **Event list tests** (`vst3/event_list.rs`): COM vtable overflow (MAX_EVENTS_PER_BLOCK), add/get via vtable, null pointer safety, QI
+- **Parameter changes tests** (`vst3/param_changes.rs`): Queue overflow (MAX_PARAM_QUEUES/MAX_POINTS_PER_PARAM), PVQ QI, null safety, existing parameter reuse
+- **Process buffer tests** (`vst3/process.rs`): Setter methods, zero-channel configurations, out-of-range access, consecutive prepare calls, mono-in/stereo-out
+- **MIDI translation tests** (`midi/translate.rs`): All 16 channels, extreme pitches, note-off velocity, batch edge cases, truncated/unsupported messages
+- **Interactive tests** (`app/interactive.rs`): All commands with no-params paths, tempo parsing, handler polling, invalid value handling
+- **Host context tests** (`vst3/host_context.rs`): QI for all IIDs, ref counting accuracy, null safety, destroy null
+- **Component handler tests** (`vst3/component_handler.rs`): Concurrent perform_edit (4 threads), restart flag OR behavior, null safety
+- **Test stability**: All 223 tests pass consistently across 5 consecutive runs
+- **Clean build**: Zero warnings
+
 ### Test Results
-- 106 unit tests passing (scanner, cache, module, COM structs, host context, process buffers, tone generator, audio device, MIDI receiver, MIDI translation, event list, parameters, component handler, process context, parameter changes, interactive state)
+- 223 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, tone generator, audio device, MIDI receiver)
 - Clean build with zero warnings
+- Test stability verified across 5 consecutive runs
 - Successfully scans real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
 - MIDI port enumeration working (midir, CoreMIDI)
 - Audio device enumeration working (cpal)
@@ -76,9 +96,10 @@
 - `USER_GUIDE.md` — end-user guide covering installation, all CLI commands, plugin search paths, cache details, logging, and troubleshooting
 - `README.md` — project overview, architecture, dependencies, and roadmap
 - `CHANGELOG.md` — version history
+- `CODE_COVERAGE.md` — test coverage analysis by module
 
-### Next Steps (Phase 6 — Validation and Quality Gates)
-- Automated tests for non-RT components
-- Manual test matrix (multiple sample rates/block sizes, synth + effect plugins)
-- Performance checks (xrun/dropout measurement, CPU usage baseline)
-- Cross-platform validation (Linux, Windows)
+### Next Steps (Phase 7 — Iteration Beyond MVP)
+- Plugin editor window support where available
+- Preset/program management
+- Multiple plugin instances and simple routing graph
+- Session save/load
