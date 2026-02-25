@@ -15,11 +15,11 @@ use super::scanner;
 
 // ─── COM vtable definitions for VST3 IPluginFactory ───────────────────────
 
-const K_RESULT_OK: i32 = 0;
+pub(crate) const K_RESULT_OK: i32 = 0;
 
 /// PFactoryInfo — matches the C struct layout from the VST3 SDK.
 #[repr(C)]
-struct RawFactoryInfo {
+pub(crate) struct RawFactoryInfo {
     vendor: [u8; 64],
     url: [u8; 256],
     email: [u8; 128],
@@ -28,7 +28,7 @@ struct RawFactoryInfo {
 
 /// PClassInfo — matches the C struct layout from the VST3 SDK.
 #[repr(C)]
-struct RawClassInfo {
+pub(crate) struct RawClassInfo {
     cid: [u8; 16],
     cardinality: i32,
     category: [u8; 32],
@@ -51,23 +51,23 @@ struct RawClassInfo2 {
 
 /// IUnknown vtable (COM base interface).
 #[repr(C)]
-struct IUnknownVtbl {
-    query_interface:
+pub struct IUnknownVtbl {
+    pub query_interface:
         unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
-    add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
-    release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut c_void) -> u32,
 }
 
 /// IPluginFactory vtable (extends IUnknown).
 #[repr(C)]
-struct IPluginFactoryVtbl {
-    base: IUnknownVtbl,
-    get_factory_info:
+pub struct IPluginFactoryVtbl {
+    pub base: IUnknownVtbl,
+    pub get_factory_info:
         unsafe extern "system" fn(this: *mut c_void, info: *mut RawFactoryInfo) -> i32,
-    count_classes: unsafe extern "system" fn(this: *mut c_void) -> i32,
-    get_class_info:
+    pub count_classes: unsafe extern "system" fn(this: *mut c_void) -> i32,
+    pub get_class_info:
         unsafe extern "system" fn(this: *mut c_void, index: i32, info: *mut RawClassInfo) -> i32,
-    create_instance: unsafe extern "system" fn(
+    pub create_instance: unsafe extern "system" fn(
         this: *mut c_void,
         cid: *const u8,
         iid: *const u8,
@@ -85,8 +85,8 @@ struct IPluginFactory2Vtbl {
 
 /// COM interface pointer: pointer to vtable pointer.
 #[repr(C)]
-struct ComObj<V> {
-    vtbl: *const V,
+pub struct ComObj<V> {
+    pub vtbl: *const V,
 }
 
 /// IPluginFactory2 IID: {0007B650-F24B-4C0B-A464-EDB9F00B2ABB}
@@ -253,6 +253,26 @@ impl Vst3Module {
         } else {
             None
         }
+    }
+
+    /// Create a VST3 plugin instance from a class ID.
+    ///
+    /// Instantiates IComponent from the factory and sets up IAudioProcessor.
+    /// The returned `Vst3Instance` is ready for `setup_processing` and activation.
+    pub fn create_instance(
+        &self,
+        cid: &[u8; 16],
+        name: &str,
+    ) -> Result<crate::vst3::instance::Vst3Instance, Vst3Error> {
+        let factory = self.factory as *mut c_void;
+        let vtbl = unsafe { &*(*self.factory).vtbl };
+
+        unsafe { crate::vst3::instance::Vst3Instance::create(factory, vtbl, cid, name) }
+    }
+
+    /// Get the path to the .vst3 bundle.
+    pub fn bundle_path(&self) -> &Path {
+        &self.bundle_path
     }
 }
 

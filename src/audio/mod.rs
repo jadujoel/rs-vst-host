@@ -1,12 +1,10 @@
 //! Audio device and stream management.
 //!
-//! This module will handle:
-//! - Audio device enumeration and selection
+//! This module handles:
+//! - Audio device enumeration and selection via `cpal`
 //! - Output stream setup with configurable sample rate, block size, channels
-//! - Real-time audio callback
-//! - Stream format state
+//! - Real-time audio callback processing engine
+//! - Test tone generation for effect plugin testing
 
-// TODO: Phase 3 implementation
-// - cpal integration for cross-platform audio I/O
-// - Audio callback with lock-free event consumption
-// - Process buffer management
+pub mod device;
+pub mod engine;

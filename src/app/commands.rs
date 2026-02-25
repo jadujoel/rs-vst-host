@@ -1,5 +1,10 @@
+use crate::audio::device::{AudioConfig, AudioDevice};
+use crate::audio::engine::AudioEngine;
+use crate::vst3::com::K_SPEAKER_STEREO;
 use crate::vst3::{cache, module::Vst3Module, scanner, types::PluginModuleInfo};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 /// Scan VST3 plugin directories, load modules, and cache metadata.
@@ -118,18 +123,241 @@ pub fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load and run a plugin (placeholder for Phase 3+).
-pub fn run(plugin: &str) -> anyhow::Result<()> {
-    println!("Plugin loading and audio processing not yet implemented.");
-    println!("Requested plugin: {}", plugin);
-    info!(plugin = %plugin, "Run command invoked");
+/// List available audio output devices.
+pub fn devices() -> anyhow::Result<()> {
+    let audio = AudioDevice::new();
+    let devices = audio.list_output_devices();
 
-    // TODO: Phase 3+ implementation
-    // 1. Look up plugin in cache or load from path
-    // 2. Initialize audio device (cpal)
-    // 3. Set up VST3 processing (bus arrangement, sample rate, etc.)
-    // 4. Run real-time audio loop
-    // 5. Clean shutdown
+    if devices.is_empty() {
+        println!("No audio output devices found.");
+        return Ok(());
+    }
+
+    println!("Audio output devices:\n");
+    for (i, dev) in devices.iter().enumerate() {
+        let default_marker = if dev.is_default { " (default)" } else { "" };
+        println!("  {:>3}. {}{}", i + 1, dev.name, default_marker);
+    }
+    println!();
 
     Ok(())
 }
+
+/// Load and run a plugin with real-time audio processing.
+pub fn run(
+    plugin: &str,
+    device_name: Option<&str>,
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+    no_tone: bool,
+) -> anyhow::Result<()> {
+    // 1. Look up plugin in cache or load from path
+    let (module, class_name, cid) = resolve_plugin(plugin)?;
+
+    println!("Loading plugin: {}", class_name);
+    info!(plugin = %class_name, path = %module.bundle_path().display(), "Loading plugin");
+
+    // 2. Create VST3 component instance
+    let mut instance = module.create_instance(&cid, &class_name)?;
+
+    // Verify 32-bit float support
+    if !instance.can_process_f32() {
+        anyhow::bail!("Plugin '{}' does not support 32-bit float processing", class_name);
+    }
+
+    // 3. Set up audio device
+    let audio = AudioDevice::new();
+    let device = audio
+        .get_output_device(device_name)
+        .ok_or_else(|| anyhow::anyhow!("No audio output device available"))?;
+
+    let device_name_str = device
+        .name()
+        .unwrap_or_else(|_| "unknown".into());
+    println!("Audio device: {}", device_name_str);
+
+    // Get device config
+    let default_config = AudioDevice::default_config(&device)
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let config = AudioConfig {
+        sample_rate: sample_rate.unwrap_or(default_config.sample_rate),
+        channels: default_config.channels.min(2), // Limit to stereo for now
+        buffer_size: buffer_size.unwrap_or(0),
+    };
+
+    println!(
+        "Audio config: {} Hz, {} ch, buffer: {}",
+        config.sample_rate,
+        config.channels,
+        if config.buffer_size > 0 {
+            format!("{} frames", config.buffer_size)
+        } else {
+            "default".into()
+        }
+    );
+
+    // 4. Configure plugin processing
+    let max_block_size = if config.buffer_size > 0 {
+        config.buffer_size as i32
+    } else {
+        4096 // Reasonable default max
+    };
+
+    // Set bus arrangements (stereo)
+    instance.set_bus_arrangements(K_SPEAKER_STEREO, K_SPEAKER_STEREO)?;
+
+    // Setup processing
+    instance.setup_processing(config.sample_rate as f64, max_block_size)?;
+
+    // Activate
+    instance.activate()?;
+    instance.start_processing()?;
+
+    let latency = instance.latency_samples();
+    if latency > 0 {
+        println!("Plugin latency: {} samples", latency);
+    }
+
+    // 5. Build audio engine
+    let mut engine = AudioEngine::new(
+        instance,
+        config.sample_rate as f64,
+        max_block_size as usize,
+        config.channels as usize,
+    );
+
+    if no_tone {
+        engine.tone().enabled = false;
+        println!("Test tone: disabled");
+    } else {
+        println!("Test tone: 440 Hz sine wave");
+    }
+
+    let engine = Arc::new(Mutex::new(engine));
+
+    // 6. Set up Ctrl+C handler
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::Relaxed);
+    })
+    .map_err(|e| anyhow::anyhow!("Failed to set Ctrl+C handler: {}", e))?;
+
+    // 7. Start audio stream
+    let engine_cb = engine.clone();
+    let stream = AudioDevice::build_output_stream(
+        &device,
+        &config,
+        move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+            if let Ok(mut eng) = engine_cb.try_lock() {
+                eng.process(data);
+            } else {
+                // Fill silence if we can't obtain the lock
+                data.fill(0.0);
+            }
+        },
+        |err| {
+            tracing::error!(error = %err, "Audio stream error");
+        },
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+
+    AudioDevice::play(&stream).map_err(|e| anyhow::anyhow!(e))?;
+
+    println!("\nProcessing audio. Press Ctrl+C to stop.\n");
+
+    // 8. Wait for Ctrl+C
+    while running.load(Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    println!("\nStopping...");
+
+    // 9. Clean shutdown
+    // Drop stream first to stop the audio callback
+    drop(stream);
+    // Brief pause to let any in-flight callbacks complete
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Now safely shut down the engine
+    if let Ok(mut eng) = engine.lock() {
+        eng.shutdown();
+    }
+
+    println!("Done.");
+    Ok(())
+}
+
+/// Resolve a plugin name or path to a loaded module, class name, and class ID.
+fn resolve_plugin(
+    plugin: &str,
+) -> anyhow::Result<(Vst3Module, String, [u8; 16])> {
+    // Check if it's a path to a .vst3 bundle
+    let path = Path::new(plugin);
+    if path.extension().is_some_and(|ext| ext == "vst3") && path.exists() {
+        return load_plugin_from_path(path);
+    }
+
+    // Look up in cache by name
+    let scan_cache = cache::load()?.ok_or_else(|| {
+        anyhow::anyhow!("No plugin cache found. Run 'scan' first, or provide a .vst3 path.")
+    })?;
+
+    // Search for matching class name (case-insensitive)
+    let plugin_lower = plugin.to_lowercase();
+    for module_info in &scan_cache.modules {
+        for class in &module_info.classes {
+            if class.name.to_lowercase() == plugin_lower
+                || class.name.to_lowercase().contains(&plugin_lower)
+            {
+                let module = Vst3Module::load(&module_info.path)?;
+                return Ok((module, class.name.clone(), class.cid));
+            }
+        }
+    }
+
+    // Try matching by module path stem
+    for module_info in &scan_cache.modules {
+        let stem = module_info
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        if stem == plugin_lower || stem.contains(&plugin_lower) {
+            if let Some(class) = module_info.classes.first() {
+                let module = Vst3Module::load(&module_info.path)?;
+                return Ok((module, class.name.clone(), class.cid));
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Plugin '{}' not found. Run 'list' to see available plugins.",
+        plugin
+    )
+}
+
+/// Load a plugin directly from a .vst3 bundle path.
+fn load_plugin_from_path(path: &Path) -> anyhow::Result<(Vst3Module, String, [u8; 16])> {
+    let module = Vst3Module::load(path)?;
+    let info = module.get_info()?;
+
+    // Find the first Audio Module Class or first class
+    let class = info
+        .classes
+        .iter()
+        .find(|c| c.category == "Audio Module Class")
+        .or(info.classes.first())
+        .ok_or_else(|| anyhow::anyhow!("No plugin classes found in {}", path.display()))?;
+
+    let name = class.name.clone();
+    let cid = class.cid;
+
+    // Reload the module (we consumed info from the first load)
+    let module = Vst3Module::load(path)?;
+    Ok((module, name, cid))
+}
+
+use cpal::traits::DeviceTrait;

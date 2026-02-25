@@ -1,6 +1,6 @@
 # rs-vst-host User Guide
 
-A minimal VST3 plugin host written in Rust. This tool lets you discover, inspect, and (in future releases) run VST3 audio plugins from the command line.
+A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audio plugins from the command line.
 
 ---
 
@@ -13,6 +13,7 @@ A minimal VST3 plugin host written in Rust. This tool lets you discover, inspect
   - [scan](#scan)
   - [list](#list)
   - [run](#run)
+  - [devices](#devices)
 - [Plugin Search Paths](#plugin-search-paths)
 - [Plugin Cache](#plugin-cache)
 - [Verbose Logging](#verbose-logging)
@@ -61,10 +62,16 @@ cargo run -- <command>
    rs-vst-host list
    ```
 
-3. **Run** a plugin (coming in a future release):
+3. **Run** a plugin with real-time audio processing:
 
    ```sh
    rs-vst-host run "Plugin Name"
+   ```
+
+4. **List** available audio output devices:
+
+   ```sh
+   rs-vst-host devices
    ```
 
 ---
@@ -148,10 +155,10 @@ No plugin cache found. Run 'scan' first.
 
 ### run
 
-Loads a plugin and starts audio processing. **This command is planned for a future release** (Phase 3+) and is not yet functional.
+Loads a VST3 plugin and starts real-time audio processing. The plugin receives a 440 Hz sine wave test tone as input (for effect plugins) and outputs audio through the selected audio device.
 
 ```
-rs-vst-host run <PLUGIN>
+rs-vst-host run [OPTIONS] <PLUGIN>
 ```
 
 **Arguments:**
@@ -159,6 +166,71 @@ rs-vst-host run <PLUGIN>
 | Argument | Description |
 |----------|-------------|
 | `PLUGIN` | Plugin name (as shown in `list`) or path to a `.vst3` bundle |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-d, --device <NAME>` | Audio output device name (uses system default if not specified) |
+| `-s, --sample-rate <HZ>` | Sample rate in Hz (uses device default if not specified) |
+| `-b, --buffer-size <FRAMES>` | Buffer size in frames (uses device default if not specified) |
+| `--no-tone` | Disable the test tone input signal (silence input) |
+
+**What it does:**
+
+1. Resolves the plugin by name (from cache) or by direct `.vst3` bundle path.
+2. Loads the plugin module and creates a VST3 component instance.
+3. Opens the audio output device and configures processing (sample rate, block size, stereo bus arrangement).
+4. Activates the plugin and starts real-time audio processing.
+5. A 440 Hz sine wave test tone is fed as input (use `--no-tone` to disable).
+6. Press **Ctrl+C** to stop processing and cleanly shut down.
+
+**Example:**
+
+```
+$ rs-vst-host run "FabFilter Pro-Q 4"
+Loading plugin: FabFilter Pro-Q 4
+Audio device: MacBook Pro Speakers
+Audio config: 44100 Hz, 2 ch, buffer: default
+Test tone: 440 Hz sine wave
+
+Processing audio. Press Ctrl+C to stop.
+
+^C
+Stopping...
+Done.
+```
+
+**Run by path:**
+
+```sh
+rs-vst-host run /Library/Audio/Plug-Ins/VST3/MyPlugin.vst3
+```
+
+**Run with custom audio settings:**
+
+```sh
+rs-vst-host run "My Plugin" --device "BlackHole 2ch" --sample-rate 48000 --buffer-size 256
+```
+
+### devices
+
+Lists all available audio output devices on the system.
+
+```
+rs-vst-host devices
+```
+
+**Example output:**
+
+```
+Audio output devices:
+
+    1. BlackHole 2ch
+    2. MacBook Pro Speakers (default)
+    3. Microsoft Teams Audio
+    4. Aggregate Device
+```
 
 ---
 
@@ -253,17 +325,59 @@ rs-vst-host scan --paths ~/Downloads/VST3-Plugins
 rs-vst-host list
 ```
 
+**List audio output devices:**
+
+```sh
+rs-vst-host devices
+```
+
+**Run a plugin by name:**
+
+```sh
+rs-vst-host run "FabFilter Pro-Q 4"
+```
+
+**Run a plugin by path:**
+
+```sh
+rs-vst-host run /Library/Audio/Plug-Ins/VST3/MyPlugin.vst3
+```
+
+**Run with custom audio settings:**
+
+```sh
+rs-vst-host run "My Plugin" --sample-rate 48000 --buffer-size 512
+```
+
+**Run on a specific audio device:**
+
+```sh
+rs-vst-host run "My Plugin" --device "BlackHole 2ch"
+```
+
+**Run without the test tone (silence input):**
+
+```sh
+rs-vst-host run "My Plugin" --no-tone
+```
+
 **Scan with debug output:**
 
 ```sh
 RUST_LOG=debug rs-vst-host scan
 ```
 
+**Run with debug logging (shows VST3 lifecycle details):**
+
+```sh
+RUST_LOG=debug rs-vst-host run "My Plugin"
+```
+
 **Show help:**
 
 ```sh
 rs-vst-host --help
-rs-vst-host scan --help
+rs-vst-host run --help
 ```
 
 ---
@@ -272,7 +386,7 @@ rs-vst-host scan --help
 
 ### "No plugin cache found. Run 'scan' first."
 
-You need to run `rs-vst-host scan` before `list` will show anything. The `list` command reads from the cache file, which is created by `scan`.
+You need to run `rs-vst-host scan` before `list` or `run` (by name) will work. The cache file is created by `scan`.
 
 ### "No VST3 plugins found."
 
@@ -290,6 +404,24 @@ You need to run `rs-vst-host scan` before `list` will show anything. The `list` 
 
 - The plugin loaded successfully but its factory did not return valid metadata.
 - This is uncommon; check debug logs for details and consider reporting the issue.
+
+### "No audio output device available"
+
+- Make sure your system has an audio output device connected and enabled.
+- Use `rs-vst-host devices` to see what devices are available.
+- On headless systems, consider installing a virtual audio device.
+
+### Plugin fails to initialize during `run`
+
+- Some plugins require additional host interfaces not yet implemented.
+- Try running with `RUST_LOG=debug` to see the exact failure point.
+- Report the plugin name and error message as an issue.
+
+### Audio glitches or dropouts
+
+- Try increasing the buffer size: `--buffer-size 1024` or `--buffer-size 2048`.
+- Close other audio-intensive applications.
+- Use a dedicated audio device if available.
 
 ### Cache seems stale
 

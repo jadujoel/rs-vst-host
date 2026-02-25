@@ -24,3 +24,9 @@ libloading = "0.8"
 
 # Platform directories
 dirs = "6"
+
+# Audio I/O
+cpal = "0.15"
+
+# Ctrl+C handling
+ctrlc = "3"

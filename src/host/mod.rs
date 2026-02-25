@@ -1,11 +1,12 @@
 //! VST3 host context and transport.
 //!
-//! This module will handle:
-//! - Host context interfaces required by plugins
-//! - Transport state (tempo, time signature, position)
-//! - Parameter management and automation routing
+//! This module handles:
+//! - Host context interfaces required by plugins (IHostApplication)
+//! - Transport state (tempo, time signature, position) — planned for Phase 4
+//! - Parameter management and automation routing — planned for Phase 4
+//!
+//! The core host context implementation lives in `vst3::host_context`.
 
-// TODO: Phase 3-4 implementation
-// - IHostApplication implementation
+// TODO: Phase 4 implementation
 // - IComponentHandler for parameter changes
 // - Transport/timing info

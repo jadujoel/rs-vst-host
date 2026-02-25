@@ -18,7 +18,20 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Scan { paths } => app::commands::scan(paths)?,
         Command::List => app::commands::list()?,
-        Command::Run { plugin } => app::commands::run(&plugin)?,
+        Command::Run {
+            plugin,
+            device,
+            sample_rate,
+            buffer_size,
+            no_tone,
+        } => app::commands::run(
+            &plugin,
+            device.as_deref(),
+            sample_rate,
+            buffer_size,
+            no_tone,
+        )?,
+        Command::Devices => app::commands::devices()?,
     }
 
     Ok(())
