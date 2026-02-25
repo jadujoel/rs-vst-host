@@ -421,10 +421,7 @@ impl Vst3Instance {
             // Initialize the controller with a host context
             let host_ctx = HostApplication::new();
             let ctrl_vtbl = &*(*controller).vtbl;
-            let init_result = (ctrl_vtbl.initialize)(
-                ec_ptr,
-                HostApplication::as_unknown(host_ctx),
-            );
+            let init_result = (ctrl_vtbl.initialize)(ec_ptr, HostApplication::as_unknown(host_ctx));
 
             if init_result != K_RESULT_OK {
                 warn!(
