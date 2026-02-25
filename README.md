@@ -85,6 +85,7 @@ src/
 │   └── translate.rs # MIDI to VST3 event translation
 └── vst3/
     ├── cache.rs     # JSON plugin cache
+    ├── cf_bundle.rs # CoreFoundation CFBundleRef FFI (macOS)
     ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor, IEditController, IEventList)
     ├── component_handler.rs # IComponentHandler COM for parameter notifications
     ├── event_list.rs    # IEventList COM implementation for MIDI events
@@ -150,7 +151,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-223 unit tests covering error types, CLI parsing, scanner, cache I/O, COM struct layouts, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, and concurrency.
+237 unit tests covering error types, CLI parsing, scanner, cache I/O, COM struct layouts, IID UUID verification, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
@@ -170,7 +171,8 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 - [x] Phase 4 — MIDI input, parameters, automation (M4)
 - [x] Phase 5 — Host UX (MVP CLI) (M5)
 - [x] Phase 6 — Validation and quality gates (223 tests)
-- [ ] Phase 7 — Beyond MVP (editor windows, presets, routing)
+- [x] Phase 7 — Bug fixes and compatibility (IID fix, CFBundleRef, IPluginFactory3)
+- [ ] Phase 8 — Beyond MVP (editor windows, presets, routing)
 
 ## License
 

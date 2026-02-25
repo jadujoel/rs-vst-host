@@ -501,6 +501,7 @@ You need to run `rs-vst-host scan` before `list` or `run` (by name) will work. T
 ### Plugin fails to initialize during `run`
 
 - Some plugins require additional host interfaces not yet implemented.
+- If you see "QueryInterface for IAudioProcessor failed", ensure you're running the latest version — this was caused by an IID constant typo fixed in v0.6.0.
 - Try running with `RUST_LOG=debug` to see the exact failure point.
 - Report the plugin name and error message as an issue.
 

@@ -14,7 +14,6 @@ use tracing::{debug, warn};
 #[cfg(target_os = "macos")]
 use crate::vst3::cf_bundle;
 
-
 use super::scanner;
 
 // ─── COM vtable definitions for VST3 IPluginFactory ───────────────────────
@@ -97,29 +96,25 @@ pub struct ComObj<V> {
 /// Byte encoding uses the non-COM (big-endian per u32) format used on macOS/Linux.
 #[cfg(not(target_os = "windows"))]
 const IPLUGIN_FACTORY2_IID: [u8; 16] = [
-    0x00, 0x07, 0xB6, 0x50, 0xF2, 0x4B, 0x4C, 0x0B, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A,
-    0xBB,
+    0x00, 0x07, 0xB6, 0x50, 0xF2, 0x4B, 0x4C, 0x0B, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A, 0xBB,
 ];
 
 /// IPluginFactory2 IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 const IPLUGIN_FACTORY2_IID: [u8; 16] = [
-    0x50, 0xB6, 0x07, 0x00, 0x0B, 0x4C, 0x4B, 0xF2, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A,
-    0xBB,
+    0x50, 0xB6, 0x07, 0x00, 0x4B, 0xF2, 0x0B, 0x4C, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A, 0xBB,
 ];
 
 /// IPluginFactory3 IID: {4555A2AB-C123-4E57-9B12-291036878931}
 #[cfg(not(target_os = "windows"))]
 const IPLUGIN_FACTORY3_IID: [u8; 16] = [
-    0x45, 0x55, 0xA2, 0xAB, 0xC1, 0x23, 0x4E, 0x57, 0x9B, 0x12, 0x29, 0x10, 0x36, 0x87, 0x89,
-    0x31,
+    0x45, 0x55, 0xA2, 0xAB, 0xC1, 0x23, 0x4E, 0x57, 0x9B, 0x12, 0x29, 0x10, 0x36, 0x87, 0x89, 0x31,
 ];
 
 /// IPluginFactory3 IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 const IPLUGIN_FACTORY3_IID: [u8; 16] = [
-    0xAB, 0xA2, 0x55, 0x45, 0x57, 0x4E, 0x23, 0xC1, 0x9B, 0x12, 0x29, 0x10, 0x36, 0x87, 0x89,
-    0x31,
+    0xAB, 0xA2, 0x55, 0x45, 0x23, 0xC1, 0x57, 0x4E, 0x9B, 0x12, 0x29, 0x10, 0x36, 0x87, 0x89, 0x31,
 ];
 
 /// IPluginFactory3 vtable (extends IPluginFactory2).
@@ -127,8 +122,7 @@ const IPLUGIN_FACTORY3_IID: [u8; 16] = [
 struct IPluginFactory3Vtbl {
     base: IPluginFactory2Vtbl,
     /// setHostContext(context: FUnknown*) -> tresult
-    set_host_context:
-        unsafe extern "system" fn(this: *mut c_void, context: *mut c_void) -> i32,
+    set_host_context: unsafe extern "system" fn(this: *mut c_void, context: *mut c_void) -> i32,
 }
 
 // ─── Vst3Module ───────────────────────────────────────────────────────────
@@ -296,9 +290,8 @@ impl Vst3Module {
         let vtbl = unsafe { &*(*self.factory).vtbl };
         let mut obj: *mut c_void = std::ptr::null_mut();
 
-        let result = unsafe {
-            (vtbl.base.query_interface)(this, IPLUGIN_FACTORY2_IID.as_ptr(), &mut obj)
-        };
+        let result =
+            unsafe { (vtbl.base.query_interface)(this, IPLUGIN_FACTORY2_IID.as_ptr(), &mut obj) };
 
         if result == K_RESULT_OK && !obj.is_null() {
             Some(obj as *mut ComObj<IPluginFactory2Vtbl>)
@@ -308,14 +301,15 @@ impl Vst3Module {
     }
 
     /// Attempt to QueryInterface for IPluginFactory3 (host context support).
-    fn query_factory3_raw(factory: *mut ComObj<IPluginFactoryVtbl>) -> Option<*mut ComObj<IPluginFactory3Vtbl>> {
+    fn query_factory3_raw(
+        factory: *mut ComObj<IPluginFactoryVtbl>,
+    ) -> Option<*mut ComObj<IPluginFactory3Vtbl>> {
         let this = factory as *mut c_void;
         let vtbl = unsafe { &*(*factory).vtbl };
         let mut obj: *mut c_void = std::ptr::null_mut();
 
-        let result = unsafe {
-            (vtbl.base.query_interface)(this, IPLUGIN_FACTORY3_IID.as_ptr(), &mut obj)
-        };
+        let result =
+            unsafe { (vtbl.base.query_interface)(this, IPLUGIN_FACTORY3_IID.as_ptr(), &mut obj) };
 
         if result == K_RESULT_OK && !obj.is_null() {
             debug!("Factory supports IPluginFactory3");
@@ -393,8 +387,7 @@ fn call_bundle_entry(library: &Library, bundle_path: &Path) -> *mut c_void {
 #[cfg(target_os = "macos")]
 fn call_bundle_exit(library: &Library, bundle_ref: *mut c_void) {
     unsafe {
-        if let Ok(exit) =
-            library.get::<unsafe extern "C" fn(*mut c_void) -> bool>(b"bundleExit\0")
+        if let Ok(exit) = library.get::<unsafe extern "C" fn(*mut c_void) -> bool>(b"bundleExit\0")
         {
             let ok = exit(bundle_ref);
             if !ok {
@@ -426,11 +419,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 
 /// Return `None` for empty strings, `Some(s)` otherwise.
 fn non_empty(s: String) -> Option<String> {
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 #[cfg(test)]
@@ -459,5 +448,38 @@ mod tests {
     fn test_non_empty() {
         assert_eq!(non_empty(String::new()), None);
         assert_eq!(non_empty("hello".into()), Some("hello".into()));
+    }
+
+    /// Convert a UUID string to big-endian byte array.
+    fn uuid_to_big_endian(uuid: &str) -> [u8; 16] {
+        let hex: String = uuid.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+        assert_eq!(hex.len(), 32);
+        let mut bytes = [0u8; 16];
+        for i in 0..16 {
+            bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        bytes
+    }
+
+    #[test]
+    fn test_iplugin_factory2_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("0007B650-F24B-4C0B-A464-EDB9F00B2ABB");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            IPLUGIN_FACTORY2_IID, expected,
+            "IPluginFactory2 IID mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_iplugin_factory3_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("4555A2AB-C123-4E57-9B12-291036878931");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            IPLUGIN_FACTORY3_IID, expected,
+            "IPluginFactory3 IID mismatch"
+        );
+        let _ = expected;
     }
 }

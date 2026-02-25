@@ -1,12 +1,13 @@
 # Status
 
-## Current Phase: Phase 6 — Validation and Quality Gates (Complete)
+## Current Phase: Phase 7 — Bug Fixes and Compatibility
 
 **Milestone M2 achieved**: Single plugin instantiates and initializes.
 **Milestone M3 achieved**: Real-time audio callback calls plugin process reliably.
 **Milestone M4 achieved**: MIDI note input triggers instrument output.
 **Milestone M5 achieved**: Parameter control + stable CLI UX.
-**Quality gate achieved**: 223 tests passing, zero warnings, comprehensive coverage of non-RT components.
+**Quality gate achieved**: 237 tests passing, zero warnings, comprehensive coverage of non-RT components.
+**Bug fix release**: IAudioProcessor IID corrected, CFBundleRef support added, IPluginFactory3 support added.
 
 ### Completed
 
@@ -30,13 +31,15 @@
 
 #### Phase 2 — VST3 Plugin Discovery and Loading
 - **Scanner** (`vst3/scanner.rs`): Searches macOS/Linux/Windows standard VST3 paths, discovers `.vst3` bundles recursively, resolves platform-specific binary paths
-- **Module loader** (`vst3/module.rs`): Dynamic loading via `libloading`, manual COM FFI for IPluginFactory and IPluginFactory2, platform-specific `bundleEntry`/`ModuleEntry` handling
+- **Module loader** (`vst3/module.rs`): Dynamic loading via `libloading`, manual COM FFI for IPluginFactory, IPluginFactory2, and IPluginFactory3, platform-specific `bundleEntry`/`ModuleEntry` handling with proper CFBundleRef
 - **Cache** (`vst3/cache.rs`): JSON-based plugin cache in platform data directory
 - **CLI commands** (`app/commands.rs`): `scan` discovers+loads+caches, `list` displays cached plugins
 
 #### Phase 3 — Audio Engine Integration
-- **COM interface definitions** (`vst3/com.rs`): Manual FFI vtable definitions for IComponent, IAudioProcessor, with ProcessSetup, ProcessData, AudioBusBuffers structs; verified layout with struct size tests
+- **COM interface definitions** (`vst3/com.rs`): Manual FFI vtable definitions for IComponent, IAudioProcessor, with ProcessSetup, ProcessData, AudioBusBuffers structs; verified layout with struct size tests; IID correctness verified against UUIDs from VST3 SDK
 - **Host context** (`vst3/host_context.rs`): Minimal IHostApplication COM object implementation with `getName` and stub `createInstance`; reference counted; passed to plugin `initialize()`
+- **CFBundleRef support** (`vst3/cf_bundle.rs`): CoreFoundation FFI for creating proper CFBundleRef from `.vst3` bundle path, passed to `bundleEntry` on macOS
+- **IPluginFactory3 support** (`vst3/module.rs`): Queries for IPluginFactory3 and calls `setHostContext` for modern plugin compatibility
 - **Instance management** (`vst3/instance.rs`): Full VST3 component lifecycle — factory `createInstance`, `initialize` with host context, `QueryInterface` for IAudioProcessor, bus arrangement negotiation, `setupProcessing`, `setActive`/`setProcessing`, and clean shutdown
 - **Process buffers** (`vst3/process.rs`): Pre-allocated buffer management for VST3 `process()` — per-channel sample buffers, interleaved↔deinterleaved conversion, stable pointer management for real-time safety
 - **Audio device** (`audio/device.rs`): `cpal`-based audio device enumeration, output stream configuration, and stream building
@@ -85,10 +88,10 @@
 - **Clean build**: Zero warnings
 
 ### Test Results
-- 223 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, tone generator, audio device, MIDI receiver)
+- 237 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification, tone generator, audio device, MIDI receiver, CFBundleRef creation)
 - Clean build with zero warnings
-- Test stability verified across 5 consecutive runs
-- Successfully scans real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
+- Test stability verified across multiple consecutive runs
+- Successfully loads and runs real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
 - MIDI port enumeration working (midir, CoreMIDI)
 - Audio device enumeration working (cpal)
 

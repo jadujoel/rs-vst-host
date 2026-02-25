@@ -4,7 +4,7 @@
 //! so they can locate their resources within the bundle. Without this, many
 //! plugins (e.g., FabFilter) fail to provide IAudioProcessor.
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::path::Path;
 use tracing::debug;
 
@@ -69,11 +69,8 @@ pub fn create(path: &Path) -> *mut c_void {
 
     unsafe {
         // Create CFString from the path
-        let cf_string = CFStringCreateWithCString(
-            std::ptr::null(),
-            c_str.as_ptr(),
-            K_CF_STRING_ENCODING_UTF8,
-        );
+        let cf_string =
+            CFStringCreateWithCString(std::ptr::null(), c_str.as_ptr(), K_CF_STRING_ENCODING_UTF8);
         if cf_string.is_null() {
             debug!("CFStringCreateWithCString returned null");
             return std::ptr::null_mut();
@@ -147,7 +144,10 @@ mod tests {
         let path = Path::new("/System/Library/Frameworks/CoreFoundation.framework");
         let bundle = create(path);
         // System framework should produce a valid bundle
-        assert!(!bundle.is_null(), "CFBundleCreate should succeed for CoreFoundation.framework");
+        assert!(
+            !bundle.is_null(),
+            "CFBundleCreate should succeed for CoreFoundation.framework"
+        );
         release(bundle);
     }
 }

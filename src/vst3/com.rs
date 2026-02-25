@@ -55,93 +55,80 @@ pub const K_IS_LIVE: u16 = 1;
 /// Big-endian byte order (macOS/Linux FUID format).
 #[cfg(not(target_os = "windows"))]
 pub const ICOMPONENT_IID: [u8; 16] = [
-    0xE8, 0x31, 0xFF, 0x31, 0xF2, 0xD5, 0x43, 0x01, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78,
-    0x02,
+    0xE8, 0x31, 0xFF, 0x31, 0xF2, 0xD5, 0x43, 0x01, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78, 0x02,
 ];
 
 /// IComponent IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 pub const ICOMPONENT_IID: [u8; 16] = [
-    0x31, 0xFF, 0x31, 0xE8, 0xD5, 0xF2, 0x01, 0x43, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78,
-    0x02,
+    0x31, 0xFF, 0x31, 0xE8, 0xD5, 0xF2, 0x01, 0x43, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78, 0x02,
 ];
 
 /// IAudioProcessor IID: {42043F99-B7DA-453C-A569-E79D9AAEC33D}
 #[cfg(not(target_os = "windows"))]
 pub const IAUDIO_PROCESSOR_IID: [u8; 16] = [
-    0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3,
-    0x3D,
+    0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
 ];
 
 /// IAudioProcessor IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 pub const IAUDIO_PROCESSOR_IID: [u8; 16] = [
-    0x99, 0x3F, 0x04, 0x42, 0xDA, 0xB7, 0x3C, 0x45, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3,
-    0x3D,
+    0x99, 0x3F, 0x04, 0x42, 0xDA, 0xB7, 0x3C, 0x45, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
 ];
 
 /// IHostApplication IID: {58E595CC-DB2D-4969-8B6A-AF8C36A664E5}
 #[cfg(not(target_os = "windows"))]
 pub const IHOST_APPLICATION_IID: [u8; 16] = [
-    0x58, 0xE5, 0x95, 0xCC, 0xDB, 0x2D, 0x49, 0x69, 0x8B, 0x6A, 0xAF, 0x8C, 0x36, 0xA6, 0x64,
-    0xE5,
+    0x58, 0xE5, 0x95, 0xCC, 0xDB, 0x2D, 0x49, 0x69, 0x8B, 0x6A, 0xAF, 0x8C, 0x36, 0xA6, 0x64, 0xE5,
 ];
 
 /// IHostApplication IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 pub const IHOST_APPLICATION_IID: [u8; 16] = [
-    0xCC, 0x95, 0xE5, 0x58, 0x2D, 0xDB, 0x69, 0x49, 0x8B, 0x6A, 0xAF, 0x8C, 0x36, 0xA6, 0x64,
-    0xE5,
+    0xCC, 0x95, 0xE5, 0x58, 0x2D, 0xDB, 0x69, 0x49, 0x8B, 0x6A, 0xAF, 0x8C, 0x36, 0xA6, 0x64, 0xE5,
 ];
 
 /// FUnknown IID: {00000000-0000-0000-C000-000000000046}
 pub const FUNKNOWN_IID: [u8; 16] = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x46,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
 ];
 
 /// IEditController IID: {DCD7BBE3-7742-448D-A874-AACC979C759E}
 #[cfg(not(target_os = "windows"))]
 pub const IEDIT_CONTROLLER_IID: [u8; 16] = [
-    0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75,
-    0x9E,
+    0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75, 0x9E,
 ];
 
 /// IEditController IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 pub const IEDIT_CONTROLLER_IID: [u8; 16] = [
-    0xE3, 0xBB, 0xD7, 0xDC, 0x42, 0x77, 0x8D, 0x44, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75,
-    0x9E,
+    0xE3, 0xBB, 0xD7, 0xDC, 0x42, 0x77, 0x8D, 0x44, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75, 0x9E,
 ];
 
 /// IEventList IID: {3A2C4214-3463-49FE-B2C4-F397B9695A44}
 #[cfg(not(target_os = "windows"))]
 pub const IEVENT_LIST_IID: [u8; 16] = [
-    0x3A, 0x2C, 0x42, 0x14, 0x34, 0x63, 0x49, 0xFE, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A,
-    0x44,
+    0x3A, 0x2C, 0x42, 0x14, 0x34, 0x63, 0x49, 0xFE, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A, 0x44,
 ];
 
 /// IEventList IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 pub const IEVENT_LIST_IID: [u8; 16] = [
-    0x14, 0x42, 0x2C, 0x3A, 0x63, 0x34, 0xFE, 0x49, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A,
-    0x44,
+    0x14, 0x42, 0x2C, 0x3A, 0x63, 0x34, 0xFE, 0x49, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A, 0x44,
 ];
 
 /// IParameterChanges IID: {A4779663-0BB6-4A56-B443-84A8466FEB9D}
 #[cfg(not(target_os = "windows"))]
 #[allow(dead_code)]
 pub const IPARAMETER_CHANGES_IID: [u8; 16] = [
-    0xA4, 0x77, 0x96, 0x63, 0x0B, 0xB6, 0x4A, 0x56, 0xB4, 0x43, 0x84, 0xA8, 0x46, 0x6F, 0xEB,
-    0x9D,
+    0xA4, 0x77, 0x96, 0x63, 0x0B, 0xB6, 0x4A, 0x56, 0xB4, 0x43, 0x84, 0xA8, 0x46, 0x6F, 0xEB, 0x9D,
 ];
 
 /// IParameterChanges IID in COM-compatible byte order (Windows).
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
 pub const IPARAMETER_CHANGES_IID: [u8; 16] = [
-    0x63, 0x96, 0x77, 0xA4, 0xB6, 0x0B, 0x56, 0x4A, 0xB4, 0x43, 0x84, 0xA8, 0x46, 0x6F, 0xEB,
-    0x9D,
+    0x63, 0x96, 0x77, 0xA4, 0xB6, 0x0B, 0x56, 0x4A, 0xB4, 0x43, 0x84, 0xA8, 0x46, 0x6F, 0xEB, 0x9D,
 ];
 
 // ─── COM base vtable ──────────────────────────────────────────────────────
@@ -237,12 +224,8 @@ pub struct IAudioProcessorVtbl {
         outputs: *mut u64,
         num_outs: i32,
     ) -> i32,
-    pub get_bus_arrangement: unsafe extern "system" fn(
-        this: *mut c_void,
-        dir: i32,
-        index: i32,
-        arr: *mut u64,
-    ) -> i32,
+    pub get_bus_arrangement:
+        unsafe extern "system" fn(this: *mut c_void, dir: i32, index: i32, arr: *mut u64) -> i32,
     pub can_process_sample_size:
         unsafe extern "system" fn(this: *mut c_void, symbolic_sample_size: i32) -> i32,
     pub get_latency_samples: unsafe extern "system" fn(this: *mut c_void) -> u32,
@@ -321,7 +304,13 @@ pub struct Event {
 
 impl Event {
     /// Create a Note On event.
-    pub fn note_on(sample_offset: i32, channel: i16, pitch: i16, velocity: f32, note_id: i32) -> Self {
+    pub fn note_on(
+        sample_offset: i32,
+        channel: i16,
+        pitch: i16,
+        velocity: f32,
+        note_id: i32,
+    ) -> Self {
         let mut event = Self {
             bus_index: 0,
             sample_offset,
@@ -352,7 +341,13 @@ impl Event {
     }
 
     /// Create a Note Off event.
-    pub fn note_off(sample_offset: i32, channel: i16, pitch: i16, velocity: f32, note_id: i32) -> Self {
+    pub fn note_off(
+        sample_offset: i32,
+        channel: i16,
+        pitch: i16,
+        velocity: f32,
+        note_id: i32,
+    ) -> Self {
         let mut event = Self {
             bus_index: 0,
             sample_offset,
@@ -473,16 +468,12 @@ pub struct IEditControllerVtbl {
         unsafe extern "system" fn(this: *mut c_void, id: u32, value_normalized: f64) -> f64,
     pub plain_param_to_normalized:
         unsafe extern "system" fn(this: *mut c_void, id: u32, plain_value: f64) -> f64,
-    pub get_param_normalized:
-        unsafe extern "system" fn(this: *mut c_void, id: u32) -> f64,
+    pub get_param_normalized: unsafe extern "system" fn(this: *mut c_void, id: u32) -> f64,
     pub set_param_normalized:
         unsafe extern "system" fn(this: *mut c_void, id: u32, value: f64) -> i32,
     pub set_component_handler:
         unsafe extern "system" fn(this: *mut c_void, handler: *mut c_void) -> i32,
-    pub create_view: unsafe extern "system" fn(
-        this: *mut c_void,
-        name: *const u8,
-    ) -> *mut c_void,
+    pub create_view: unsafe extern "system" fn(this: *mut c_void, name: *const u8) -> *mut c_void,
 }
 
 /// ParameterInfo — returned by IEditController::getParameterInfo.
@@ -531,6 +522,161 @@ pub struct ComPtr<V> {
 mod tests {
     use super::*;
     use std::mem;
+
+    /// Convert a UUID string like "E831FF31-F2D5-4301-928E-BBEE25697802" to
+    /// the expected big-endian (macOS/Linux FUID) byte array.
+    fn uuid_to_big_endian(uuid: &str) -> [u8; 16] {
+        let hex: String = uuid.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+        assert_eq!(hex.len(), 32, "UUID must have 32 hex digits");
+        let mut bytes = [0u8; 16];
+        for i in 0..16 {
+            bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        bytes
+    }
+
+    /// Convert a UUID string to COM-compatible (Windows) byte order.
+    /// l1 (bytes 0-3): little-endian u32
+    /// l2 (bytes 4-7): two little-endian u16s
+    /// l3-l4 (bytes 8-15): big-endian (unchanged)
+    fn uuid_to_com(uuid: &str) -> [u8; 16] {
+        let be = uuid_to_big_endian(uuid);
+        [
+            be[3], be[2], be[1], be[0], // l1 as LE u32
+            be[5], be[4], be[7], be[6], // l2 as two LE u16s
+            be[8], be[9], be[10], be[11], be[12], be[13], be[14], be[15],
+        ]
+    }
+
+    // ─── IID correctness tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_icomponent_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("E831FF31-F2D5-4301-928E-BBEE25697802");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(ICOMPONENT_IID, expected, "IComponent IID mismatch");
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            ICOMPONENT_IID,
+            uuid_to_com("E831FF31-F2D5-4301-928E-BBEE25697802"),
+            "IComponent IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_iaudio_processor_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("42043F99-B7DA-453C-A569-E79D9AAEC33D");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            IAUDIO_PROCESSOR_IID, expected,
+            "IAudioProcessor IID mismatch"
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IAUDIO_PROCESSOR_IID,
+            uuid_to_com("42043F99-B7DA-453C-A569-E79D9AAEC33D"),
+            "IAudioProcessor IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_ihost_application_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("58E595CC-DB2D-4969-8B6A-AF8C36A664E5");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            IHOST_APPLICATION_IID, expected,
+            "IHostApplication IID mismatch"
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IHOST_APPLICATION_IID,
+            uuid_to_com("58E595CC-DB2D-4969-8B6A-AF8C36A664E5"),
+            "IHostApplication IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_funknown_iid_matches_uuid() {
+        // FUnknown: {00000000-0000-0000-C000-000000000046}
+        // All zeros for l1/l2, so LE and BE are the same for the first 8 bytes
+        let expected = uuid_to_big_endian("00000000-0000-0000-C000-000000000046");
+        assert_eq!(FUNKNOWN_IID, expected, "FUnknown IID mismatch");
+    }
+
+    #[test]
+    fn test_iedit_controller_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("DCD7BBE3-7742-448D-A874-AACC979C759E");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            IEDIT_CONTROLLER_IID, expected,
+            "IEditController IID mismatch"
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IEDIT_CONTROLLER_IID,
+            uuid_to_com("DCD7BBE3-7742-448D-A874-AACC979C759E"),
+            "IEditController IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_ievent_list_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("3A2C4214-3463-49FE-B2C4-F397B9695A44");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(IEVENT_LIST_IID, expected, "IEventList IID mismatch");
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IEVENT_LIST_IID,
+            uuid_to_com("3A2C4214-3463-49FE-B2C4-F397B9695A44"),
+            "IEventList IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_iparameter_changes_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("A4779663-0BB6-4A56-B443-84A8466FEB9D");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            IPARAMETER_CHANGES_IID, expected,
+            "IParameterChanges IID mismatch"
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IPARAMETER_CHANGES_IID,
+            uuid_to_com("A4779663-0BB6-4A56-B443-84A8466FEB9D"),
+            "IParameterChanges IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    // ─── UUID helper tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_uuid_to_big_endian_helper() {
+        let bytes = uuid_to_big_endian("E831FF31-F2D5-4301-928E-BBEE25697802");
+        assert_eq!(bytes[0], 0xE8);
+        assert_eq!(bytes[4], 0xF2);
+        assert_eq!(bytes[15], 0x02);
+    }
+
+    #[test]
+    fn test_uuid_to_com_helper() {
+        let com = uuid_to_com("E831FF31-F2D5-4301-928E-BBEE25697802");
+        // l1: 0xE831FF31 → LE: [0x31, 0xFF, 0x31, 0xE8]
+        assert_eq!(&com[0..4], &[0x31, 0xFF, 0x31, 0xE8]);
+        // l2: 0xF2D54301 → two LE u16: [0xD5, 0xF2, 0x01, 0x43]
+        assert_eq!(&com[4..8], &[0xD5, 0xF2, 0x01, 0x43]);
+        // l3/l4: big-endian unchanged
+        assert_eq!(
+            &com[8..16],
+            &[0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78, 0x02]
+        );
+    }
 
     #[test]
     fn test_process_setup_layout() {
@@ -583,8 +729,16 @@ mod tests {
         // bus_index(4) + sample_offset(4) + ppq_position(8) + flags(2) + type(2) + pad(4) + data(20) = 44
         // But with alignment the struct may have trailing padding
         let size = mem::size_of::<Event>();
-        assert!(size >= 44, "Event size should be at least 44 bytes, got {}", size);
-        assert!(size <= 48, "Event size should not exceed 48 bytes, got {}", size);
+        assert!(
+            size >= 44,
+            "Event size should be at least 44 bytes, got {}",
+            size
+        );
+        assert!(
+            size <= 48,
+            "Event size should not exceed 48 bytes, got {}",
+            size
+        );
     }
 
     #[test]

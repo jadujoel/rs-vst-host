@@ -2,15 +2,16 @@
 
 ## Summary
 
-- **Total tests:** 223
+- **Total tests:** 237
 - **All passing:** ✅
 - **Build warnings:** 0
-- **Test stability:** Verified (5 consecutive clean runs)
+- **Test stability:** Verified (multiple consecutive clean runs)
 
 ## Test Coverage by Module
 
 | Module | Tests | Coverage Level | Notes |
 |--------|------:|---------------|-------|
+| `src/vst3/com.rs` | 21 | ✅ Full | Struct layouts, IIDs, Event construction, parameter flags, speaker arrangements, UUID-to-bytes verification for all 7 IIDs |
 | `src/error.rs` | 20 | ✅ Full | Display formatting, From conversions, Debug for all 4 error types |
 | `src/vst3/process.rs` | 20 | ✅ Full | Buffer creation, interleaving, edge cases, setter methods, zero-channel configs |
 | `src/midi/translate.rs` | 18 | ✅ Full | Note On/Off, channels, pitches, velocity range, batch, truncation, unsupported |
@@ -20,15 +21,15 @@
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
-| `src/vst3/com.rs` | 12 | ✅ Full | Struct layouts, IIDs, Event construction, parameter flags, speaker arrangements |
 | `src/app/cli.rs` | 11 | ✅ Full | Parse all subcommands, required/optional args, invalid input rejection |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
+| `src/vst3/module.rs` | 6 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification; module loading requires real .vst3 bundles |
 | `src/audio/engine.rs` | 5 | ⚠️ Partial | TestToneGenerator only; AudioEngine requires live Vst3Instance |
-| `src/vst3/module.rs` | 4 | ⚠️ Partial | UTF-8 utilities only; module loading requires real .vst3 bundles |
+| `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/vst3/instance.rs` | 3 | ⚠️ Partial | IID constants only; all methods require real COM objects |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 | `src/app/commands.rs` | 0 | ❌ None | Integration-level orchestration; requires plugins + hardware |
@@ -42,14 +43,15 @@
 ## Coverage Analysis
 
 ### Fully Tested (✅) — 14 modules
-All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls.
+All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
-### Partially Tested (⚠️) — 7 modules
+### Partially Tested (⚠️) — 8 modules
 These modules have tests for pure-logic components but cannot be fully unit-tested because they depend on:
 - **Live VST3 plugins** (`instance.rs`, `module.rs`, `params.rs from_controller`)
 - **Audio hardware** (`audio/device.rs`, `audio/engine.rs`)
 - **MIDI hardware** (`midi/device.rs`)
 - **Interactive stdin** (`interactive.rs run_interactive`)
+- **CoreFoundation / .vst3 bundles** (`cf_bundle.rs` full path)
 
 ### Not Testable in CI (❌) — 1 module
 - `app/commands.rs` — Heavy I/O orchestration requiring both plugins and hardware
@@ -80,3 +82,13 @@ Based on module-level analysis:
 | Host context | 7 | IHost QI, ref counting, null safety, destroy null |
 | Component handler | 4 | Concurrent perform_edit, restart flag OR, destroy null, as_ptr |
 | Process context | 0 | Already well-covered at 10 tests |
+
+## v0.6.0 Test Additions
+
+14 new tests added (223 → 237 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| COM IID verification | 9 | UUID-to-bytes validation for all 7 IIDs (IComponent, IAudioProcessor, IHostApplication, FUnknown, IEditController, IEventList, IParameterChanges) plus helper function tests |
+| Module IID verification | 2 | UUID-to-bytes validation for IPluginFactory2 and IPluginFactory3 IIDs |
+| CFBundleRef | 3 | Null path handling, null release safety, system framework (CoreFoundation) validation |
