@@ -11,6 +11,7 @@ use crate::error::Vst3Error;
 use crate::vst3::com::*;
 use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::host_context::HostApplication;
+use crate::vst3::module::IPluginFactoryVtbl;
 use crate::vst3::params::ParameterRegistry;
 use std::ffi::c_void;
 use tracing::{debug, info, warn};
@@ -38,6 +39,16 @@ pub struct Vst3Instance {
     pub output_channels: usize,
     /// Plugin name for logging.
     pub name: String,
+    /// Factory COM pointer (AddRef'd for safe use during instance lifetime).
+    factory: *mut c_void,
+    /// Factory vtable pointer (valid as long as factory is alive).
+    factory_vtbl: *const IPluginFactoryVtbl,
+    /// Cached IEditController pointer (obtained via QI or separate creation).
+    cached_controller: *mut ComPtr<IEditControllerVtbl>,
+    /// Whether we own the separate controller (need to terminate + release on drop).
+    owns_separate_controller: bool,
+    /// Host context for the separate controller (destroyed on drop if non-null).
+    controller_host_context: *mut HostApplication,
 }
 
 // Safety: COM pointers are accessed from the thread that creates the instance
@@ -160,6 +171,9 @@ impl Vst3Instance {
                 "VST3 instance created"
             );
 
+            // AddRef the factory so we can use it later for controller creation
+            (factory_vtbl.base.add_ref)(factory);
+
             Ok(Self {
                 component,
                 processor,
@@ -170,6 +184,11 @@ impl Vst3Instance {
                 input_channels,
                 output_channels,
                 name: name.to_string(),
+                factory,
+                factory_vtbl: factory_vtbl as *const _,
+                cached_controller: std::ptr::null_mut(),
+                owns_separate_controller: false,
+                controller_host_context: std::ptr::null_mut(),
             })
         }
     }
@@ -329,16 +348,23 @@ impl Vst3Instance {
         }
     }
 
-    /// Query the component for an IEditController interface.
+    /// Get or create the IEditController for this plugin.
     ///
-    /// Returns a `ParameterRegistry` with all enumerated parameters, or None
-    /// if the component does not support IEditController.
-    pub fn query_parameters(&self) -> Option<ParameterRegistry> {
+    /// Tries in order:
+    /// 1. Return cached controller if already obtained
+    /// 2. QueryInterface on the component (single-component plugins)
+    /// 3. Create a separate controller via the factory (split component/controller plugins)
+    ///
+    /// The returned pointer is cached and owned by the instance.
+    fn get_controller(&mut self) -> Option<*mut ComPtr<IEditControllerVtbl>> {
+        if !self.cached_controller.is_null() {
+            return Some(self.cached_controller);
+        }
+
         unsafe {
             let comp_vtbl = &*(*self.component).vtbl;
 
-            // First try QueryInterface for IEditController directly
-            // (component may implement it directly)
+            // Try 1: QueryInterface for IEditController directly on the component
             let mut controller_ptr: *mut c_void = std::ptr::null_mut();
             let qi_result = (comp_vtbl.query_interface)(
                 self.component as *mut c_void,
@@ -348,34 +374,204 @@ impl Vst3Instance {
 
             if qi_result == K_RESULT_OK && !controller_ptr.is_null() {
                 debug!(plugin = %self.name, "IEditController obtained via QueryInterface");
-                let controller = controller_ptr as *mut ComPtr<IEditControllerVtbl>;
-                // Don't own the controller (it's the same object as component)
-                return Some(ParameterRegistry::from_controller(controller, false));
+                self.cached_controller = controller_ptr as *mut ComPtr<IEditControllerVtbl>;
+                self.owns_separate_controller = false;
+                return Some(self.cached_controller);
             }
 
-            // If QI failed, try getting the controller class ID and creating it
+            // Try 2: Get controller class ID and create a separate controller
             let mut controller_cid = [0u8; 16];
             let result = (comp_vtbl.get_controller_class_id)(
                 self.component as *mut c_void,
                 &mut controller_cid,
             );
 
-            if result == K_RESULT_OK && controller_cid != [0u8; 16] {
-                debug!(
-                    plugin = %self.name,
-                    controller_cid = ?controller_cid,
-                    "Found separate controller class ID"
-                );
-                // We would need the factory to create this — for now just log it
+            if result != K_RESULT_OK || controller_cid == [0u8; 16] {
+                debug!(plugin = %self.name, "No controller class ID available");
+                return None;
+            }
+
+            debug!(
+                plugin = %self.name,
+                controller_cid = ?controller_cid,
+                "Creating separate IEditController via factory"
+            );
+
+            // Create the controller using the factory's createInstance
+            let factory_vtbl = &*self.factory_vtbl;
+            let mut ec_ptr: *mut c_void = std::ptr::null_mut();
+            let create_result = (factory_vtbl.create_instance)(
+                self.factory,
+                controller_cid.as_ptr(),
+                IEDIT_CONTROLLER_IID.as_ptr(),
+                &mut ec_ptr,
+            );
+
+            if create_result != K_RESULT_OK || ec_ptr.is_null() {
                 warn!(
                     plugin = %self.name,
-                    "Separate IEditController not yet supported (requires factory createInstance)"
+                    result = create_result,
+                    "Factory createInstance failed for separate IEditController"
+                );
+                return None;
+            }
+
+            let controller = ec_ptr as *mut ComPtr<IEditControllerVtbl>;
+
+            // Initialize the controller with a host context
+            let host_ctx = HostApplication::new();
+            let ctrl_vtbl = &*(*controller).vtbl;
+            let init_result = (ctrl_vtbl.initialize)(
+                ec_ptr,
+                HostApplication::as_unknown(host_ctx),
+            );
+
+            if init_result != K_RESULT_OK {
+                warn!(
+                    plugin = %self.name,
+                    result = init_result,
+                    "Separate IEditController::initialize failed"
+                );
+                (ctrl_vtbl.release)(ec_ptr);
+                HostApplication::destroy(host_ctx);
+                return None;
+            }
+
+            // Connect component ↔ controller via IConnectionPoint (best-effort)
+            self.connect_component_controller(controller);
+
+            self.cached_controller = controller;
+            self.owns_separate_controller = true;
+            self.controller_host_context = host_ctx;
+
+            info!(
+                plugin = %self.name,
+                "Separate IEditController created and initialized"
+            );
+
+            Some(self.cached_controller)
+        }
+    }
+
+    /// Connect component and controller via IConnectionPoint (if both support it).
+    ///
+    /// This enables bidirectional communication between the component (processor)
+    /// and the controller (parameter/UI side) in split-architecture plugins.
+    fn connect_component_controller(&self, controller: *mut ComPtr<IEditControllerVtbl>) {
+        unsafe {
+            let comp_vtbl = &*(*self.component).vtbl;
+            let ctrl_vtbl = &*(*controller).vtbl;
+
+            // Query IConnectionPoint on the component
+            let mut comp_cp: *mut c_void = std::ptr::null_mut();
+            let qi1 = (comp_vtbl.query_interface)(
+                self.component as *mut c_void,
+                ICONNECTION_POINT_IID.as_ptr(),
+                &mut comp_cp,
+            );
+
+            if qi1 != K_RESULT_OK || comp_cp.is_null() {
+                debug!(plugin = %self.name, "Component does not support IConnectionPoint");
+                return;
+            }
+
+            // Query IConnectionPoint on the controller
+            let mut ctrl_cp: *mut c_void = std::ptr::null_mut();
+            let qi2 = (ctrl_vtbl.query_interface)(
+                controller as *mut c_void,
+                ICONNECTION_POINT_IID.as_ptr(),
+                &mut ctrl_cp,
+            );
+
+            if qi2 != K_RESULT_OK || ctrl_cp.is_null() {
+                debug!(plugin = %self.name, "Controller does not support IConnectionPoint");
+                let cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                (cp_vtbl.release)(comp_cp);
+                return;
+            }
+
+            // Connect both directions
+            let comp_cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+            let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+
+            let r1 = (comp_cp_vtbl.connect)(comp_cp, ctrl_cp);
+            let r2 = (ctrl_cp_vtbl.connect)(ctrl_cp, comp_cp);
+
+            if r1 == K_RESULT_OK && r2 == K_RESULT_OK {
+                debug!(plugin = %self.name, "Component ↔ Controller connected via IConnectionPoint");
+            } else {
+                debug!(
+                    plugin = %self.name,
+                    comp_result = r1,
+                    ctrl_result = r2,
+                    "IConnectionPoint::connect partial or failed"
                 );
             }
 
-            debug!(plugin = %self.name, "No IEditController available");
-            None
+            // Release QI'd IConnectionPoint references
+            (comp_cp_vtbl.release)(comp_cp);
+            (ctrl_cp_vtbl.release)(ctrl_cp);
         }
+    }
+
+    /// Disconnect component and controller IConnectionPoint (best-effort, called on drop).
+    fn disconnect_component_controller(&self) {
+        if !self.owns_separate_controller || self.cached_controller.is_null() {
+            return;
+        }
+
+        unsafe {
+            let comp_vtbl = &*(*self.component).vtbl;
+            let ctrl_vtbl = &*(*self.cached_controller).vtbl;
+
+            let mut comp_cp: *mut c_void = std::ptr::null_mut();
+            let qi1 = (comp_vtbl.query_interface)(
+                self.component as *mut c_void,
+                ICONNECTION_POINT_IID.as_ptr(),
+                &mut comp_cp,
+            );
+
+            let mut ctrl_cp: *mut c_void = std::ptr::null_mut();
+            let qi2 = (ctrl_vtbl.query_interface)(
+                self.cached_controller as *mut c_void,
+                ICONNECTION_POINT_IID.as_ptr(),
+                &mut ctrl_cp,
+            );
+
+            if qi1 == K_RESULT_OK && !comp_cp.is_null() && qi2 == K_RESULT_OK && !ctrl_cp.is_null()
+            {
+                let comp_cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+
+                (comp_cp_vtbl.disconnect)(comp_cp, ctrl_cp);
+                (ctrl_cp_vtbl.disconnect)(ctrl_cp, comp_cp);
+
+                (comp_cp_vtbl.release)(comp_cp);
+                (ctrl_cp_vtbl.release)(ctrl_cp);
+
+                debug!(plugin = %self.name, "Component ↔ Controller disconnected");
+            } else {
+                // Release any QI'd refs that succeeded
+                if qi1 == K_RESULT_OK && !comp_cp.is_null() {
+                    let vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                    (vtbl.release)(comp_cp);
+                }
+                if qi2 == K_RESULT_OK && !ctrl_cp.is_null() {
+                    let vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                    (vtbl.release)(ctrl_cp);
+                }
+            }
+        }
+    }
+
+    /// Query the component for an IEditController interface.
+    ///
+    /// Returns a `ParameterRegistry` with all enumerated parameters, or None
+    /// if the component does not support IEditController.
+    pub fn query_parameters(&mut self) -> Option<ParameterRegistry> {
+        let controller = self.get_controller()?;
+        // The instance owns the controller — ParameterRegistry borrows it
+        unsafe { Some(ParameterRegistry::from_controller(controller, false)) }
     }
 
     /// Install a component handler on the IEditController.
@@ -383,34 +579,23 @@ impl Vst3Instance {
     /// Creates a `HostComponentHandler`, calls `setComponentHandler()` on the controller,
     /// and stores the handler for later polling.
     pub fn install_component_handler(&mut self) -> bool {
-        unsafe {
-            let comp_vtbl = &*(*self.component).vtbl;
-
-            // Query for IEditController to call setComponentHandler
-            let mut controller_ptr: *mut c_void = std::ptr::null_mut();
-            let qi_result = (comp_vtbl.query_interface)(
-                self.component as *mut c_void,
-                IEDIT_CONTROLLER_IID.as_ptr(),
-                &mut controller_ptr,
-            );
-
-            if qi_result != K_RESULT_OK || controller_ptr.is_null() {
-                debug!(plugin = %self.name, "No IEditController for component handler");
+        let controller = match self.get_controller() {
+            Some(c) => c,
+            None => {
+                debug!(plugin = %self.name, "No IEditController available for component handler");
                 return false;
             }
+        };
 
-            let controller = controller_ptr as *mut ComPtr<IEditControllerVtbl>;
+        unsafe {
             let ctrl_vtbl = &*(*controller).vtbl;
 
             // Create and install the handler
             let handler = HostComponentHandler::new();
             let result = (ctrl_vtbl.set_component_handler)(
-                controller_ptr,
+                controller as *mut c_void,
                 HostComponentHandler::as_ptr(handler),
             );
-
-            // Release the QI'd controller reference (we don't own it, component does)
-            (ctrl_vtbl.release)(controller_ptr);
 
             if result == K_RESULT_OK {
                 self.component_handler = handler;
@@ -457,6 +642,27 @@ impl Drop for Vst3Instance {
         self.shutdown();
 
         unsafe {
+            // Disconnect IConnectionPoint before releasing the controller
+            self.disconnect_component_controller();
+
+            // Release the cached controller
+            if self.owns_separate_controller && !self.cached_controller.is_null() {
+                // Terminate and release the separately created controller
+                let ctrl_vtbl = &*(*self.cached_controller).vtbl;
+                (ctrl_vtbl.terminate)(self.cached_controller as *mut c_void);
+                (ctrl_vtbl.release)(self.cached_controller as *mut c_void);
+                debug!(plugin = %self.name, "Separate IEditController terminated and released");
+
+                // Destroy controller's host context
+                if !self.controller_host_context.is_null() {
+                    HostApplication::destroy(self.controller_host_context);
+                }
+            } else if !self.cached_controller.is_null() {
+                // Release QI'd controller reference (one Release for the QI AddRef)
+                let ctrl_vtbl = &*(*self.cached_controller).vtbl;
+                (ctrl_vtbl.release)(self.cached_controller as *mut c_void);
+            }
+
             // Terminate the component
             let comp_vtbl = &*(*self.component).vtbl;
             (comp_vtbl.terminate)(self.component as *mut c_void);
@@ -466,6 +672,12 @@ impl Drop for Vst3Instance {
             let proc_vtbl = &*(*self.processor).vtbl;
             (proc_vtbl.release)(self.processor as *mut c_void);
             (comp_vtbl.release)(self.component as *mut c_void);
+
+            // Release factory reference (balances the AddRef in create())
+            if !self.factory_vtbl.is_null() {
+                let fvtbl = &*self.factory_vtbl;
+                (fvtbl.base.release)(self.factory);
+            }
 
             // Destroy host context
             HostApplication::destroy(self.host_context);
@@ -495,11 +707,38 @@ mod tests {
     }
 
     #[test]
+    fn test_iedit_controller_iid_is_16_bytes() {
+        assert_eq!(IEDIT_CONTROLLER_IID.len(), 16);
+    }
+
+    #[test]
+    fn test_iconnection_point_iid_is_16_bytes() {
+        assert_eq!(ICONNECTION_POINT_IID.len(), 16);
+    }
+
+    #[test]
     fn test_process_setup_constants() {
         assert_eq!(K_SAMPLE_32, 0);
         assert_eq!(K_REALTIME, 0);
         assert_eq!(K_AUDIO, 0);
         assert_eq!(K_INPUT, 0);
         assert_eq!(K_OUTPUT, 1);
+    }
+
+    #[test]
+    fn test_iconnection_point_vtbl_has_correct_layout() {
+        // IConnectionPointVtbl should have 5 function pointers:
+        // queryInterface, addRef, release, connect, disconnect
+        let size = std::mem::size_of::<IConnectionPointVtbl>();
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(size, 5 * 8, "IConnectionPointVtbl should be 5 pointers");
+    }
+
+    #[test]
+    fn test_factory_vtbl_has_create_instance() {
+        // IPluginFactoryVtbl should have base (3 fns) + 4 factory fns = 7 pointers
+        let size = std::mem::size_of::<IPluginFactoryVtbl>();
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(size, 7 * 8, "IPluginFactoryVtbl should be 7 pointers");
     }
 }

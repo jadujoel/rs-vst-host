@@ -510,6 +510,37 @@ pub const K_IS_PROGRAM_CHANGE: i32 = 1 << 4;
 #[allow(dead_code)]
 pub const K_IS_BYPASS: i32 = 1 << 5;
 
+// ─── IConnectionPoint vtable ──────────────────────────────────────────────
+
+/// IConnectionPoint IID: {22888DDB-156E-45AE-8358-B34808190625}
+#[cfg(not(target_os = "windows"))]
+pub const ICONNECTION_POINT_IID: [u8; 16] = [
+    0x22, 0x88, 0x8D, 0xDB, 0x15, 0x6E, 0x45, 0xAE, 0x83, 0x58, 0xB3, 0x48, 0x08, 0x19, 0x06, 0x25,
+];
+
+/// IConnectionPoint IID in COM-compatible byte order (Windows).
+#[cfg(target_os = "windows")]
+pub const ICONNECTION_POINT_IID: [u8; 16] = [
+    0xDB, 0x8D, 0x88, 0x22, 0x6E, 0x15, 0xAE, 0x45, 0x83, 0x58, 0xB3, 0x48, 0x08, 0x19, 0x06, 0x25,
+];
+
+/// IConnectionPoint vtable (extends FUnknown).
+///
+/// vtable layout:
+///   [0-2]  FUnknown: queryInterface, addRef, release
+///   [3-4]  IConnectionPoint: connect, disconnect
+#[repr(C)]
+pub struct IConnectionPointVtbl {
+    // FUnknown
+    pub query_interface:
+        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    // IConnectionPoint
+    pub connect: unsafe extern "system" fn(this: *mut c_void, other: *mut c_void) -> i32,
+    pub disconnect: unsafe extern "system" fn(this: *mut c_void, other: *mut c_void) -> i32,
+}
+
 // ─── COM pointer wrapper ──────────────────────────────────────────────────
 
 /// Generic COM object: pointer-to-vtable-pointer layout.
@@ -654,6 +685,23 @@ mod tests {
         let _ = expected;
     }
 
+    #[test]
+    fn test_iconnection_point_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("22888DDB-156E-45AE-8358-B34808190625");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            ICONNECTION_POINT_IID, expected,
+            "IConnectionPoint IID mismatch"
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            ICONNECTION_POINT_IID,
+            uuid_to_com("22888DDB-156E-45AE-8358-B34808190625"),
+            "IConnectionPoint IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
     // ─── UUID helper tests ────────────────────────────────────────────────
 
     #[test]
@@ -707,6 +755,7 @@ mod tests {
         assert_eq!(IEDIT_CONTROLLER_IID.len(), 16);
         assert_eq!(IEVENT_LIST_IID.len(), 16);
         assert_eq!(IPARAMETER_CHANGES_IID.len(), 16);
+        assert_eq!(ICONNECTION_POINT_IID.len(), 16);
     }
 
     #[test]

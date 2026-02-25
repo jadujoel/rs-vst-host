@@ -8,7 +8,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Plugin cache** — JSON-based cache for instant plugin listing without re-scanning
 - **Real-time audio** — Load and run plugins with real-time audio processing via `cpal`
 - **MIDI input** — Connect MIDI devices to send notes to instrument plugins via `midir`
-- **Parameter introspection** — Enumerate and display plugin parameters via IEditController
+- **Parameter introspection** — Enumerate and display plugin parameters via IEditController (supports both single-component and split component/controller architectures)
 - **Audio devices** — Enumerate and select audio output devices
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins

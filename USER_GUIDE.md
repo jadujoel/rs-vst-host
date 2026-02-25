@@ -184,12 +184,13 @@ rs-vst-host run [OPTIONS] <PLUGIN>
 
 1. Resolves the plugin by name (from cache) or by direct `.vst3` bundle path.
 2. Loads the plugin module and creates a VST3 component instance.
-3. Installs a component handler for plugin parameter notifications.
-4. Opens the audio output device and configures processing (sample rate, block size, stereo bus arrangement).
-5. Optionally connects a MIDI input port for instrument plugins.
-6. Activates the plugin and starts real-time audio processing with transport info.
-7. Enters an interactive command shell for runtime parameter control.
-8. Type `quit` or press **Ctrl+C** to stop processing and cleanly shut down.
+3. Obtains the IEditController (via QueryInterface for single-component plugins, or by creating a separate controller via the factory for split-architecture plugins like FabFilter).
+4. Installs a component handler for plugin parameter notifications.
+5. Opens the audio output device and configures processing (sample rate, block size, stereo bus arrangement).
+6. Optionally connects a MIDI input port for instrument plugins.
+7. Activates the plugin and starts real-time audio processing with transport info.
+8. Enters an interactive command shell for runtime parameter control.
+9. Type `quit` or press **Ctrl+C** to stop processing and cleanly shut down.
 
 **Example:**
 

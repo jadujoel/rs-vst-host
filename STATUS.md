@@ -6,8 +6,9 @@
 **Milestone M3 achieved**: Real-time audio callback calls plugin process reliably.
 **Milestone M4 achieved**: MIDI note input triggers instrument output.
 **Milestone M5 achieved**: Parameter control + stable CLI UX.
-**Quality gate achieved**: 237 tests passing, zero warnings, comprehensive coverage of non-RT components.
+**Quality gate achieved**: 242 tests passing, zero warnings, comprehensive coverage of non-RT components.
 **Bug fix release**: IAudioProcessor IID corrected, CFBundleRef support added, IPluginFactory3 support added.
+**Compatibility fix**: Separate IEditController support — split component/controller plugins (e.g. FabFilter) now expose parameters.
 
 ### Completed
 
@@ -53,7 +54,7 @@
 - **VST3 event structures** (`vst3/com.rs`): Event, NoteOnEvent, NoteOffEvent `#[repr(C)]` structs matching SDK layout; IEventList vtable
 - **Host event list** (`vst3/event_list.rs`): IEventList COM object implementation — add/get/clear events, QueryInterface for IEventList and FUnknown IIDs; static vtable with proper COM calling convention
 - **Engine MIDI integration** (`audio/engine.rs`): Audio engine drains MIDI receiver each block, translates to VST3 events, passes via HostEventList to ProcessData.input_events
-- **IEditController query** (`vst3/instance.rs`): `query_parameters()` — QueryInterface for IEditController from component, with fallback to separate controller class ID detection
+- **IEditController query** (`vst3/instance.rs`): `query_parameters()` — QueryInterface for IEditController from component; for split-architecture plugins, creates a separate controller via factory `createInstance`, initializes it, and connects component↔controller via IConnectionPoint
 - **Parameter registry** (`vst3/params.rs`): Enumerates all plugin parameters via IEditController, stores metadata (title, units, default, current, flags), converts normalized/plain values, formats display strings
 - **IEditController vtable** (`vst3/com.rs`): Full vtable definition with getParameterCount, getParameterInfo, setParamNormalized, getParamStringByValue, normalizedParamToPlain, etc.
 - **ParameterInfo struct** (`vst3/com.rs`): Matches SDK layout with id, title, short_title, units, step_count, default_normalized_value, flags
@@ -88,10 +89,11 @@
 - **Clean build**: Zero warnings
 
 ### Test Results
-- 237 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification, tone generator, audio device, MIDI receiver, CFBundleRef creation)
+- 242 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification, tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout)
 - Clean build with zero warnings
 - Test stability verified across multiple consecutive runs
 - Successfully loads and runs real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
+- Parameter enumeration works for both single-component and split component/controller plugins
 - MIDI port enumeration working (midir, CoreMIDI)
 - Audio device enumeration working (cpal)
 

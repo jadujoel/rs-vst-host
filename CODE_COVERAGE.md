@@ -2,7 +2,7 @@
 
 ## Summary
 
-- **Total tests:** 237
+- **Total tests:** 242
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
@@ -11,7 +11,7 @@
 
 | Module | Tests | Coverage Level | Notes |
 |--------|------:|---------------|-------|
-| `src/vst3/com.rs` | 21 | ✅ Full | Struct layouts, IIDs, Event construction, parameter flags, speaker arrangements, UUID-to-bytes verification for all 7 IIDs |
+| `src/vst3/com.rs` | 22 | ✅ Full | Struct layouts, IIDs, Event construction, parameter flags, speaker arrangements, UUID-to-bytes verification for all 8 IIDs including IConnectionPoint |
 | `src/error.rs` | 20 | ✅ Full | Display formatting, From conversions, Debug for all 4 error types |
 | `src/vst3/process.rs` | 20 | ✅ Full | Buffer creation, interleaving, edge cases, setter methods, zero-channel configs |
 | `src/midi/translate.rs` | 18 | ✅ Full | Note On/Off, channels, pitches, velocity range, batch, truncation, unsupported |
@@ -30,7 +30,7 @@
 | `src/vst3/module.rs` | 6 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification; module loading requires real .vst3 bundles |
 | `src/audio/engine.rs` | 5 | ⚠️ Partial | TestToneGenerator only; AudioEngine requires live Vst3Instance |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
-| `src/vst3/instance.rs` | 3 | ⚠️ Partial | IID constants only; all methods require real COM objects |
+| `src/vst3/instance.rs` | 7 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size; all methods require real COM objects |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 | `src/app/commands.rs` | 0 | ❌ None | Integration-level orchestration; requires plugins + hardware |
 | `src/app/mod.rs` | 0 | N/A | Module declarations only |
@@ -82,6 +82,17 @@ Based on module-level analysis:
 | Host context | 7 | IHost QI, ref counting, null safety, destroy null |
 | Component handler | 4 | Concurrent perform_edit, restart flag OR, destroy null, as_ptr |
 | Process context | 0 | Already well-covered at 10 tests |
+
+## v0.7.0 Test Additions
+
+5 new tests added (237 → 242 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| COM IID verification | 1 | IConnectionPoint IID UUID-to-bytes validation |
+| COM IID lengths | 1 | IConnectionPoint IID is 16 bytes |
+| Instance vtable layouts | 2 | IConnectionPointVtbl (5 pointers), IPluginFactoryVtbl (7 pointers) size verification |
+| Instance IID | 1 | IEditController IID is 16 bytes |
 
 ## v0.6.0 Test Additions
 
