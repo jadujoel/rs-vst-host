@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod error;
+mod gui;
 mod host;
 mod midi;
 mod vst3;
@@ -37,6 +38,7 @@ fn main() -> anyhow::Result<()> {
         )?,
         Command::Devices => app::commands::devices()?,
         Command::MidiPorts => app::commands::midi_ports()?,
+        Command::Gui => gui::launch()?,
     }
 
     Ok(())

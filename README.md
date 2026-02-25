@@ -13,7 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Cross-platform** — macOS, Linux, and Windows support
-- **Upcoming GUI** — Phase 7 introduces a modern "Liquid Glass" graphical interface using `egui` and `wgpu`
+- **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, and transport controls
 
 ## Requirements
 
@@ -43,6 +43,9 @@ rs-vst-host devices
 
 # List MIDI input ports
 rs-vst-host midi-ports
+
+# Launch the graphical interface
+rs-vst-host gui
 ```
 
 ## Commands
@@ -54,6 +57,7 @@ rs-vst-host midi-ports
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
 | `midi-ports` | List available MIDI input ports |
+| `gui` | Launch the graphical user interface |
 
 ### `run` Options
 
@@ -79,6 +83,9 @@ src/
 ├── audio/
 │   ├── device.rs    # cpal audio device management
 │   └── engine.rs    # Audio processing engine, test tone generator
+├── gui/
+│   ├── app.rs       # HostApp eframe::App — plugin browser, rack, transport
+│   └── theme.rs     # Liquid Glass theme — colours, corner radii, shadows, styling
 ├── host/
 │   └── mod.rs       # Host-side abstractions
 ├── midi/
@@ -145,6 +152,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 | `thiserror` / `anyhow` | Error handling |
 | `tracing` | Structured logging |
 | `dirs` 6 | Platform-specific directories |
+| `eframe` / `egui` 0.31 | Graphical user interface |
 
 ## Testing
 
@@ -152,7 +160,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-237 unit tests covering error types, CLI parsing, scanner, cache I/O, COM struct layouts, IID UUID verification, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
+273 unit tests covering error types, GUI theme, GUI app state, CLI parsing, scanner, cache I/O, COM struct layouts, IID UUID verification, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
@@ -173,6 +181,8 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 - [x] Phase 5 — Host UX (MVP CLI) (M5)
 - [x] Phase 6 — Validation and quality gates (223 tests)
 - [x] Phase 7 — Bug fixes and compatibility (IID fix, CFBundleRef, IPluginFactory3)
+- [x] Phase 7 Step 1 — GUI skeleton (plugin browser, rack, transport controls)
+- [ ] Phase 7 Step 2 — Live audio integration in GUI
 - [ ] Phase 8 — Beyond MVP (editor windows, presets, routing)
 
 ## License

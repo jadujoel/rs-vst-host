@@ -52,6 +52,8 @@ pub enum Command {
     Devices,
     /// List available MIDI input ports.
     MidiPorts,
+    /// Launch the graphical user interface.
+    Gui,
 }
 
 #[cfg(test)]
@@ -70,8 +72,7 @@ mod tests {
 
     #[test]
     fn test_parse_scan_with_paths() {
-        let cli =
-            Cli::try_parse_from(["rs-vst-host", "scan", "--paths", "/custom/vst3"]).unwrap();
+        let cli = Cli::try_parse_from(["rs-vst-host", "scan", "--paths", "/custom/vst3"]).unwrap();
         match cli.command {
             Command::Scan { paths } => {
                 assert_eq!(paths.len(), 1);
@@ -189,5 +190,11 @@ mod tests {
             Command::Run { buffer_size, .. } => assert_eq!(buffer_size, Some(1024)),
             _ => panic!("Expected Run command"),
         }
+    }
+
+    #[test]
+    fn test_parse_gui() {
+        let cli = Cli::try_parse_from(["rs-vst-host", "gui"]).unwrap();
+        matches!(cli.command, Command::Gui);
     }
 }

@@ -2,7 +2,7 @@
 
 ## Summary
 
-- **Total tests:** 242
+- **Total tests:** 273
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
@@ -21,7 +21,7 @@
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
-| `src/app/cli.rs` | 11 | ✅ Full | Parse all subcommands, required/optional args, invalid input rejection |
+| `src/app/cli.rs` | 12 | ✅ Full | Parse all subcommands including `gui`, required/optional args, invalid input rejection |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |
@@ -38,11 +38,14 @@
 | `src/audio/mod.rs` | 0 | N/A | Module declarations only |
 | `src/midi/mod.rs` | 0 | N/A | Module declarations only |
 | `src/host/mod.rs` | 0 | N/A | Placeholder module |
+| `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
+| `src/gui/app.rs` | 19 | ✅ Full | TransportState default, HostApp default, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, multiple adds |
+| `src/gui/mod.rs` | 0 | N/A | Module declarations only |
 | `src/main.rs` | 0 | N/A | Entry point only |
 
 ## Coverage Analysis
 
-### Fully Tested (✅) — 14 modules
+### Fully Tested (✅) — 16 modules
 All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
 ### Partially Tested (⚠️) — 8 modules
@@ -82,6 +85,16 @@ Based on module-level analysis:
 | Host context | 7 | IHost QI, ref counting, null safety, destroy null |
 | Component handler | 4 | Concurrent perform_edit, restart flag OR, destroy null, as_ptr |
 | Process context | 0 | Already well-covered at 10 tests |
+
+## v0.9.0 Test Additions (GUI Skeleton)
+
+31 new tests added (242 → 273 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| GUI theme | 11 | Colour palette validation, corner radius, shadow, frame construction, theme apply, translucency, semantic colour distinctness |
+| GUI app | 19 | Transport default, HostApp default, add/remove rack slots, selected slot adjustment, filtered classes by name/vendor/subcategory/factory vendor, bypass toggle, status messages, multiple adds |
+| CLI parsing | 1 | Parse `gui` subcommand |
 
 ## v0.8.0 Test Additions
 

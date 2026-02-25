@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-02-25
+
+### Added
+- **GUI Skeleton** (`gui/` module): Basic graphical user interface using `egui` 0.31 and `eframe` 0.31, implementing the first step of the Liquid Glass design.
+- **Liquid Glass Theme** (`gui/theme.rs`): Full dark glassmorphism theme — deep blue-black background, translucent panel fills, electric blue accent colour, CornerRadius (12/8/6 px), soft panel shadows, glass border strokes, custom text styles, and helper frame constructors (`glass_card_frame`, `section_frame`).
+- **HostApp** (`gui/app.rs`): Three-panel `eframe::App` layout:
+  - **Plugin Browser** (left sidebar): Scan button, text search filter, scrollable list of cached plugins as glass cards with vendor/subcategory display and add-to-rack button.
+  - **Plugin Rack** (central panel): Loaded plugin slots shown as selectable glass cards with slot number, name, vendor, bypass toggle, and remove button.
+  - **Transport Bar** (bottom panel): Play/pause button, BPM drag value (20–300), time signature editor, status message display.
+- **Data structures**: `PluginSlot`, `TransportState`, `BrowserFilter` for GUI state management with rack add/remove, filter matching (by name, category, subcategory, vendor), and selected slot tracking.
+- **`gui` CLI command**: New subcommand to launch the graphical interface (`cargo run -- gui`).
+- **Dependencies**: `eframe` 0.31, `egui` 0.31 added to `Cargo.toml`.
+- 31 new unit tests (242 → 273 total): 11 theme tests, 19 app state tests, 1 CLI parsing test.
+
 ## [0.8.0] - 2026-02-25
 
 ### Added

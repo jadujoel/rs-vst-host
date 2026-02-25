@@ -6,10 +6,11 @@
 **Milestone M3 achieved**: Real-time audio callback calls plugin process reliably.
 **Milestone M4 achieved**: MIDI note input triggers instrument output.
 **Milestone M5 achieved**: Parameter control + stable CLI UX.
-**Quality gate achieved**: 242 tests passing, zero warnings, comprehensive coverage of non-RT components.
+**Quality gate achieved**: 273 tests passing, zero warnings, comprehensive coverage of non-RT components.
 **Bug fix release**: IAudioProcessor IID corrected, CFBundleRef support added, IPluginFactory3 support added.
 **Compatibility fix**: Separate IEditController support — split component/controller plugins (e.g. FabFilter) now expose parameters.
 **GUI Design**: Created `DESIGN_DOCUMENT.md` outlining the Liquid Glass style architecture using `egui` + `wgpu`.
+**GUI Skeleton**: Basic `egui`/`eframe` GUI window with Liquid Glass theme, plugin browser, plugin rack, and transport controls. New `gui` CLI command.
 
 ### Completed
 
@@ -89,8 +90,19 @@
 - **Test stability**: All 223 tests pass consistently across 5 consecutive runs
 - **Clean build**: Zero warnings
 
+#### Phase 7 — GUI Implementation (Step 1: Skeleton)
+- **GUI module** (`gui/mod.rs`): New top-level module with `app` and `theme` submodules
+- **Liquid Glass theme** (`gui/theme.rs`): Full egui 0.31 theme — color palette (BG_BASE, PANEL_FILL, ACCENT, etc.), CornerRadius constants (card 12px, button 8px, small 6px), Shadow, Margin constants, widget/selection/window visuals, text styles, glass_card_frame() and section_frame() helpers
+- **HostApp** (`gui/app.rs`): `eframe::App` implementation with three-panel layout:
+  - Left sidebar: Plugin browser with scan button, search filter, scrollable list of glass-card plugin entries with add-to-rack buttons
+  - Central panel: Plugin rack showing loaded plugin slots as glass cards with bypass toggle, remove button, and selection highlight
+  - Bottom bar: Transport controls (play/pause, BPM drag value, time signature), status message display
+- **Data structures**: `PluginSlot`, `TransportState`, `BrowserFilter`, `HostApp` state management with add/remove/filter operations
+- **CLI integration**: `gui` subcommand added to `clap` CLI, launches the eframe window from `main.rs`
+- **Dependencies**: Added `eframe` 0.31 and `egui` 0.31 to `Cargo.toml`
+
 ### Test Results
-- 242 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification, tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout)
+- 273 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification, tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout, GUI theme colours/constants/apply, GUI app state management/rack/filter/browser)
 - Clean build with zero warnings
 - Test stability verified across multiple consecutive runs
 - Successfully loads and runs real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
@@ -105,7 +117,9 @@
 - `CODE_COVERAGE.md` — test coverage analysis by module
 
 ### Next Steps (Phase 7 — Iteration Beyond MVP)
+- Integrate GUI with live audio engine (load + run plugins from the rack)
 - Plugin editor window support where available
 - Preset/program management
+- Parameter view panel in the GUI for selected plugin
 - Multiple plugin instances and simple routing graph
 - Session save/load

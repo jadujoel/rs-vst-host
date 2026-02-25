@@ -2,7 +2,7 @@
 
 A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audio plugins from the command line.
 
-> **Note:** Phase 7 is currently underway to introduce a modern "Liquid Glass" graphical user interface. This guide currently covers the CLI functionality.
+> **Note:** Phase 7 introduced a graphical user interface alongside the CLI. Both modes are fully functional — use `gui` to launch the window, or run any CLI command as before.
 
 ---
 
@@ -17,7 +17,8 @@ A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audi
   - [run](#run)
   - [devices](#devices)
   - [midi-ports](#midi-ports)
-- [Interactive Mode](#interactive-mode)
+  - [gui](#gui)
+- [Graphical Interface](#graphical-interface)
 - [Plugin Search Paths](#plugin-search-paths)
 - [Plugin Cache](#plugin-cache)
 - [Verbose Logging](#verbose-logging)
@@ -264,6 +265,49 @@ MIDI input ports:
     1. IAC Driver Bus 1
     2. Arturia KeyLab Essential 49
 ```
+
+---
+
+### gui
+
+Launch the graphical user interface.
+
+```
+rs-vst-host gui
+```
+
+This opens a window with the **Liquid Glass** themed interface containing:
+- **Plugin Browser** (left sidebar) — scan for plugins, search/filter, add to rack
+- **Plugin Rack** (central panel) — manage loaded plugin slots with bypass and remove controls
+- **Transport Bar** (bottom) — play/pause, tempo, time signature, status messages
+
+See [Graphical Interface](#graphical-interface) for details.
+
+---
+
+## Graphical Interface
+
+The GUI provides a modern glassmorphism-styled interface for managing plugins. Launch it with:
+
+```sh
+rs-vst-host gui
+```
+
+### Plugin Browser
+
+The left sidebar shows all cached plugins. Use the **Scan Plugins** button to discover VST3 plugins, then filter the list by typing in the search box. Matches on plugin name, vendor, category, and subcategory. Click the **＋** button on any plugin to add it to the rack.
+
+### Plugin Rack
+
+The central panel displays loaded plugin slots as glass cards. Each slot shows the plugin name, vendor, a bypass toggle (🔊/🔇), and a remove button (✕). Click a slot to select it (highlighted with an accent border).
+
+### Transport Controls
+
+The bottom bar contains:
+- **Play/Pause** — toggle transport state
+- **BPM** — drag to adjust tempo (20–300)
+- **Time Signature** — numerator/denominator (1–16 each)
+- A status message showing the last operation result
 
 ---
 
