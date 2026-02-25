@@ -2,10 +2,17 @@
 //!
 //! The engine owns the VST3 instance and process buffers, and runs inside
 //! the cpal audio callback. A test tone generator provides input signal
-//! for effect plugins.
+//! for effect plugins. MIDI events are received via a lock-free queue and
+//! translated to VST3 events for the plugin.
 
+use crate::midi::device::MidiReceiver;
+use crate::midi::translate;
+use crate::vst3::event_list::HostEventList;
 use crate::vst3::instance::Vst3Instance;
+use crate::vst3::param_changes::HostParameterChanges;
 use crate::vst3::process::ProcessBuffers;
+use crate::vst3::process_context::ProcessContext;
+use std::sync::Arc;
 use tracing::debug;
 
 /// Generates a sine wave test tone for effect plugin testing.
@@ -70,6 +77,7 @@ impl TestToneGenerator {
 /// The audio processing engine that runs inside the cpal callback.
 ///
 /// Manages the VST3 instance, process buffers, and test tone generation.
+/// Optionally receives MIDI events and passes them to the plugin.
 pub struct AudioEngine {
     /// The VST3 plugin instance.
     instance: Vst3Instance,
@@ -81,7 +89,22 @@ pub struct AudioEngine {
     device_channels: usize,
     /// Temporary buffer for tone generation.
     tone_buffer: Vec<f32>,
+    /// MIDI receiver (if MIDI input is connected).
+    midi_receiver: Option<Arc<MidiReceiver>>,
+    /// Host-side event list for passing events to the plugin.
+    event_list: *mut HostEventList,
+    /// Transport and timing context passed to the plugin.
+    process_context: ProcessContext,
+    /// Host-side parameter changes queue.
+    param_changes: *mut HostParameterChanges,
+    /// Pending parameter changes from control thread.
+    pending_param_changes: Arc<std::sync::Mutex<Vec<(u32, f64)>>>,
 }
+
+// Safety: AudioEngine is protected by Mutex in the shared Arc. The event_list
+// raw pointer is only accessed from one thread at a time via the Mutex lock.
+// The Vst3Instance already implements Send.
+unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
     /// Create a new audio engine with the given VST3 instance.
@@ -96,6 +119,10 @@ impl AudioEngine {
         let buffers = ProcessBuffers::new(input_channels, output_channels, max_block_size);
         let tone = TestToneGenerator::new(sample_rate);
         let tone_buffer = vec![0.0f32; max_block_size];
+        let event_list = HostEventList::new();
+        let mut process_context = ProcessContext::new(sample_rate);
+        process_context.set_playing(true);
+        let param_changes = HostParameterChanges::new();
 
         debug!(
             input_channels,
@@ -111,14 +138,25 @@ impl AudioEngine {
             tone,
             device_channels,
             tone_buffer,
+            midi_receiver: None,
+            event_list,
+            process_context,
+            param_changes,
+            pending_param_changes: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
+    }
+
+    /// Set the MIDI receiver for receiving real-time MIDI events.
+    pub fn set_midi_receiver(&mut self, receiver: Arc<MidiReceiver>) {
+        self.midi_receiver = Some(receiver);
+        debug!("MIDI receiver connected to audio engine");
     }
 
     /// Process one block of audio.
     ///
     /// `output` is the interleaved output buffer from cpal.
-    /// The engine fills input from the test tone, calls the VST3 plugin,
-    /// and writes the result to `output`.
+    /// The engine fills input from the test tone, processes MIDI events,
+    /// calls the VST3 plugin, and writes the result to `output`.
     pub fn process(&mut self, output: &mut [f32]) {
         let num_channels = self.device_channels;
         if num_channels == 0 {
@@ -149,11 +187,55 @@ impl AudioEngine {
             }
         }
 
+        // Handle MIDI events
+        unsafe {
+            HostEventList::clear(self.event_list);
+
+            if let Some(ref receiver) = self.midi_receiver {
+                let messages = receiver.drain();
+                if !messages.is_empty() {
+                    let events = translate::translate_midi_batch(&messages);
+                    for event in events {
+                        HostEventList::add(self.event_list, event);
+                    }
+                }
+            }
+
+            // Set the event list on the process data
+            self.buffers.set_input_events(HostEventList::as_ptr(self.event_list));
+        }
+
+        // Handle parameter changes from the control thread
+        unsafe {
+            HostParameterChanges::clear(self.param_changes);
+
+            if let Ok(mut pending) = self.pending_param_changes.try_lock() {
+                for (param_id, value) in pending.drain(..) {
+                    HostParameterChanges::add_change(self.param_changes, param_id, 0, value);
+                }
+            }
+
+            self.buffers.set_input_parameter_changes(
+                HostParameterChanges::as_ptr(self.param_changes),
+            );
+        }
+
+        // Set process context (transport info)
+        self.buffers.set_process_context(self.process_context.as_ptr());
+
         // Call VST3 process
         unsafe {
             let data = self.buffers.process_data_ptr();
             self.instance.process(data);
         }
+
+        // Advance transport
+        self.process_context.advance(num_samples as i32);
+
+        // Clear pointers after processing
+        self.buffers.set_input_events(std::ptr::null_mut());
+        self.buffers.set_input_parameter_changes(std::ptr::null_mut());
+        self.buffers.set_process_context(std::ptr::null_mut());
 
         // Read output back to interleaved cpal buffer
         let actual_output_len = num_samples * num_channels;
@@ -177,10 +259,33 @@ impl AudioEngine {
         &mut self.tone
     }
 
+    /// Get a clone of the pending parameter changes queue.
+    ///
+    /// The interactive control thread pushes `(param_id, value)` pairs here;
+    /// the audio callback drains them into `HostParameterChanges` each block.
+    pub fn pending_param_queue(&self) -> Arc<std::sync::Mutex<Vec<(u32, f64)>>> {
+        self.pending_param_changes.clone()
+    }
+
+    /// Set the tempo in BPM.
+    #[allow(dead_code)]
+    pub fn set_tempo(&mut self, bpm: f64) {
+        self.process_context.set_tempo(bpm);
+    }
+
     /// Get the plugin name.
     #[allow(dead_code)]
     pub fn plugin_name(&self) -> &str {
         &self.instance.name
+    }
+}
+
+impl Drop for AudioEngine {
+    fn drop(&mut self) {
+        unsafe {
+            HostEventList::destroy(self.event_list);
+            HostParameterChanges::destroy(self.param_changes);
+        }
     }
 }
 

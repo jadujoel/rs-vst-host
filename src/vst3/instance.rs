@@ -9,7 +9,9 @@
 
 use crate::error::Vst3Error;
 use crate::vst3::com::*;
+use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::host_context::HostApplication;
+use crate::vst3::params::ParameterRegistry;
 use std::ffi::c_void;
 use tracing::{debug, info, warn};
 
@@ -24,6 +26,8 @@ pub struct Vst3Instance {
     processor: *mut ComPtr<IAudioProcessorVtbl>,
     /// Host context (owned, destroyed on drop).
     host_context: *mut HostApplication,
+    /// IComponentHandler (owned, destroyed on drop).
+    component_handler: *mut HostComponentHandler,
     /// Whether the component is currently active.
     active: bool,
     /// Whether processing is currently enabled.
@@ -160,6 +164,7 @@ impl Vst3Instance {
                 component,
                 processor,
                 host_context,
+                component_handler: std::ptr::null_mut(),
                 active: false,
                 processing: false,
                 input_channels,
@@ -325,6 +330,108 @@ impl Vst3Instance {
         }
     }
 
+    /// Query the component for an IEditController interface.
+    ///
+    /// Returns a `ParameterRegistry` with all enumerated parameters, or None
+    /// if the component does not support IEditController.
+    pub fn query_parameters(&self) -> Option<ParameterRegistry> {
+        unsafe {
+            let comp_vtbl = &*(*self.component).vtbl;
+
+            // First try QueryInterface for IEditController directly
+            // (component may implement it directly)
+            let mut controller_ptr: *mut c_void = std::ptr::null_mut();
+            let qi_result = (comp_vtbl.query_interface)(
+                self.component as *mut c_void,
+                IEDIT_CONTROLLER_IID.as_ptr(),
+                &mut controller_ptr,
+            );
+
+            if qi_result == K_RESULT_OK && !controller_ptr.is_null() {
+                debug!(plugin = %self.name, "IEditController obtained via QueryInterface");
+                let controller = controller_ptr as *mut ComPtr<IEditControllerVtbl>;
+                // Don't own the controller (it's the same object as component)
+                return Some(ParameterRegistry::from_controller(controller, false));
+            }
+
+            // If QI failed, try getting the controller class ID and creating it
+            let mut controller_cid = [0u8; 16];
+            let result = (comp_vtbl.get_controller_class_id)(
+                self.component as *mut c_void,
+                &mut controller_cid,
+            );
+
+            if result == K_RESULT_OK && controller_cid != [0u8; 16] {
+                debug!(
+                    plugin = %self.name,
+                    controller_cid = ?controller_cid,
+                    "Found separate controller class ID"
+                );
+                // We would need the factory to create this — for now just log it
+                warn!(
+                    plugin = %self.name,
+                    "Separate IEditController not yet supported (requires factory createInstance)"
+                );
+            }
+
+            debug!(plugin = %self.name, "No IEditController available");
+            None
+        }
+    }
+
+    /// Install a component handler on the IEditController.
+    ///
+    /// Creates a `HostComponentHandler`, calls `setComponentHandler()` on the controller,
+    /// and stores the handler for later polling.
+    pub fn install_component_handler(&mut self) -> bool {
+        unsafe {
+            let comp_vtbl = &*(*self.component).vtbl;
+
+            // Query for IEditController to call setComponentHandler
+            let mut controller_ptr: *mut c_void = std::ptr::null_mut();
+            let qi_result = (comp_vtbl.query_interface)(
+                self.component as *mut c_void,
+                IEDIT_CONTROLLER_IID.as_ptr(),
+                &mut controller_ptr,
+            );
+
+            if qi_result != K_RESULT_OK || controller_ptr.is_null() {
+                debug!(plugin = %self.name, "No IEditController for component handler");
+                return false;
+            }
+
+            let controller = controller_ptr as *mut ComPtr<IEditControllerVtbl>;
+            let ctrl_vtbl = &*(*controller).vtbl;
+
+            // Create and install the handler
+            let handler = HostComponentHandler::new();
+            let result = (ctrl_vtbl.set_component_handler)(
+                controller_ptr,
+                HostComponentHandler::as_ptr(handler),
+            );
+
+            // Release the QI'd controller reference (we don't own it, component does)
+            (ctrl_vtbl.release)(controller_ptr);
+
+            if result == K_RESULT_OK {
+                self.component_handler = handler;
+                info!(plugin = %self.name, "IComponentHandler installed");
+                true
+            } else {
+                HostComponentHandler::destroy(handler);
+                warn!(plugin = %self.name, result, "setComponentHandler failed");
+                false
+            }
+        }
+    }
+
+    /// Get the component handler pointer (if installed).
+    ///
+    /// Used by the command layer to poll for parameter changes from the plugin.
+    pub fn component_handler(&self) -> *mut HostComponentHandler {
+        self.component_handler
+    }
+
     /// Stop processing and deactivate the component.
     pub fn shutdown(&mut self) {
         unsafe {
@@ -363,6 +470,11 @@ impl Drop for Vst3Instance {
 
             // Destroy host context
             HostApplication::destroy(self.host_context);
+
+            // Destroy component handler
+            if !self.component_handler.is_null() {
+                HostComponentHandler::destroy(self.component_handler);
+            }
 
             info!(plugin = %self.name, "VST3 instance destroyed");
         }

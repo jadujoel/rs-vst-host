@@ -214,4 +214,112 @@ mod tests {
         assert_eq!(resolve_bundle_binary(&tmp), Some(tmp.clone()));
         let _ = std::fs::remove_file(&tmp);
     }
+
+    #[test]
+    fn test_discover_bundles_dedup() {
+        let tmp = std::env::temp_dir().join("rs-vst-host-test-dedup");
+        let _ = std::fs::create_dir_all(&tmp);
+
+        // Create a fake .vst3 bundle
+        let bundle = tmp.join("Test.vst3");
+        let _ = std::fs::create_dir_all(&bundle);
+
+        // Pass same directory twice — result should be deduped
+        let bundles = discover_bundles(&[tmp.clone(), tmp.clone()]);
+        let matching: Vec<_> = bundles
+            .iter()
+            .filter(|b| b.file_name().is_some_and(|n| n == "Test.vst3"))
+            .collect();
+        assert_eq!(matching.len(), 1, "Duplicate bundles should be deduped");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_discover_bundles_sorted() {
+        let tmp = std::env::temp_dir().join("rs-vst-host-test-sorted");
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let _ = std::fs::create_dir_all(tmp.join("Zebra.vst3"));
+        let _ = std::fs::create_dir_all(tmp.join("Alpha.vst3"));
+        let _ = std::fs::create_dir_all(tmp.join("Middle.vst3"));
+
+        let bundles = discover_bundles(&[tmp.clone()]);
+        let names: Vec<_> = bundles
+            .iter()
+            .filter_map(|b| b.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect();
+
+        // Verify they're sorted
+        let mut sorted_names = names.clone();
+        sorted_names.sort();
+        assert_eq!(names, sorted_names, "Bundles should be sorted");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_discover_in_directory_recursive() {
+        let tmp = std::env::temp_dir().join("rs-vst-host-test-recursive");
+        let _ = std::fs::create_dir_all(&tmp);
+
+        // Create a nested vendor folder structure
+        let vendor_dir = tmp.join("VendorA");
+        let _ = std::fs::create_dir_all(&vendor_dir);
+        let _ = std::fs::create_dir_all(vendor_dir.join("Deep.vst3"));
+
+        let bundles = discover_in_directory(&tmp).unwrap();
+        let found = bundles
+            .iter()
+            .any(|b| b.file_name().is_some_and(|n| n == "Deep.vst3"));
+        assert!(found, "Should find .vst3 in nested vendor directory");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_discover_ignores_non_vst3() {
+        let tmp = std::env::temp_dir().join("rs-vst-host-test-nonvst");
+        let _ = std::fs::create_dir_all(&tmp);
+
+        // Create non-vst3 items
+        let _ = std::fs::create_dir_all(tmp.join("NotPlugin.component"));
+        let _ = std::fs::write(tmp.join("readme.txt"), b"hello");
+        let _ = std::fs::create_dir_all(tmp.join("Real.vst3"));
+
+        let bundles = discover_in_directory(&tmp).unwrap();
+        assert_eq!(bundles.len(), 1);
+        assert!(bundles[0].file_name().unwrap() == "Real.vst3");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_bundle_binary_nonexistent_dir() {
+        // A non-existent directory-style bundle should return None
+        let path = PathBuf::from("/nonexistent/FakePlugin.vst3");
+        assert_eq!(resolve_bundle_binary(&path), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_resolve_macos_bundle_structure() {
+        let tmp = std::env::temp_dir().join("rs-vst-host-test-macos-bundle");
+        let macos_dir = tmp.join("Contents").join("MacOS");
+        let _ = std::fs::create_dir_all(&macos_dir);
+
+        // Create a binary with the "stem" name: the bundle is "rs-vst-host-test-macos-bundle"
+        let stem = tmp
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let binary_path = macos_dir.join(&stem);
+        std::fs::write(&binary_path, b"fake binary").unwrap();
+
+        let result = resolve_bundle_binary(&tmp);
+        assert_eq!(result, Some(binary_path));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

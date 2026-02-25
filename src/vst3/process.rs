@@ -233,6 +233,28 @@ impl ProcessBuffers {
     pub fn num_output_channels(&self) -> usize {
         self.num_output_channels
     }
+
+    /// Set the input events pointer on the ProcessData.
+    ///
+    /// This should point to a valid IEventList COM object, or null.
+    pub fn set_input_events(&mut self, events: *mut std::ffi::c_void) {
+        self.process_data.input_events = events;
+    }
+
+    /// Set the input parameter changes pointer on the ProcessData.
+    ///
+    /// This should point to a valid IParameterChanges COM object, or null.
+    #[allow(dead_code)]
+    pub fn set_input_parameter_changes(&mut self, changes: *mut std::ffi::c_void) {
+        self.process_data.input_parameter_changes = changes;
+    }
+
+    /// Set the process context pointer on the ProcessData.
+    ///
+    /// This should point to a valid ProcessContext struct, or null.
+    pub fn set_process_context(&mut self, context: *mut std::ffi::c_void) {
+        self.process_data.process_context = context;
+    }
 }
 
 // Safety: ProcessBuffers owns all its data exclusively and is only used
@@ -363,5 +385,109 @@ mod tests {
         assert_eq!(output[1], 0.0); // R0 = silence (no channel 1)
         assert_eq!(output[2], 2.0); // L1 from plugin
         assert_eq!(output[3], 0.0); // R1 = silence
+    }
+
+    #[test]
+    fn test_set_input_events() {
+        let mut bufs = ProcessBuffers::new(2, 2, 512);
+        assert!(bufs.process_data.input_events.is_null());
+
+        let fake_ptr = 0x1234 as *mut std::ffi::c_void;
+        bufs.set_input_events(fake_ptr);
+        assert_eq!(bufs.process_data.input_events, fake_ptr);
+
+        bufs.set_input_events(std::ptr::null_mut());
+        assert!(bufs.process_data.input_events.is_null());
+    }
+
+    #[test]
+    fn test_set_input_parameter_changes() {
+        let mut bufs = ProcessBuffers::new(2, 2, 512);
+        assert!(bufs.process_data.input_parameter_changes.is_null());
+
+        let fake_ptr = 0x5678 as *mut std::ffi::c_void;
+        bufs.set_input_parameter_changes(fake_ptr);
+        assert_eq!(bufs.process_data.input_parameter_changes, fake_ptr);
+    }
+
+    #[test]
+    fn test_set_process_context() {
+        let mut bufs = ProcessBuffers::new(2, 2, 512);
+        assert!(bufs.process_data.process_context.is_null());
+
+        let fake_ptr = 0xABCD as *mut std::ffi::c_void;
+        bufs.set_process_context(fake_ptr);
+        assert_eq!(bufs.process_data.process_context, fake_ptr);
+    }
+
+    #[test]
+    fn test_zero_channels() {
+        let bufs = ProcessBuffers::new(0, 0, 512);
+        assert_eq!(bufs.num_input_channels(), 0);
+        assert_eq!(bufs.num_output_channels(), 0);
+        assert_eq!(bufs.process_data.num_inputs, 0);
+        assert_eq!(bufs.process_data.num_outputs, 0);
+    }
+
+    #[test]
+    fn test_input_buffer_mut_out_of_range() {
+        let mut bufs = ProcessBuffers::new(2, 2, 512);
+        bufs.prepare(128);
+        assert!(bufs.input_buffer_mut(0).is_some());
+        assert!(bufs.input_buffer_mut(1).is_some());
+        assert!(bufs.input_buffer_mut(2).is_none()); // Out of range
+        assert!(bufs.input_buffer_mut(100).is_none());
+    }
+
+    #[test]
+    fn test_output_buffer_out_of_range() {
+        let mut bufs = ProcessBuffers::new(2, 2, 512);
+        bufs.prepare(128);
+        assert!(bufs.output_buffer(0).is_some());
+        assert!(bufs.output_buffer(1).is_some());
+        assert!(bufs.output_buffer(2).is_none());
+    }
+
+    #[test]
+    fn test_write_input_interleaved_zero_channels() {
+        let mut bufs = ProcessBuffers::new(0, 2, 512);
+        bufs.prepare(4);
+        // Should not panic with zero input channels
+        bufs.write_input_interleaved(&[1.0, 2.0, 3.0, 4.0], 2);
+    }
+
+    #[test]
+    fn test_read_output_interleaved_zero_channels() {
+        let bufs = ProcessBuffers::new(2, 0, 512);
+        let mut output = [1.0f32; 8];
+        bufs.read_output_interleaved(&mut output, 2);
+        // Should fill with silence
+        assert!(output.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn test_mono_input_stereo_output() {
+        let mut bufs = ProcessBuffers::new(1, 2, 4);
+        bufs.prepare(4);
+
+        // Write mono input
+        let mono_input = [0.5, 0.6, 0.7, 0.8];
+        bufs.write_input_interleaved(&mono_input, 1);
+        assert_eq!(bufs.input_buffers[0][0], 0.5);
+        assert_eq!(bufs.input_buffers[0][3], 0.8);
+    }
+
+    #[test]
+    fn test_prepare_consecutive_calls() {
+        let mut bufs = ProcessBuffers::new(2, 2, 512);
+
+        bufs.prepare(128);
+        assert_eq!(bufs.process_data.num_samples, 128);
+
+        bufs.prepare(64);
+        assert_eq!(bufs.process_data.num_samples, 64);
+
+        bufs.prepare(256);
+        assert_eq!(bufs.process_data.num_samples, 256);
     }
 }

@@ -1,12 +1,9 @@
 //! MIDI input handling and event routing.
 //!
-//! This module will handle:
-//! - MIDI device enumeration and selection
-//! - Real-time MIDI input capture
-//! - MIDI to VST3 event translation
-//! - Sample-accurate event timing
+//! This module handles:
+//! - MIDI device enumeration and selection (`device`)
+//! - Real-time MIDI input capture via `midir`
+//! - MIDI to VST3 event translation (`translate`)
 
-// TODO: Phase 4 implementation
-// - midir integration for MIDI input
-// - Lock-free MIDI event queue
-// - VST3 event list building
+pub mod device;
+pub mod translate;

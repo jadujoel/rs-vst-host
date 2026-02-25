@@ -1,5 +1,7 @@
+use crate::app::interactive::{self, InteractiveState};
 use crate::audio::device::{AudioConfig, AudioDevice};
 use crate::audio::engine::AudioEngine;
+use crate::midi::device::MidiDevice;
 use crate::vst3::com::K_SPEAKER_STEREO;
 use crate::vst3::{cache, module::Vst3Module, scanner, types::PluginModuleInfo};
 use std::path::{Path, PathBuf};
@@ -143,13 +145,35 @@ pub fn devices() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// List available MIDI input ports.
+pub fn midi_ports() -> anyhow::Result<()> {
+    let device = MidiDevice::new()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let ports = device.list_input_ports();
+
+    if ports.is_empty() {
+        println!("No MIDI input ports found.");
+        return Ok(());
+    }
+
+    println!("MIDI input ports:\n");
+    for port in &ports {
+        println!("  {:>3}. {}", port.index + 1, port.name);
+    }
+    println!();
+
+    Ok(())
+}
+
 /// Load and run a plugin with real-time audio processing.
 pub fn run(
     plugin: &str,
     device_name: Option<&str>,
+    midi_port: Option<&str>,
     sample_rate: Option<u32>,
     buffer_size: Option<u32>,
     no_tone: bool,
+    list_params: bool,
 ) -> anyhow::Result<()> {
     // 1. Look up plugin in cache or load from path
     let (module, class_name, cid) = resolve_plugin(plugin)?;
@@ -219,7 +243,28 @@ pub fn run(
         println!("Plugin latency: {} samples", latency);
     }
 
-    // 5. Build audio engine
+    // 4b. Install component handler for plugin parameter notifications
+    instance.install_component_handler();
+
+    // 4c. Query and display parameters (if requested)
+    let params = if list_params {
+        if let Some(params) = instance.query_parameters() {
+            println!("\nPlugin parameters ({}):\n", params.count());
+            params.print_table();
+            println!();
+            Some(params)
+        } else {
+            println!("\nPlugin does not expose parameters via IEditController.\n");
+            None
+        }
+    } else {
+        instance.query_parameters()
+    };
+
+    // 5. Capture component handler pointer before instance is consumed
+    let instance_component_handler = instance.component_handler();
+
+    // 5b. Build audio engine
     let mut engine = AudioEngine::new(
         instance,
         config.sample_rate as f64,
@@ -234,9 +279,32 @@ pub fn run(
         println!("Test tone: 440 Hz sine wave");
     }
 
+    // 6. Set up MIDI input (if requested)
+    let _midi_connection = if let Some(midi_name) = midi_port {
+        match crate::midi::device::open_midi_input(Some(midi_name)) {
+            Ok((connection, port_name, receiver)) => {
+                engine.set_midi_receiver(receiver);
+                println!("MIDI input: {}", port_name);
+                Some(connection)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to open MIDI input");
+                println!("MIDI input: failed ({})", e);
+                None
+            }
+        }
+    } else {
+        // Try to open default MIDI port if any are available
+        None
+    };
+
+    // Capture state for interactive mode before wrapping engine
+    let param_queue = engine.pending_param_queue();
+    let component_handler = instance_component_handler;
+
     let engine = Arc::new(Mutex::new(engine));
 
-    // 6. Set up Ctrl+C handler
+    // 8. Set up Ctrl+C handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     ctrlc::set_handler(move || {
@@ -244,10 +312,9 @@ pub fn run(
     })
     .map_err(|e| anyhow::anyhow!("Failed to set Ctrl+C handler: {}", e))?;
 
-    // 7. Start audio stream
+    // 9. Start audio stream
     let engine_cb = engine.clone();
-    let stream = AudioDevice::build_output_stream(
-        &device,
+    let stream = AudioDevice::build_output_stream(        &device,
         &config,
         move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
             if let Ok(mut eng) = engine_cb.try_lock() {
@@ -265,16 +332,20 @@ pub fn run(
 
     AudioDevice::play(&stream).map_err(|e| anyhow::anyhow!(e))?;
 
-    println!("\nProcessing audio. Press Ctrl+C to stop.\n");
+    println!("\nProcessing audio. Type 'help' for commands, 'quit' to stop.\n");
 
-    // 8. Wait for Ctrl+C
-    while running.load(Ordering::Relaxed) {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    // 10. Run interactive command loop (blocks until quit or Ctrl+C)
+    let mut interactive_state = InteractiveState {
+        params,
+        component_handler,
+        param_queue,
+        running: running.clone(),
+    };
+    interactive::run_interactive(&mut interactive_state);
 
     println!("\nStopping...");
 
-    // 9. Clean shutdown
+    // 11. Clean shutdown
     // Drop stream first to stop the audio callback
     drop(stream);
     // Brief pause to let any in-flight callbacks complete

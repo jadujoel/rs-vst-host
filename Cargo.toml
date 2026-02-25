@@ -28,5 +28,8 @@ dirs = "6"
 # Audio I/O
 cpal = "0.15"
 
+# MIDI input
+midir = "0.10"
+
 # Ctrl+C handling
 ctrlc = "3"

@@ -7,7 +7,10 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Plugin scanning** — Discover VST3 plugins in standard OS directories with metadata extraction via manual COM FFI
 - **Plugin cache** — JSON-based cache for instant plugin listing without re-scanning
 - **Real-time audio** — Load and run plugins with real-time audio processing via `cpal`
+- **MIDI input** — Connect MIDI devices to send notes to instrument plugins via `midir`
+- **Parameter introspection** — Enumerate and display plugin parameters via IEditController
 - **Audio devices** — Enumerate and select audio output devices
+- **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Cross-platform** — macOS, Linux, and Windows support
 
@@ -31,8 +34,14 @@ rs-vst-host list
 # Run a plugin with real-time audio
 rs-vst-host run "Plugin Name"
 
+# Run with MIDI input
+rs-vst-host run "Plugin Name" --midi "IAC Driver Bus 1"
+
 # List audio output devices
 rs-vst-host devices
+
+# List MIDI input ports
+rs-vst-host midi-ports
 ```
 
 ## Commands
@@ -43,15 +52,18 @@ rs-vst-host devices
 | `list` | Display cached plugins |
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
+| `midi-ports` | List available MIDI input ports |
 
 ### `run` Options
 
 | Option | Description |
 |--------|-------------|
 | `-d, --device <NAME>` | Audio output device (default: system default) |
+| `-m, --midi <PORT>` | MIDI input port name |
 | `-s, --sample-rate <HZ>` | Sample rate in Hz |
-| `-b, --buffer-size <FRAMES>` | Buffer size in frames |
+| `-B, --buffer-size <FRAMES>` | Buffer size in frames |
 | `--no-tone` | Disable the 440 Hz test tone input |
+| `--list-params` | List plugin parameters after loading |
 
 ## Architecture
 
@@ -68,13 +80,16 @@ src/
 ├── host/
 │   └── mod.rs       # Host-side abstractions
 ├── midi/
-│   └── mod.rs       # MIDI support (planned)
+│   ├── device.rs    # MIDI device enumeration and input via midir
+│   └── translate.rs # MIDI to VST3 event translation
 └── vst3/
     ├── cache.rs     # JSON plugin cache
-    ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor)
+    ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor, IEditController, IEventList)
     ├── host_context.rs  # IHostApplication COM implementation
+    ├── event_list.rs    # IEventList COM implementation for MIDI events
     ├── instance.rs  # VST3 component lifecycle management
     ├── module.rs    # Dynamic library loading, IPluginFactory FFI
+    ├── params.rs    # Parameter registry via IEditController
     ├── process.rs   # Process buffer management (interleaved ↔ deinterleaved)
     ├── scanner.rs   # Plugin directory scanning
     └── types.rs     # Shared types
@@ -89,9 +104,10 @@ This project uses **manual COM FFI** rather than the `vst3-sys` crate. All VST3 
 1. `cpal` opens an output stream on the selected device
 2. The audio callback locks the shared `AudioEngine`
 3. Input buffers are filled (test tone or silence)
-4. Interleaved samples are deinterleaved into per-channel VST3 buffers
-5. The VST3 plugin's `process()` is called
-6. Output is interleaved back for `cpal`
+4. MIDI messages are drained from the lock-free receiver and translated to VST3 events
+5. Interleaved samples are deinterleaved into per-channel VST3 buffers
+6. The VST3 plugin's `process()` is called with audio buffers and event list
+7. Output is interleaved back for `cpal`
 
 ## Plugin Search Paths
 
@@ -117,6 +133,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 | `clap` 4 | CLI argument parsing |
 | `cpal` 0.15 | Cross-platform audio I/O |
 | `ctrlc` 3 | Ctrl+C signal handling |
+| `midir` 0.10 | Cross-platform MIDI input |
 | `libloading` 0.8 | Dynamic library loading |
 | `serde` / `serde_json` | Plugin cache serialization |
 | `thiserror` / `anyhow` | Error handling |
@@ -129,7 +146,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-44 unit tests covering scanner, cache, COM struct layouts, host context, process buffers, tone generation, and audio device enumeration.
+77 unit tests covering scanner, cache, COM struct layouts, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM interface, and parameter registry.
 
 ## Documentation
 
@@ -143,7 +160,7 @@ cargo test
 - [x] Phase 1 — Project foundations
 - [x] Phase 2 — VST3 plugin discovery and loading (M1)
 - [x] Phase 3 — Audio engine integration (M2, M3)
-- [ ] Phase 4 — MIDI input, parameters, automation (M4)
+- [x] Phase 4 — MIDI input, parameters, automation (M4)
 - [ ] Phase 5 — Host UX polish (M5)
 - [ ] Phase 6 — Validation and quality gates
 - [ ] Phase 7 — Beyond MVP (editor windows, presets, routing)

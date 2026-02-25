@@ -38,6 +38,17 @@ pub const K_SPEAKER_STEREO: u64 = 0x03;
 #[allow(dead_code)]
 pub const K_SPEAKER_MONO: u64 = 0x01;
 
+// ─── Event constants ──────────────────────────────────────────────────────
+
+/// Event type: Note On.
+pub const K_NOTE_ON_EVENT: u16 = 0;
+
+/// Event type: Note Off.
+pub const K_NOTE_OFF_EVENT: u16 = 1;
+
+/// Event flags: is live (real-time input).
+pub const K_IS_LIVE: u16 = 1;
+
 // ─── Interface IIDs ───────────────────────────────────────────────────────
 
 /// IComponent IID: {E831FF31-F2D5-4301-928E-BBEE25697802}
@@ -84,6 +95,47 @@ pub const IHOST_APPLICATION_IID: [u8; 16] = [
 pub const FUNKNOWN_IID: [u8; 16] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x46,
+];
+
+/// IEditController IID: {DCD7BBE3-7742-448D-A874-AACC979C759E}
+#[cfg(not(target_os = "windows"))]
+pub const IEDIT_CONTROLLER_IID: [u8; 16] = [
+    0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75,
+    0x9E,
+];
+
+#[cfg(target_os = "windows")]
+pub const IEDIT_CONTROLLER_IID: [u8; 16] = [
+    0xE3, 0xBB, 0xD7, 0xDC, 0x8D, 0x44, 0x42, 0x77, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75,
+    0x9E,
+];
+
+/// IEventList IID: {3A2C4214-3463-49FE-B2C4-F397B9695A44}
+#[cfg(not(target_os = "windows"))]
+pub const IEVENT_LIST_IID: [u8; 16] = [
+    0x3A, 0x2C, 0x42, 0x14, 0x34, 0x63, 0x49, 0xFE, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A,
+    0x44,
+];
+
+#[cfg(target_os = "windows")]
+pub const IEVENT_LIST_IID: [u8; 16] = [
+    0x14, 0x42, 0x2C, 0x3A, 0xFE, 0x49, 0x63, 0x34, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A,
+    0x44,
+];
+
+/// IParameterChanges IID: {A4779663-0BB6-4A56-B443-84A8466FEB9D}
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+pub const IPARAMETER_CHANGES_IID: [u8; 16] = [
+    0xA4, 0x77, 0x96, 0x63, 0x0B, 0xB6, 0x4A, 0x56, 0xB4, 0x43, 0x84, 0xA8, 0x46, 0x6F, 0xEB,
+    0x9D,
+];
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+pub const IPARAMETER_CHANGES_IID: [u8; 16] = [
+    0x63, 0x96, 0x77, 0xA4, 0x56, 0x4A, 0xB6, 0x0B, 0xB4, 0x43, 0x84, 0xA8, 0x46, 0x6F, 0xEB,
+    0x9D,
 ];
 
 // ─── COM base vtable ──────────────────────────────────────────────────────
@@ -234,6 +286,233 @@ pub struct AudioBusBuffers {
     pub channel_buffers_32: *mut *mut f32,
 }
 
+// ─── Event structures ─────────────────────────────────────────────────────
+
+/// VST3 Event union — the common header + type-specific data.
+///
+/// In the C++ SDK this is a struct with a union. We represent it as a
+/// `#[repr(C)]` struct with the union data as a byte array large enough
+/// for the biggest variant (NoteOnEvent = 20 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Event {
+    /// Bus index.
+    pub bus_index: i32,
+    /// Sample offset within current block.
+    pub sample_offset: i32,
+    /// Position on musical timeline (quarters from start).
+    pub ppq_position: f64,
+    /// Event flags (e.g. `K_IS_LIVE`).
+    pub flags: u16,
+    /// Event type (e.g. `K_NOTE_ON_EVENT`, `K_NOTE_OFF_EVENT`).
+    pub event_type: u16,
+    // 4 bytes of padding to align the union data.
+    _pad: [u8; 4],
+    /// Union data — interpret based on `event_type`.
+    /// Sized for the largest event variant.
+    pub data: [u8; 20],
+}
+
+impl Event {
+    /// Create a Note On event.
+    pub fn note_on(sample_offset: i32, channel: i16, pitch: i16, velocity: f32, note_id: i32) -> Self {
+        let mut event = Self {
+            bus_index: 0,
+            sample_offset,
+            ppq_position: 0.0,
+            flags: K_IS_LIVE,
+            event_type: K_NOTE_ON_EVENT,
+            _pad: [0; 4],
+            data: [0; 20],
+        };
+
+        // NoteOnEvent layout: channel(i16) + pitch(i16) + tuning(f32) + velocity(f32) + length(i32) + noteId(i32)
+        let note_on = NoteOnEvent {
+            channel,
+            pitch,
+            tuning: 0.0,
+            velocity,
+            length: 0,
+            note_id,
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &note_on as *const NoteOnEvent as *const u8,
+                std::mem::size_of::<NoteOnEvent>(),
+            )
+        };
+        event.data[..bytes.len()].copy_from_slice(bytes);
+        event
+    }
+
+    /// Create a Note Off event.
+    pub fn note_off(sample_offset: i32, channel: i16, pitch: i16, velocity: f32, note_id: i32) -> Self {
+        let mut event = Self {
+            bus_index: 0,
+            sample_offset,
+            ppq_position: 0.0,
+            flags: K_IS_LIVE,
+            event_type: K_NOTE_OFF_EVENT,
+            _pad: [0; 4],
+            data: [0; 20],
+        };
+
+        // NoteOffEvent has the same layout as NoteOnEvent
+        let note_off = NoteOffEvent {
+            channel,
+            pitch,
+            tuning: 0.0,
+            velocity,
+            length: 0,
+            note_id,
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &note_off as *const NoteOffEvent as *const u8,
+                std::mem::size_of::<NoteOffEvent>(),
+            )
+        };
+        event.data[..bytes.len()].copy_from_slice(bytes);
+        event
+    }
+}
+
+/// NoteOnEvent data layout.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct NoteOnEvent {
+    pub channel: i16,
+    pub pitch: i16,
+    pub tuning: f32,
+    pub velocity: f32,
+    pub length: i32,
+    pub note_id: i32,
+}
+
+/// NoteOffEvent data layout.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct NoteOffEvent {
+    pub channel: i16,
+    pub pitch: i16,
+    pub tuning: f32,
+    pub velocity: f32,
+    pub length: i32,
+    pub note_id: i32,
+}
+
+// ─── IEventList vtable ────────────────────────────────────────────────────
+
+/// IEventList vtable (extends FUnknown).
+///
+/// vtable layout:
+///   [0-2]  FUnknown: queryInterface, addRef, release
+///   [3-4]  IEventList: getEventCount, getEvent, addEvent
+#[repr(C)]
+pub struct IEventListVtbl {
+    // FUnknown
+    pub query_interface:
+        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    // IEventList
+    pub get_event_count: unsafe extern "system" fn(this: *mut c_void) -> i32,
+    pub get_event:
+        unsafe extern "system" fn(this: *mut c_void, index: i32, event: *mut Event) -> i32,
+    pub add_event: unsafe extern "system" fn(this: *mut c_void, event: *const Event) -> i32,
+}
+
+// ─── IEditController vtable ───────────────────────────────────────────────
+
+/// IEditController vtable (extends IPluginBase extends FUnknown).
+///
+/// vtable layout:
+///   [0-2]  FUnknown: queryInterface, addRef, release
+///   [3-4]  IPluginBase: initialize, terminate
+///   [5-16] IEditController methods
+#[repr(C)]
+pub struct IEditControllerVtbl {
+    // FUnknown
+    pub query_interface:
+        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    // IPluginBase
+    pub initialize: unsafe extern "system" fn(this: *mut c_void, context: *mut c_void) -> i32,
+    pub terminate: unsafe extern "system" fn(this: *mut c_void) -> i32,
+    // IEditController
+    pub set_component_state:
+        unsafe extern "system" fn(this: *mut c_void, state: *mut c_void) -> i32,
+    pub set_state: unsafe extern "system" fn(this: *mut c_void, state: *mut c_void) -> i32,
+    pub get_state: unsafe extern "system" fn(this: *mut c_void, state: *mut c_void) -> i32,
+    pub get_parameter_count: unsafe extern "system" fn(this: *mut c_void) -> i32,
+    pub get_parameter_info: unsafe extern "system" fn(
+        this: *mut c_void,
+        param_index: i32,
+        info: *mut ParameterInfo,
+    ) -> i32,
+    pub get_param_string_by_value: unsafe extern "system" fn(
+        this: *mut c_void,
+        id: u32,
+        value_normalized: f64,
+        string: *mut u16,
+    ) -> i32,
+    pub get_param_value_by_string: unsafe extern "system" fn(
+        this: *mut c_void,
+        id: u32,
+        string: *const u16,
+        value_normalized: *mut f64,
+    ) -> i32,
+    pub normalized_param_to_plain:
+        unsafe extern "system" fn(this: *mut c_void, id: u32, value_normalized: f64) -> f64,
+    pub plain_param_to_normalized:
+        unsafe extern "system" fn(this: *mut c_void, id: u32, plain_value: f64) -> f64,
+    pub get_param_normalized:
+        unsafe extern "system" fn(this: *mut c_void, id: u32) -> f64,
+    pub set_param_normalized:
+        unsafe extern "system" fn(this: *mut c_void, id: u32, value: f64) -> i32,
+    pub set_component_handler:
+        unsafe extern "system" fn(this: *mut c_void, handler: *mut c_void) -> i32,
+    pub create_view: unsafe extern "system" fn(
+        this: *mut c_void,
+        name: *const u8,
+    ) -> *mut c_void,
+}
+
+/// ParameterInfo — returned by IEditController::getParameterInfo.
+#[repr(C)]
+pub struct ParameterInfo {
+    /// Parameter ID.
+    pub id: u32,
+    /// Parameter title (UTF-16, 128 chars max).
+    pub title: [u16; 128],
+    /// Short title (UTF-16, 128 chars max).
+    pub short_title: [u16; 128],
+    /// Units label (UTF-16, 128 chars max).
+    pub units: [u16; 128],
+    /// Number of discrete steps (0 = continuous).
+    pub step_count: i32,
+    /// Default normalized value [0..1].
+    pub default_normalized_value: f64,
+    /// Unit ID for grouping.
+    pub unit_id: i32,
+    /// Parameter flags.
+    pub flags: i32,
+}
+
+/// Parameter flags for ParameterInfo.
+pub const K_CAN_AUTOMATE: i32 = 1;
+#[allow(dead_code)]
+pub const K_IS_READ_ONLY: i32 = 1 << 1;
+#[allow(dead_code)]
+pub const K_IS_WRAP_AROUND: i32 = 1 << 2;
+#[allow(dead_code)]
+pub const K_IS_LIST: i32 = 1 << 3;
+#[allow(dead_code)]
+pub const K_IS_PROGRAM_CHANGE: i32 = 1 << 4;
+#[allow(dead_code)]
+pub const K_IS_BYPASS: i32 = 1 << 5;
+
 // ─── COM pointer wrapper ──────────────────────────────────────────────────
 
 /// Generic COM object: pointer-to-vtable-pointer layout.
@@ -273,6 +552,9 @@ mod tests {
         assert_eq!(IAUDIO_PROCESSOR_IID.len(), 16);
         assert_eq!(IHOST_APPLICATION_IID.len(), 16);
         assert_eq!(FUNKNOWN_IID.len(), 16);
+        assert_eq!(IEDIT_CONTROLLER_IID.len(), 16);
+        assert_eq!(IEVENT_LIST_IID.len(), 16);
+        assert_eq!(IPARAMETER_CHANGES_IID.len(), 16);
     }
 
     #[test]
@@ -287,5 +569,60 @@ mod tests {
     fn test_speaker_arrangements() {
         assert_eq!(K_SPEAKER_STEREO, 3);
         assert_eq!(K_SPEAKER_MONO, 1);
+    }
+
+    #[test]
+    fn test_event_size() {
+        // Event struct should be 48 bytes:
+        // bus_index(4) + sample_offset(4) + ppq_position(8) + flags(2) + type(2) + pad(4) + data(20) = 44
+        // But with alignment the struct may have trailing padding
+        let size = mem::size_of::<Event>();
+        assert!(size >= 44, "Event size should be at least 44 bytes, got {}", size);
+        assert!(size <= 48, "Event size should not exceed 48 bytes, got {}", size);
+    }
+
+    #[test]
+    fn test_note_on_event_layout() {
+        assert_eq!(mem::size_of::<NoteOnEvent>(), 20);
+        assert_eq!(mem::size_of::<NoteOffEvent>(), 20);
+    }
+
+    #[test]
+    fn test_event_note_on_creation() {
+        let event = Event::note_on(128, 0, 60, 0.8, -1);
+        assert_eq!(event.event_type, K_NOTE_ON_EVENT);
+        assert_eq!(event.sample_offset, 128);
+        assert_eq!(event.flags, K_IS_LIVE);
+        // Verify note data
+        let note: &NoteOnEvent = unsafe { &*(event.data.as_ptr() as *const NoteOnEvent) };
+        assert_eq!(note.channel, 0);
+        assert_eq!(note.pitch, 60);
+        assert!((note.velocity - 0.8).abs() < 0.001);
+        assert_eq!(note.note_id, -1);
+    }
+
+    #[test]
+    fn test_event_note_off_creation() {
+        let event = Event::note_off(256, 0, 60, 0.0, -1);
+        assert_eq!(event.event_type, K_NOTE_OFF_EVENT);
+        assert_eq!(event.sample_offset, 256);
+        let note: &NoteOffEvent = unsafe { &*(event.data.as_ptr() as *const NoteOffEvent) };
+        assert_eq!(note.pitch, 60);
+        assert_eq!(note.velocity, 0.0);
+    }
+
+    #[test]
+    fn test_parameter_info_has_title_field() {
+        let pi: ParameterInfo = unsafe { mem::zeroed() };
+        assert_eq!(pi.title.len(), 128);
+        assert_eq!(pi.short_title.len(), 128);
+        assert_eq!(pi.units.len(), 128);
+    }
+
+    #[test]
+    fn test_parameter_flags() {
+        assert_eq!(K_CAN_AUTOMATE, 1);
+        assert_eq!(K_IS_READ_ONLY, 2);
+        assert_eq!(K_IS_LIST, 8);
     }
 }

@@ -14,6 +14,8 @@ A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audi
   - [list](#list)
   - [run](#run)
   - [devices](#devices)
+  - [midi-ports](#midi-ports)
+- [Interactive Mode](#interactive-mode)
 - [Plugin Search Paths](#plugin-search-paths)
 - [Plugin Cache](#plugin-cache)
 - [Verbose Logging](#verbose-logging)
@@ -155,7 +157,7 @@ No plugin cache found. Run 'scan' first.
 
 ### run
 
-Loads a VST3 plugin and starts real-time audio processing. The plugin receives a 440 Hz sine wave test tone as input (for effect plugins) and outputs audio through the selected audio device.
+Loads a VST3 plugin and starts real-time audio processing with an interactive command shell. The plugin receives a 440 Hz sine wave test tone as input (for effect plugins) and outputs audio through the selected audio device.
 
 ```
 rs-vst-host run [OPTIONS] <PLUGIN>
@@ -172,31 +174,42 @@ rs-vst-host run [OPTIONS] <PLUGIN>
 | Option | Description |
 |--------|-------------|
 | `-d, --device <NAME>` | Audio output device name (uses system default if not specified) |
+| `-m, --midi <PORT>` | MIDI input port name (use `midi-ports` to list) |
 | `-s, --sample-rate <HZ>` | Sample rate in Hz (uses device default if not specified) |
-| `-b, --buffer-size <FRAMES>` | Buffer size in frames (uses device default if not specified) |
+| `-B, --buffer-size <FRAMES>` | Buffer size in frames (uses device default if not specified) |
 | `--no-tone` | Disable the test tone input signal (silence input) |
+| `--list-params` | List plugin parameters after loading |
 
 **What it does:**
 
 1. Resolves the plugin by name (from cache) or by direct `.vst3` bundle path.
 2. Loads the plugin module and creates a VST3 component instance.
-3. Opens the audio output device and configures processing (sample rate, block size, stereo bus arrangement).
-4. Activates the plugin and starts real-time audio processing.
-5. A 440 Hz sine wave test tone is fed as input (use `--no-tone` to disable).
-6. Press **Ctrl+C** to stop processing and cleanly shut down.
+3. Installs a component handler for plugin parameter notifications.
+4. Opens the audio output device and configures processing (sample rate, block size, stereo bus arrangement).
+5. Optionally connects a MIDI input port for instrument plugins.
+6. Activates the plugin and starts real-time audio processing with transport info.
+7. Enters an interactive command shell for runtime parameter control.
+8. Type `quit` or press **Ctrl+C** to stop processing and cleanly shut down.
 
 **Example:**
 
 ```
-$ rs-vst-host run "FabFilter Pro-Q 4"
+$ rs-vst-host run "FabFilter Pro-Q 4" --list-params
 Loading plugin: FabFilter Pro-Q 4
 Audio device: MacBook Pro Speakers
 Audio config: 44100 Hz, 2 ch, buffer: default
 Test tone: 440 Hz sine wave
 
-Processing audio. Press Ctrl+C to stop.
+Plugin parameters (28):
+  ...
 
-^C
+Processing audio. Type 'help' for commands, 'quit' to stop.
+
+> params
+  ...
+> set 0 0.75
+  Frequency = 1500.00 Hz [normalized: 0.7500]
+> quit
 Stopping...
 Done.
 ```
@@ -230,6 +243,62 @@ Audio output devices:
     2. MacBook Pro Speakers (default)
     3. Microsoft Teams Audio
     4. Aggregate Device
+```
+
+### midi-ports
+
+Lists all available MIDI input ports on the system.
+
+```
+rs-vst-host midi-ports
+```
+
+**Example output:**
+
+```
+MIDI input ports:
+
+    1. IAC Driver Bus 1
+    2. Arturia KeyLab Essential 49
+```
+
+---
+
+## Interactive Mode
+
+When running a plugin with `run`, an interactive command shell is available for runtime control. Commands are typed at the `>` prompt while audio is processing.
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `params`, `p` | List all plugin parameters with current values |
+| `get <id\|name>` | Get a parameter's current value (by ID or name) |
+| `set <id\|name> <value>` | Set a parameter (0.0–1.0 normalized) |
+| `tempo <bpm>` | Set tempo in BPM |
+| `status` | Show engine status (parameter count, handler state) |
+| `help`, `h`, `?` | Show available commands |
+| `quit`, `q`, `exit` | Stop audio and exit |
+
+### Parameter Control
+
+Parameters can be addressed by their numeric ID or by name (partial, case-insensitive match):
+
+```
+> get 0
+  Frequency (ID 0): 1000.00 Hz [normalized: 0.5000]
+
+> set frequency 0.75
+  Frequency = 1500.00 Hz [normalized: 0.7500]
+
+> set 0 0.0
+  Frequency = 20.00 Hz [normalized: 0.0000]
+```
+
+When a plugin changes its own parameters (e.g., via its UI), the change is displayed:
+
+```
+  [plugin] Gain = -6.0 dB [normalized: 0.3750]
 ```
 
 ---
@@ -359,6 +428,24 @@ rs-vst-host run "My Plugin" --device "BlackHole 2ch"
 
 ```sh
 rs-vst-host run "My Plugin" --no-tone
+```
+
+**Run with MIDI input:**
+
+```sh
+rs-vst-host run "Surge XT" --midi "IAC Driver Bus 1"
+```
+
+**Run with parameter listing:**
+
+```sh
+rs-vst-host run "FabFilter Pro-Q 4" --list-params
+```
+
+**List MIDI input ports:**
+
+```sh
+rs-vst-host midi-ports
 ```
 
 **Scan with debug output:**

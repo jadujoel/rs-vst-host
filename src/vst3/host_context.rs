@@ -233,4 +233,107 @@ mod tests {
             HostApplication::destroy(host);
         }
     }
+
+    #[test]
+    fn test_host_query_interface_ihost_application() {
+        let host = HostApplication::new();
+        unsafe {
+            let mut obj: *mut c_void = std::ptr::null_mut();
+            let result = host_query_interface(
+                host as *mut c_void,
+                IHOST_APPLICATION_IID.as_ptr(),
+                &mut obj,
+            );
+            assert_eq!(result, K_RESULT_OK);
+            assert_eq!(obj, host as *mut c_void);
+
+            HostApplication::destroy(host);
+        }
+    }
+
+    #[test]
+    fn test_host_query_interface_unknown_iid() {
+        let host = HostApplication::new();
+        unsafe {
+            let mut obj: *mut c_void = std::ptr::null_mut();
+            // Use a random IID that shouldn't be supported
+            let random_iid: [u8; 16] = [0xFF; 16];
+            let result = host_query_interface(
+                host as *mut c_void,
+                random_iid.as_ptr(),
+                &mut obj,
+            );
+            assert_eq!(result, K_NOT_IMPLEMENTED);
+            assert!(obj.is_null());
+
+            HostApplication::destroy(host);
+        }
+    }
+
+    #[test]
+    fn test_host_add_ref_release_counting() {
+        let host = HostApplication::new();
+        unsafe {
+            // Initial ref count is 1 (from new())
+            let count = host_add_ref(host as *mut c_void);
+            assert_eq!(count, 2);
+
+            let count = host_add_ref(host as *mut c_void);
+            assert_eq!(count, 3);
+
+            let count = host_release(host as *mut c_void);
+            assert_eq!(count, 2);
+
+            let count = host_release(host as *mut c_void);
+            assert_eq!(count, 1);
+
+            HostApplication::destroy(host);
+        }
+    }
+
+    #[test]
+    fn test_host_get_name_null_ptr() {
+        let result = unsafe { host_get_name(std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(result, K_NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn test_host_as_unknown() {
+        let host = HostApplication::new();
+        let unknown = HostApplication::as_unknown(host);
+        assert!(!unknown.is_null());
+        assert_eq!(unknown, host as *mut c_void);
+        unsafe { HostApplication::destroy(host) };
+    }
+
+    #[test]
+    fn test_host_destroy_null() {
+        // Should not panic with null pointer
+        unsafe { HostApplication::destroy(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn test_host_query_interface_null_params() {
+        let host = HostApplication::new();
+        unsafe {
+            // Null iid
+            let mut obj: *mut c_void = std::ptr::null_mut();
+            let result = host_query_interface(
+                host as *mut c_void,
+                std::ptr::null(),
+                &mut obj,
+            );
+            assert_eq!(result, K_NOT_IMPLEMENTED);
+
+            // Null obj
+            let result = host_query_interface(
+                host as *mut c_void,
+                FUNKNOWN_IID.as_ptr(),
+                std::ptr::null_mut(),
+            );
+            assert_eq!(result, K_NOT_IMPLEMENTED);
+
+            HostApplication::destroy(host);
+        }
+    }
 }

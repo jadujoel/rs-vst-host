@@ -21,17 +21,22 @@ fn main() -> anyhow::Result<()> {
         Command::Run {
             plugin,
             device,
+            midi,
             sample_rate,
             buffer_size,
             no_tone,
+            list_params,
         } => app::commands::run(
             &plugin,
             device.as_deref(),
+            midi.as_deref(),
             sample_rate,
             buffer_size,
             no_tone,
+            list_params,
         )?,
         Command::Devices => app::commands::devices()?,
+        Command::MidiPorts => app::commands::midi_ports()?,
     }
 
     Ok(())
