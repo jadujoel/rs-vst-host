@@ -13,6 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Cross-platform** — macOS, Linux, and Windows support
+- **Upcoming GUI** — Phase 7 introduces a modern "Liquid Glass" graphical interface using `egui` and `wgpu`
 
 ## Requirements
 

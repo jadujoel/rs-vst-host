@@ -2,6 +2,8 @@
 
 A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audio plugins from the command line.
 
+> **Note:** Phase 7 is currently underway to introduce a modern "Liquid Glass" graphical user interface. This guide currently covers the CLI functionality.
+
 ---
 
 ## Table of Contents

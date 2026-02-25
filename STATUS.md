@@ -1,6 +1,6 @@
 # Status
 
-## Current Phase: Phase 7 — Bug Fixes and Compatibility
+## Current Phase: Phase 7 — GUI Design and Implementation
 
 **Milestone M2 achieved**: Single plugin instantiates and initializes.
 **Milestone M3 achieved**: Real-time audio callback calls plugin process reliably.
@@ -9,6 +9,7 @@
 **Quality gate achieved**: 242 tests passing, zero warnings, comprehensive coverage of non-RT components.
 **Bug fix release**: IAudioProcessor IID corrected, CFBundleRef support added, IPluginFactory3 support added.
 **Compatibility fix**: Separate IEditController support — split component/controller plugins (e.g. FabFilter) now expose parameters.
+**GUI Design**: Created `DESIGN_DOCUMENT.md` outlining the Liquid Glass style architecture using `egui` + `wgpu`.
 
 ### Completed
 

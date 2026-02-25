@@ -83,6 +83,10 @@ Based on module-level analysis:
 | Component handler | 4 | Concurrent perform_edit, restart flag OR, destroy null, as_ptr |
 | Process context | 0 | Already well-covered at 10 tests |
 
+## v0.8.0 Test Additions
+
+No new tests added in this release (GUI Design Phase).
+
 ## v0.7.0 Test Additions
 
 5 new tests added (237 → 242 total):
