@@ -34,6 +34,9 @@
 - Successfully scans real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
 - IPluginFactory2 extended metadata (subcategories, vendor, version) retrieved correctly
 
+### Documentation
+- `USER_GUIDE.md` — end-user guide covering installation, all CLI commands, plugin search paths, cache details, logging, and troubleshooting
+
 ### Next Steps (Phase 3 — Audio Engine Integration)
 - Add `cpal` for audio device setup
 - Implement VST3 process setup negotiation (bus arrangements, sample rate, block size)
