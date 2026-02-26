@@ -11,6 +11,7 @@ use crate::midi::device::{MidiDevice, MidiPortInfo};
 use crate::vst3::com::K_SPEAKER_STEREO;
 use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::instance::DEACTIVATION_CRASHED;
+use crate::vst3::instance::DEACTIVATION_HEAP_CORRUPTED;
 use crate::vst3::module::Vst3Module;
 use crate::vst3::params::ParameterRegistry;
 use std::collections::HashSet;
@@ -87,6 +88,13 @@ pub struct HostBackend {
     ///
     /// Plugins in this set cannot be re-activated until the host is restarted.
     pub tainted_paths: HashSet<PathBuf>,
+    /// Whether heap corruption has been detected after a plugin crash.
+    ///
+    /// Set when `malloc_zone_check(NULL)` returns 0 during sandbox crash
+    /// recovery, or when the diagnostics module detects corruption during
+    /// a periodic heap check. Once set, a persistent red banner is shown
+    /// in the GUI warning the user to save and restart.
+    pub heap_corruption_detected: bool,
 }
 
 /// Runtime state for an active (instantiated and processing) plugin.
@@ -184,6 +192,7 @@ impl HostBackend {
             editor_windows: Vec::new(),
             audio_status: AudioStatus::default(),
             tainted_paths: HashSet::new(),
+            heap_corruption_detected: false,
         }
     }
 
@@ -207,6 +216,7 @@ impl HostBackend {
         cid: &[u8; 16],
         name: &str,
     ) -> Result<Vec<ParamSnapshot>, String> {
+        let _span = tracing::info_span!("activate_plugin", plugin = name).entered();
         // Refuse to load plugins that crashed during a prior deactivation.
         // The library is still mapped in memory with corrupted internal state;
         // reloading it would trigger malloc corruption → SIGABRT.
@@ -372,6 +382,7 @@ impl HostBackend {
     /// 4. Drop the `ActiveState` — the custom `Drop` impl releases params,
     ///    MIDI, engine, and finally unloads the module in the correct order.
     pub fn deactivate_plugin(&mut self) {
+        let _span = tracing::info_span!("deactivate_plugin").entered();
         // Close any open editor windows for this plugin
         self.close_all_editors();
 
@@ -382,6 +393,7 @@ impl HostBackend {
             // Clear the deactivation-crashed flag *before* drop so we only
             // detect crashes that happen during this specific deactivation.
             DEACTIVATION_CRASHED.with(|c| c.set(false));
+            DEACTIVATION_HEAP_CORRUPTED.with(|c| c.set(false));
 
             // 1. Shut down the engine while holding the lock. This sets
             //    the is_shutdown flag so the audio callback will output
@@ -411,6 +423,15 @@ impl HostBackend {
                     "Plugin crashed during deactivation — marking as tainted (restart required to reuse)"
                 );
                 self.tainted_paths.insert(plugin_path);
+
+                // Check if heap corruption was detected during crash recovery
+                let heap_corrupted = DEACTIVATION_HEAP_CORRUPTED.with(|c| c.get());
+                if heap_corrupted {
+                    self.heap_corruption_detected = true;
+                    tracing::error!(
+                        "Heap corruption detected during plugin deactivation — user should save and restart"
+                    );
+                }
             }
 
             debug!("Plugin deactivated in GUI");
@@ -933,5 +954,36 @@ mod tests {
         // Deactivate with no active plugin — should not taint anything.
         backend.deactivate_plugin();
         assert!(backend.tainted_paths.is_empty());
+    }
+
+    // ── Heap corruption flag tests ──────────────────────────────────────
+
+    #[test]
+    fn test_backend_heap_corruption_default_false() {
+        let backend = HostBackend::new();
+        assert!(
+            !backend.heap_corruption_detected,
+            "heap_corruption_detected should be false by default"
+        );
+    }
+
+    #[test]
+    fn test_backend_heap_corruption_can_be_set() {
+        let mut backend = HostBackend::new();
+        backend.heap_corruption_detected = true;
+        assert!(backend.heap_corruption_detected);
+    }
+
+    #[test]
+    fn test_deactivation_heap_corrupted_flag_is_thread_local() {
+        // Verify that DEACTIVATION_HEAP_CORRUPTED can be set and read
+        DEACTIVATION_HEAP_CORRUPTED.with(|c| {
+            let original = c.get();
+            c.set(true);
+            assert!(c.get());
+            c.set(false);
+            assert!(!c.get());
+            c.set(original); // restore
+        });
     }
 }

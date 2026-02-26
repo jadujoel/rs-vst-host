@@ -34,6 +34,11 @@ thread_local! {
     /// heap corruption because `siglongjmp` recovery may leave the process
     /// malloc state inconsistent).
     pub(crate) static DEACTIVATION_CRASHED: Cell<bool> = const { Cell::new(false) };
+
+    /// Set to `true` when heap corruption is detected during crash recovery
+    /// in instance Drop. The GUI backend reads this alongside DEACTIVATION_CRASHED
+    /// to propagate heap corruption status to the user.
+    pub(crate) static DEACTIVATION_HEAP_CORRUPTED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// A fully initialized VST3 plugin instance ready for audio processing.
@@ -448,6 +453,7 @@ impl Vst3Instance {
     /// The `data` must point to a valid, fully initialized `ProcessData` with
     /// stable buffer pointers for the duration of the call.
     pub unsafe fn process(&mut self, data: *mut ProcessData) -> bool {
+        let _span = tracing::trace_span!("vst3_process", plugin = %self.name).entered();
         if self.crashed {
             return false;
         }
@@ -932,6 +938,7 @@ impl Vst3Instance {
 
 impl Drop for Vst3Instance {
     fn drop(&mut self) {
+        let _span = tracing::info_span!("vst3_instance_drop", plugin = %self.name).entered();
         // Ensure processing is stopped and component is deactivated (sandboxed)
         self.shutdown();
 
@@ -1063,8 +1070,19 @@ impl Drop for Vst3Instance {
             if any_crash {
                 LAST_DROP_CRASHED.with(|c| c.set(true));
                 DEACTIVATION_CRASHED.with(|c| c.set(true));
+                // Check heap integrity after crash recovery and propagate
+                // to the backend so the GUI can display a warning.
+                let heap_ok = crate::diagnostics::heap_check();
+                if !heap_ok {
+                    DEACTIVATION_HEAP_CORRUPTED.with(|c| c.set(true));
+                    error!(
+                        plugin = %self.name,
+                        "HEAP CORRUPTION DETECTED after plugin COM cleanup crash"
+                    );
+                }
                 warn!(
                     plugin = %self.name,
+                    heap_corrupted = !heap_ok,
                     "Plugin crashed during COM cleanup — resources leaked (host is safe)"
                 );
             } else {

@@ -57,6 +57,12 @@ pub enum Command {
         /// Launch in safe mode with no plugins loaded from cache.
         #[arg(long)]
         safe_mode: bool,
+
+        /// Enable malloc debug diagnostics: check heap integrity periodically,
+        /// log malloc debug env var status, and print re-launch instructions
+        /// if recommended vars aren't set.
+        #[arg(long)]
+        malloc_debug: bool,
     },
 }
 
@@ -199,12 +205,49 @@ mod tests {
     #[test]
     fn test_parse_gui() {
         let cli = Cli::try_parse_from(["rs-vst-host", "gui"]).unwrap();
-        assert!(matches!(cli.command, Command::Gui { safe_mode: false }));
+        assert!(matches!(
+            cli.command,
+            Command::Gui {
+                safe_mode: false,
+                malloc_debug: false
+            }
+        ));
     }
 
     #[test]
     fn test_parse_gui_safe_mode() {
         let cli = Cli::try_parse_from(["rs-vst-host", "gui", "--safe-mode"]).unwrap();
-        assert!(matches!(cli.command, Command::Gui { safe_mode: true }));
+        assert!(matches!(
+            cli.command,
+            Command::Gui {
+                safe_mode: true,
+                malloc_debug: false
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_gui_malloc_debug() {
+        let cli = Cli::try_parse_from(["rs-vst-host", "gui", "--malloc-debug"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Gui {
+                safe_mode: false,
+                malloc_debug: true
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_gui_all_flags() {
+        let cli =
+            Cli::try_parse_from(["rs-vst-host", "gui", "--safe-mode", "--malloc-debug"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Gui {
+                safe_mode: true,
+                malloc_debug: true
+            }
+        ));
     }
 }

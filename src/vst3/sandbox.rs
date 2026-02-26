@@ -24,11 +24,36 @@
 //! sandbox calls on different threads share a single handler installation.
 
 use std::cell::{Cell, UnsafeCell};
+use std::ffi::c_void;
 use std::fmt;
 use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{error, warn};
+
+// ── Raw backtrace FFI (signal-safe frame-pointer walking) ───────────────────
+//
+// We use the raw `backtrace()` from <execinfo.h> in the signal handler
+// because the Rust `backtrace` crate allocates memory and is not signal-safe.
+// Raw `backtrace()` does frame-pointer walking which is safe on ARM64 macOS.
+
+unsafe extern "C" {
+    /// Capture up to `size` return addresses from the call stack.
+    /// Signal-safe on macOS ARM64 (frame-pointer walking, no allocation).
+    fn backtrace(buffer: *mut *mut c_void, size: libc::c_int) -> libc::c_int;
+}
+
+/// Maximum number of backtrace frames to capture in the signal handler.
+const MAX_CRASH_FRAMES: usize = 128;
+
+// ── malloc_zone_check FFI ───────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    /// Validates the heap integrity of all malloc zones (when `zone` is NULL).
+    /// Returns 1 if heap is OK, 0 if corruption is detected.
+    fn malloc_zone_check(zone: *mut c_void) -> i32;
+}
 
 // ── Platform-specific FFI for sigjmp_buf / sigsetjmp / siglongjmp ───────────
 //
@@ -119,6 +144,18 @@ pub struct PluginCrash {
     pub signal_name: String,
     /// Description of what the plugin was doing when it crashed.
     pub context: String,
+    /// Symbolicated backtrace frames from the crash site.
+    ///
+    /// Captured in the signal handler via raw `backtrace()` (frame-pointer
+    /// walking, signal-safe) and symbolicated after recovery using the
+    /// `backtrace` crate.
+    pub backtrace: Vec<String>,
+    /// Whether heap corruption was detected after crash recovery.
+    ///
+    /// Determined by calling `malloc_zone_check(NULL)` in the recovery
+    /// path. When `true`, the process heap may be inconsistent and the
+    /// user should be warned to save and restart.
+    pub heap_corrupted: bool,
 }
 
 impl fmt::Display for PluginCrash {
@@ -127,7 +164,17 @@ impl fmt::Display for PluginCrash {
             f,
             "Plugin crashed ({}) during {}",
             self.signal_name, self.context
-        )
+        )?;
+        if self.heap_corrupted {
+            write!(f, " [HEAP CORRUPTED]")?;
+        }
+        if !self.backtrace.is_empty() {
+            write!(f, "\nBacktrace ({} frames):", self.backtrace.len())?;
+            for (i, frame) in self.backtrace.iter().enumerate() {
+                write!(f, "\n  {:>3}: {}", i, frame)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -147,6 +194,16 @@ thread_local! {
         // Safety: SigJmpBuf is [c_int; N], zero-initialized is valid.
         unsafe { UnsafeCell::new(std::mem::zeroed()) }
     };
+
+    /// Raw backtrace frame addresses captured in the signal handler.
+    /// Initialized to null pointers; filled by `backtrace()` in the handler
+    /// before `siglongjmp`. Uses `const` init for signal safety.
+    static CRASH_BACKTRACE: UnsafeCell<[*mut c_void; MAX_CRASH_FRAMES]> = const {
+        UnsafeCell::new([std::ptr::null_mut(); MAX_CRASH_FRAMES])
+    };
+
+    /// Number of valid frames in `CRASH_BACKTRACE`.
+    static CRASH_BACKTRACE_LEN: Cell<usize> = const { Cell::new(0) };
 }
 
 // ── Signal handler management ───────────────────────────────────────────────
@@ -174,6 +231,18 @@ extern "C" fn sandbox_signal_handler(sig: libc::c_int) {
 
     if is_active {
         CRASH_SIGNAL.with(|s| s.set(sig));
+
+        // Capture raw backtrace BEFORE siglongjmp destroys the crash stack.
+        // backtrace() from <execinfo.h> does frame-pointer walking which is
+        // signal-safe on ARM64 macOS (CrashPad/BreakPad pattern).
+        CRASH_BACKTRACE.with(|buf| {
+            let ptr = buf.get();
+            // Safety: ptr is valid, MAX_CRASH_FRAMES fits the buffer,
+            // and backtrace() is signal-safe on macOS ARM64.
+            let n = unsafe { backtrace(ptr as *mut *mut c_void, MAX_CRASH_FRAMES as libc::c_int) };
+            CRASH_BACKTRACE_LEN.with(|len| len.set(n.max(0) as usize));
+        });
+
         JUMP_BUF.with(|buf| {
             // Safety: buf.get() points to a valid SigJmpBuf that was
             // initialized by sigsetjmp on this thread.
@@ -287,6 +356,7 @@ pub fn sandbox_call<F, R>(context: &str, f: F) -> SandboxResult<R>
 where
     F: FnOnce() -> R,
 {
+    let _span = tracing::debug_span!("sandbox_call", context = context).entered();
     // If already inside a sandbox on this thread, run directly.
     // The outermost sandbox's sigsetjmp handles recovery.
     let already_active = SANDBOX_ACTIVE.with(|a| a.get());
@@ -328,16 +398,38 @@ where
             let sig = CRASH_SIGNAL.with(|s| s.get());
             let name = signal_name(sig);
 
+            // ── Heap integrity check ──
+            // Call malloc_zone_check(NULL) to detect heap corruption
+            // caused by siglongjmp skipping C++ destructors / in-progress free().
+            let heap_corrupted = check_heap_after_recovery();
+            if heap_corrupted {
+                error!("HEAP CORRUPTION DETECTED after plugin crash recovery");
+            }
+
+            // ── Symbolicate the raw backtrace captured in the signal handler ──
+            let bt = symbolicate_crash_backtrace();
+
             error!(
                 signal = name,
                 context = context,
+                heap_corrupted = heap_corrupted,
+                backtrace_frames = bt.len(),
                 "Plugin crashed — recovered via sandbox"
             );
+
+            if !bt.is_empty() {
+                error!("Crash backtrace:");
+                for (i, frame) in bt.iter().enumerate() {
+                    error!("  {:>3}: {}", i, frame);
+                }
+            }
 
             SandboxResult::Crashed(PluginCrash {
                 signal: sig,
                 signal_name: name.to_string(),
                 context: context.to_string(),
+                backtrace: bt,
+                heap_corrupted,
             })
         }
     });
@@ -357,6 +449,78 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     } else {
         "unknown panic".to_string()
     }
+}
+
+/// Check heap integrity after signal recovery.
+///
+/// Calls `malloc_zone_check(NULL)` on macOS to detect heap corruption
+/// caused by `siglongjmp` skipping C++ destructors and in-progress `free()` calls.
+/// Returns `true` if corruption is detected, `false` if the heap is OK.
+fn check_heap_after_recovery() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // Safety: malloc_zone_check(NULL) checks all zones; safe to call in
+        // the recovery path (we're back in normal context after siglongjmp).
+        let result = unsafe { malloc_zone_check(std::ptr::null_mut()) };
+        result == 0 // 0 = corruption detected
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Read raw backtrace addresses from thread-local storage and symbolicate
+/// them using the `backtrace` crate's `resolve()`.
+///
+/// Called in the recovery path (after `siglongjmp` returns non-zero),
+/// which is normal context where allocation is safe.
+fn symbolicate_crash_backtrace() -> Vec<String> {
+    let frame_count = CRASH_BACKTRACE_LEN.with(|len| len.get());
+    if frame_count == 0 {
+        return Vec::new();
+    }
+
+    // Read raw addresses from the thread-local buffer
+    let mut addresses = Vec::with_capacity(frame_count);
+    CRASH_BACKTRACE.with(|buf| {
+        let ptr = buf.get();
+        for i in 0..frame_count {
+            // Safety: we're in normal context, and i < frame_count <= MAX_CRASH_FRAMES.
+            let addr = unsafe { (*ptr)[i] };
+            if !addr.is_null() {
+                addresses.push(addr);
+            }
+        }
+    });
+
+    // Symbolicate using the backtrace crate (allocates, but we're in normal context)
+    let mut frames = Vec::with_capacity(addresses.len());
+    for addr in &addresses {
+        let mut resolved = false;
+        backtrace::resolve(*addr as *mut c_void, |symbol| {
+            let name = symbol
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| format!("{:?}", addr));
+            let file_info = match (symbol.filename(), symbol.lineno()) {
+                (Some(file), Some(line)) => format!(" at {}:{}", file.display(), line),
+                (Some(file), None) => format!(" at {}", file.display()),
+                _ => String::new(),
+            };
+            frames.push(format!("{}{}", name, file_info));
+            resolved = true;
+        });
+        if !resolved {
+            frames.push(format!("{:?}", addr));
+        }
+    }
+
+    // Clear the thread-local for the next crash
+    CRASH_BACKTRACE_LEN.with(|len| len.set(0));
+
+    frames
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -442,6 +606,8 @@ mod tests {
             signal: libc::SIGBUS,
             signal_name: "SIGBUS".into(),
             context: "test".into(),
+            backtrace: Vec::new(),
+            heap_corrupted: false,
         });
         assert!(!crashed.is_ok());
         assert!(crashed.is_crashed());
@@ -462,6 +628,8 @@ mod tests {
             signal: libc::SIGBUS,
             signal_name: "SIGBUS".into(),
             context: "shutdown".into(),
+            backtrace: Vec::new(),
+            heap_corrupted: false,
         };
         let s = format!("{}", crash);
         assert!(s.contains("SIGBUS"));
@@ -474,6 +642,8 @@ mod tests {
             signal: libc::SIGSEGV,
             signal_name: "SIGSEGV".into(),
             context: "process".into(),
+            backtrace: Vec::new(),
+            heap_corrupted: false,
         };
         // Verify it implements std::error::Error
         let _err: &dyn std::error::Error = &crash;
@@ -597,9 +767,17 @@ mod tests {
 
     #[test]
     fn test_handler_refcount_returns_to_zero() {
-        // After sandbox_call completes, the refcount should be 0
+        // After sandbox_call completes, the refcount should return to whatever
+        // it was before. Other tests may run concurrently, so we just verify
+        // the refcount decrements correctly (not necessarily back to zero).
+        let before = HANDLER_REFCOUNT.load(Ordering::SeqCst);
         let _ = sandbox_call("refcount_test", || 42);
-        assert_eq!(HANDLER_REFCOUNT.load(Ordering::SeqCst), 0);
+        let after = HANDLER_REFCOUNT.load(Ordering::SeqCst);
+        assert_eq!(
+            after, before,
+            "Refcount should return to pre-call value (before={}, after={})",
+            before, after
+        );
     }
 
     #[test]
@@ -656,5 +834,100 @@ mod tests {
             assert!(normal_result.is_ok());
             assert_eq!(normal_result.unwrap(), i * 10);
         }
+    }
+
+    // ── Backtrace capture tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_sandbox_crash_produces_backtrace() {
+        // When a signal is raised inside a sandbox, the crash should contain
+        // a non-empty backtrace captured from the signal handler.
+        let result: SandboxResult<()> = sandbox_call("backtrace_test", || unsafe {
+            libc::raise(libc::SIGBUS);
+        });
+        if let SandboxResult::Crashed(crash) = result {
+            assert!(
+                !crash.backtrace.is_empty(),
+                "Crash backtrace should be non-empty, got {:?}",
+                crash.backtrace
+            );
+        } else {
+            panic!("Expected Crashed result, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_sandbox_normal_call_has_no_backtrace_side_effects() {
+        // A normal (non-crashing) call should not leave stale backtrace data
+        let _ = sandbox_call("normal_bt_test", || 42);
+        let len = CRASH_BACKTRACE_LEN.with(|l| l.get());
+        assert_eq!(
+            len, 0,
+            "CRASH_BACKTRACE_LEN should be 0 after a normal call"
+        );
+    }
+
+    // ── Heap integrity check tests ──────────────────────────────────────
+
+    #[test]
+    fn test_clean_recovery_has_no_heap_corruption() {
+        // A clean raise(SIGBUS) shouldn't corrupt the heap (no C++ destructors involved)
+        let result: SandboxResult<()> = sandbox_call("heap_check_test", || unsafe {
+            libc::raise(libc::SIGBUS);
+        });
+        if let SandboxResult::Crashed(crash) = result {
+            assert!(
+                !crash.heap_corrupted,
+                "Clean signal raise should not corrupt the heap"
+            );
+        } else {
+            panic!("Expected Crashed result");
+        }
+    }
+
+    #[test]
+    fn test_check_heap_after_recovery_clean() {
+        // In a clean process, check_heap_after_recovery should return false (no corruption)
+        assert!(
+            !check_heap_after_recovery(),
+            "check_heap_after_recovery should return false in a clean process"
+        );
+    }
+
+    // ── PluginCrash display tests ───────────────────────────────────────
+
+    #[test]
+    fn test_plugin_crash_display_with_heap_corruption() {
+        let crash = PluginCrash {
+            signal: libc::SIGBUS,
+            signal_name: "SIGBUS".into(),
+            context: "shutdown".into(),
+            backtrace: Vec::new(),
+            heap_corrupted: true,
+        };
+        let s = format!("{}", crash);
+        assert!(s.contains("HEAP CORRUPTED"), "Display should mention heap corruption: {}", s);
+    }
+
+    #[test]
+    fn test_plugin_crash_display_with_backtrace() {
+        let crash = PluginCrash {
+            signal: libc::SIGBUS,
+            signal_name: "SIGBUS".into(),
+            context: "process".into(),
+            backtrace: vec!["frame0".into(), "frame1".into()],
+            heap_corrupted: false,
+        };
+        let s = format!("{}", crash);
+        assert!(s.contains("2 frames"), "Should report frame count: {}", s);
+        assert!(s.contains("frame0"), "Should contain frame names: {}", s);
+    }
+
+    #[test]
+    fn test_symbolicate_crash_backtrace_empty_when_no_crash() {
+        // Clear any stale data
+        CRASH_BACKTRACE_LEN.with(|l| l.set(0));
+        let bt = symbolicate_crash_backtrace();
+        assert!(bt.is_empty(), "Should be empty when no crash occurred");
     }
 }

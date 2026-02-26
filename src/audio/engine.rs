@@ -158,6 +158,8 @@ impl AudioEngine {
     /// The engine fills input from the test tone, processes MIDI events,
     /// calls the VST3 plugin, and writes the result to `output`.
     pub fn process(&mut self, output: &mut [f32]) {
+        let _span =
+            tracing::trace_span!("audio_engine_process", block_size = output.len()).entered();
         // Guard: do not call the VST3 plugin after shutdown or crash.
         if self.is_shutdown || self.instance.is_crashed() {
             output.fill(0.0);

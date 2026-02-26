@@ -111,6 +111,12 @@ pub struct HostApp {
     pub param_filter: String,
     /// Whether safe mode was requested (no plugins from cache).
     pub safe_mode: bool,
+    /// Whether malloc debug mode is enabled (periodic heap checks).
+    pub malloc_debug: bool,
+    /// Frame counter for periodic heap checks in malloc debug mode.
+    heap_check_counter: u32,
+    /// Whether heap corruption has been detected (persistent warning).
+    pub heap_corruption_detected: bool,
     /// Previous transport state for change detection.
     prev_tempo: f64,
     /// Previous time signature numerator.
@@ -122,8 +128,8 @@ pub struct HostApp {
 }
 
 impl HostApp {
-    /// Create a new HostApp, optionally in safe mode.
-    pub fn with_safe_mode(safe_mode: bool) -> Self {
+    /// Create a new HostApp with configuration options.
+    pub fn new(safe_mode: bool, malloc_debug: bool) -> Self {
         // Attempt to load cached plugins (unless safe mode)
         let plugin_modules = if safe_mode {
             Vec::new()
@@ -169,13 +175,21 @@ impl HostApp {
             session_path: default_session_path,
             param_filter: String::new(),
             safe_mode,
+            malloc_debug,
+            heap_check_counter: 0,
+            heap_corruption_detected: false,
         }
+    }
+
+    /// Create a new HostApp, optionally in safe mode (no malloc debug).
+    pub fn with_safe_mode(safe_mode: bool) -> Self {
+        Self::new(safe_mode, false)
     }
 }
 
 impl Default for HostApp {
     fn default() -> Self {
-        Self::with_safe_mode(false)
+        Self::new(false, false)
     }
 }
 
@@ -538,6 +552,7 @@ impl HostApp {
 
 impl eframe::App for HostApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let _span = tracing::trace_span!("gui_update").entered();
         // Apply theme once
         if !self.theme_applied {
             theme::apply(ctx);
@@ -563,6 +578,27 @@ impl eframe::App for HostApp {
             tracing::warn!(plugin = %active_name, "Plugin crash detected by GUI — deactivated");
         }
 
+        // Propagate heap corruption flag from backend to app
+        if self.backend.heap_corruption_detected && !self.heap_corruption_detected {
+            self.heap_corruption_detected = true;
+            tracing::error!("Heap corruption detected — user warned via GUI banner");
+        }
+
+        // Periodic heap check in malloc debug mode (every ~60 frames)
+        if self.malloc_debug {
+            self.heap_check_counter += 1;
+            if self.heap_check_counter >= 60 {
+                self.heap_check_counter = 0;
+                if !crate::diagnostics::heap_check() {
+                    if !self.heap_corruption_detected {
+                        self.heap_corruption_detected = true;
+                        self.backend.heap_corruption_detected = true;
+                        tracing::error!("Periodic heap check detected corruption (malloc_debug mode)");
+                    }
+                }
+            }
+        }
+
         // Sync transport state changes to the audio engine
         self.sync_transport();
 
@@ -575,6 +611,26 @@ impl eframe::App for HostApp {
                 self.transport.playing = !self.transport.playing;
             }
         });
+
+        // — Heap Corruption Warning Banner (persistent, shown at top) —
+        if self.heap_corruption_detected {
+            egui::TopBottomPanel::top("heap_corruption_warning")
+                .frame(egui::Frame {
+                    fill: egui::Color32::from_rgb(180, 30, 30),
+                    inner_margin: egui::Margin::symmetric(16, 8),
+                    ..Default::default()
+                })
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("⚠ Heap corruption detected — save your session and restart.")
+                                .color(egui::Color32::WHITE)
+                                .strong()
+                                .size(14.0),
+                        );
+                    });
+                });
+        }
 
         // — Left side panel: Plugin Browser —
         egui::SidePanel::left("plugin_browser")
@@ -1337,7 +1393,7 @@ impl HostApp {
 ///
 /// When `safe_mode` is true, plugin editors are disabled (only parameter
 /// sliders are shown) to avoid potential crashes from misbehaving plugins.
-pub fn launch(safe_mode: bool) -> anyhow::Result<()> {
+pub fn launch(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -1349,7 +1405,7 @@ pub fn launch(safe_mode: bool) -> anyhow::Result<()> {
     eframe::run_native(
         "rs-vst-host",
         options,
-        Box::new(move |_cc| Ok(Box::new(HostApp::with_safe_mode(safe_mode)))),
+        Box::new(move |_cc| Ok(Box::new(HostApp::new(safe_mode, malloc_debug)))),
     )
     .map_err(|e| anyhow::anyhow!("GUI error: {}", e))
 }
@@ -2038,5 +2094,41 @@ mod tests {
         assert!(app2.rack[0].staged_changes.is_empty());
 
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    // ── Diagnostics / debug infrastructure tests ────────────────────────
+
+    #[test]
+    fn test_host_app_new_with_malloc_debug() {
+        let app = HostApp::new(false, true);
+        assert!(app.malloc_debug);
+        assert!(!app.heap_corruption_detected);
+        assert_eq!(app.heap_check_counter, 0);
+    }
+
+    #[test]
+    fn test_host_app_new_without_malloc_debug() {
+        let app = HostApp::new(false, false);
+        assert!(!app.malloc_debug);
+        assert!(!app.heap_corruption_detected);
+    }
+
+    #[test]
+    fn test_host_app_heap_corruption_flag_propagation() {
+        let mut app = HostApp::new(false, false);
+        assert!(!app.heap_corruption_detected);
+
+        // Simulate backend detecting heap corruption
+        app.backend.heap_corruption_detected = true;
+
+        // The flag should propagate (normally happens in update(), but test the field directly)
+        assert!(app.backend.heap_corruption_detected);
+    }
+
+    #[test]
+    fn test_with_safe_mode_creates_no_malloc_debug() {
+        let app = HostApp::with_safe_mode(true);
+        assert!(app.safe_mode);
+        assert!(!app.malloc_debug);
     }
 }

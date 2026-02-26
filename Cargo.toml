@@ -3,6 +3,14 @@ name = "rs-vst-host"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Heap allocation profiling via dhat
+debug-alloc = ["dhat"]
+# Chrome trace timeline output
+debug-trace = ["tracing-chrome"]
+# Both debug-alloc and debug-trace
+debug-tools = ["debug-alloc", "debug-trace"]
+
 [dependencies]
 # CLI framework
 clap = { version = "4", features = ["derive"] }
@@ -13,7 +21,7 @@ anyhow = "1"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
 # Serialization for plugin cache
 serde = { version = "1", features = ["derive"] }
@@ -40,3 +48,12 @@ libc = "0.2"
 # GUI framework
 eframe = "0.31"
 egui = "0.31"
+
+# Backtrace symbolication (direct dependency; previously only transitive via anyhow)
+backtrace = "0.3"
+
+# Optional: heap allocation profiling
+dhat = { version = "0.3", optional = true }
+
+# Optional: Chrome trace timeline output
+tracing-chrome = { version = "0.7", optional = true }
