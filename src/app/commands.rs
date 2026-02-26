@@ -147,8 +147,7 @@ pub fn devices() -> anyhow::Result<()> {
 
 /// List available MIDI input ports.
 pub fn midi_ports() -> anyhow::Result<()> {
-    let device = MidiDevice::new()
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let device = MidiDevice::new().map_err(|e| anyhow::anyhow!(e))?;
     let ports = device.list_input_ports();
 
     if ports.is_empty() {
@@ -186,7 +185,10 @@ pub fn run(
 
     // Verify 32-bit float support
     if !instance.can_process_f32() {
-        anyhow::bail!("Plugin '{}' does not support 32-bit float processing", class_name);
+        anyhow::bail!(
+            "Plugin '{}' does not support 32-bit float processing",
+            class_name
+        );
     }
 
     // 3. Set up audio device
@@ -195,14 +197,11 @@ pub fn run(
         .get_output_device(device_name)
         .ok_or_else(|| anyhow::anyhow!("No audio output device available"))?;
 
-    let device_name_str = device
-        .name()
-        .unwrap_or_else(|_| "unknown".into());
+    let device_name_str = device.name().unwrap_or_else(|_| "unknown".into());
     println!("Audio device: {}", device_name_str);
 
     // Get device config
-    let default_config = AudioDevice::default_config(&device)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let default_config = AudioDevice::default_config(&device).map_err(|e| anyhow::anyhow!(e))?;
 
     let config = AudioConfig {
         sample_rate: sample_rate.unwrap_or(default_config.sample_rate),
@@ -314,7 +313,8 @@ pub fn run(
 
     // 9. Start audio stream
     let engine_cb = engine.clone();
-    let stream = AudioDevice::build_output_stream(        &device,
+    let stream = AudioDevice::build_output_stream(
+        &device,
         &config,
         move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
             if let Ok(mut eng) = engine_cb.try_lock() {
@@ -361,9 +361,7 @@ pub fn run(
 }
 
 /// Resolve a plugin name or path to a loaded module, class name, and class ID.
-fn resolve_plugin(
-    plugin: &str,
-) -> anyhow::Result<(Vst3Module, String, [u8; 16])> {
+fn resolve_plugin(plugin: &str) -> anyhow::Result<(Vst3Module, String, [u8; 16])> {
     // Check if it's a path to a .vst3 bundle
     let path = Path::new(plugin);
     if path.extension().is_some_and(|ext| ext == "vst3") && path.exists() {

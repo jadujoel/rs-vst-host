@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1] - 2026-02-26
+
+### Fixed
+- **Malloc heap corruption ("Corruption of tiny freelist") causing SIGABRT during host termination** (`vst3/instance.rs`): After a sandbox-recovered plugin crash (e.g. FabFilter Pro-Q 4 SIGBUS during `release_controller`), the `siglongjmp` recovery left plugin COM objects leaked in memory. These leaked objects still held raw pointers to our `HostApplication` and `HostComponentHandler` host objects. However, `Vst3Instance::drop` unconditionally destroyed these host objects at the end — causing use-after-free. The freed heap allocations were later accessed by the plugin's background threads or static destructors, corrupting the malloc tiny freelist metadata. The corruption manifested as `SIGABRT: "Corruption of tiny freelist 0x…: size too small"` during host exit. Fixed with three complementary changes:
+  1. **`setComponentHandler(nullptr)` before terminate**: Follows the VST3 shutdown protocol — clears the controller's reference to our handler before any terminate/release calls, preventing the controller's destructor from calling back into a handler that's about to be destroyed.
+  2. **Split terminate and release into separate sandbox calls**: `terminate_controller` and `release_controller` are now separate sandbox calls (previously combined). Similarly, `release_processor` and `release_component` are now separate. A crash in `terminate()` no longer prevents the `release()` attempt.
+  3. **Conditional host object leak on crash**: When `any_crash || self.crashed`, the host objects (`host_context`, `controller_host_context`, `component_handler`) are now intentionally leaked instead of destroyed. This is safe because the plugin library is also kept loaded (via `LAST_DROP_CRASHED` flag), so all pointers remain valid for the process lifetime. Memory cost is negligible (< 1 KB).
+
+### Added
+- 4 new unit tests (437 → 441 total): `test_host_objects_leaked_on_crash_prevents_use_after_free`, `test_host_objects_destroyed_on_clean_shutdown`, `test_deactivation_heap_corrupted_flag`, `test_crash_flags_set_together_on_com_crash`.
+
 ## [0.14.0] - 2026-02-26
 
 ### Added

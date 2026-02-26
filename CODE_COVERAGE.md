@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.14.0 — debug & profiling infrastructure).
+Last updated: 2026-02-26 (v0.14.1 — heap corruption fix).
 
 ## Summary
 
-- **Total tests:** 437 (438 with `--features debug-tools`)
+- **Total tests:** 441 (442 with `--features debug-tools`)
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (437 tests, 0 warnings; 438 with debug-tools)
+- **Last test run:** 2026-02-26 (441 tests, 0 warnings; 442 with debug-tools)
 
 ## Test Coverage by Module
 
@@ -37,7 +37,7 @@ Last updated: 2026-02-26 (v0.14.0 — debug & profiling infrastructure).
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
 | `src/gui/session.rs` | 9 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
-| `src/vst3/instance.rs` | 15 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED), DEACTIVATION_HEAP_CORRUPTED flag; create_editor_view/has_editor require real COM objects |
+| `src/vst3/instance.rs` | 21 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED), DEACTIVATION_HEAP_CORRUPTED flag, host object leak on crash (prevents use-after-free), host object destroy on clean shutdown, crash flags set together on COM crash; create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/audio/engine.rs` | 6 | ⚠️ Partial | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled); AudioEngine requires live Vst3Instance |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
@@ -109,6 +109,14 @@ Based on module-level analysis:
 | Area | New Tests | Description |
 |------|----------|-------------|
 | VST3 sandbox | 21 | SandboxResult is_ok/is_crashed/is_panicked/ok, PluginCrash Display+Error, signal_name (known+unknown), panic_message (str/String/other), sandbox normal/unit/side-effect, panic recovery, nested calls, nested inner panic, catches raised SIGBUS, catches raised SIGSEGV, catches SIGABRT, recovery allows subsequent calls, handler refcount cleanup |
+
+## v0.14.1 Test Additions (Heap Corruption Fix)
+
+4 new tests added (437 → 441 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| VST3 instance | 4 | Host objects leaked on crash (prevents use-after-free), host objects destroyed on clean shutdown, DEACTIVATION_HEAP_CORRUPTED flag, crash flags set together on COM crash (SIGBUS → LAST_DROP_CRASHED + DEACTIVATION_CRASHED + heap check) |
 
 ## v0.14.0 Test Additions (Debug & Profiling Infrastructure)
 

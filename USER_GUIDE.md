@@ -639,11 +639,20 @@ The host includes a crash sandbox that protects against buggy plugins. If a plug
 - In the **GUI**: The crashed plugin is automatically deactivated and a warning message appears in the status bar (e.g., "⚠ 'Plugin Name' crashed — deactivated safely. The host is unaffected.").
 - In the **CLI**: The host logs a warning and continues running.
 
-Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The plugin's dynamic library is also kept loaded in memory to prevent C++ static destructors from running on corrupted state. The operating system reclaims all memory when the process exits.
+Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The plugin's dynamic library is also kept loaded in memory to prevent C++ static destructors from running on corrupted state. Host-owned objects (`HostApplication`, `HostComponentHandler`) that the leaked plugin COM objects may still reference are also intentionally leaked to prevent use-after-free. The operating system reclaims all memory when the process exits.
 
 **After a crash**, the plugin's path is marked as *tainted*. If you try to start the same plugin again, the host will refuse with a message like "⚠ crashed during deactivation — restart the host to reuse this plugin". This prevents heap corruption that could otherwise occur when `dlopen` returns an already-mapped library with corrupted internal state. To use the plugin again, quit and relaunch the host.
 
-The deactivation cleanup itself is split into multiple isolated sandbox calls (disconnect, terminate controller, terminate component, release COM refs, release factory) so that a crash in one step does not prevent the remaining steps from being attempted.
+The deactivation cleanup follows the VST3 shutdown protocol and is split into multiple isolated sandbox calls:
+1. **Clear component handler** — `setComponentHandler(nullptr)` to release plugin's handler reference
+2. **Disconnect IConnectionPoint** — unlink component↔controller connection
+3. **Terminate controller** — `IEditController::terminate()`
+4. **Release controller** — `IEditController::release()`
+5. **Terminate component** — `IComponent::terminate()`
+6. **Release processor / component** — separate calls for each COM interface
+7. **Release factory** — `IPluginFactory::release()`
+
+If any step crashes, subsequent plugin-facing steps are skipped (to avoid cascading crashes), but host-side bookkeeping (taint tracking, crash flags) always completes.
 
 ### Heap corruption diagnostics
 
