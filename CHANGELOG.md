@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-02-26
+
+### Added
+- **mimalloc as default global allocator** (`main.rs`, `Cargo.toml`): Replaced the system allocator with mimalloc for all Rust heap allocations. Since VST3 plugins are loaded C++ dynamic libraries that use system malloc directly, a buggy plugin corrupting the system malloc heap (buffer overflow, use-after-free, etc.) would previously also corrupt our Rust allocations. With mimalloc, Rust heap allocations live in a separate heap that is isolated from the system malloc arena. This provides defense-in-depth: even if a plugin trashes the system heap, our host's data structures remain intact. The `debug-alloc` feature flag still overrides mimalloc with dhat for heap profiling.
+- `active_allocator_name()` diagnostic function to report which allocator is active.
+- 2 new unit tests (443 → 445 total): `test_active_allocator_name_is_mimalloc_by_default`, `test_rust_allocations_work_with_global_allocator`.
+
+## [0.14.2] - 2026-02-26
+
+### Fixed
+- **Double-free of `HostPlugFrame` causing malloc heap corruption on plugin stop** (`vst3/plug_frame.rs`): When stopping a plugin (e.g. FabFilter Pro-Q 4), the editor close sequence calls `IPlugView::removed()`, `setFrame(null)`, and `release()`. The plugin releases all its COM references to the `HostPlugFrame` during this sequence, which dropped the reference count to zero. The `host_plug_frame_release()` function self-destructed via `Box::from_raw` when the count hit zero. Then `HostPlugFrame::destroy()` was called by the host on the already-freed memory — a classic double-free. This corrupted macOS malloc's tiny freelist metadata ("Corruption of tiny freelist 0x…: size too small (0/48)"), causing a SIGABRT. The bug was masked by `debug.bash` because `dhat::Alloc` (global allocator) and `MallocGuardEdges`/`MallocScribble` changed allocation layout and behavior. Fix: removed self-destruct from `host_plug_frame_release()` so the host always manages the lifetime via `destroy()`, matching the pattern already used by `HostComponentHandler` and `HostApplication`.
+
+### Added
+- 2 new regression tests (441 → 443 total): `test_plug_frame_release_does_not_self_destruct`, `test_plug_frame_editor_close_lifecycle`.
+
 ## [0.14.1] - 2026-02-26
 
 ### Fixed

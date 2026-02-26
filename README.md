@@ -180,11 +180,17 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 
 The project includes optional diagnostic features for investigating heap corruption and performance issues, gated behind Cargo feature flags (zero-cost when disabled).
 
+### Heap Isolation (mimalloc)
+
+By default, all Rust allocations use **mimalloc** instead of the system allocator. Since VST3 plugins are loaded C++ code that uses system malloc directly, this isolates the host's heap from plugin-induced corruption. If a buggy plugin corrupts the system malloc heap, our Rust data structures remain intact.
+
+The `debug-alloc` feature overrides mimalloc with `dhat` for heap profiling.
+
 ### Feature Flags
 
 | Flag | Description |
 |------|-------------|
-| `debug-alloc` | Enable `dhat` heap profiler as global allocator |
+| `debug-alloc` | Enable `dhat` heap profiler as global allocator (replaces mimalloc) |
 | `debug-trace` | Enable Chrome trace export via `tracing-chrome` |
 | `debug-tools` | Enable both `debug-alloc` and `debug-trace` |
 

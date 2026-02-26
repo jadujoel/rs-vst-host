@@ -1,6 +1,6 @@
 [package]
 name = "rs-vst-host"
-version = "0.1.0"
+version = "0.15.0"
 edition = "2024"
 
 [features]
@@ -57,3 +57,4 @@ dhat = { version = "0.3", optional = true }
 
 # Optional: Chrome trace timeline output
 tracing-chrome = { version = "0.7", optional = true }
+mimalloc = "0.1.48"

@@ -4,12 +4,10 @@
 //! resize the editor window. The host stores the requested size so the
 //! GUI can apply it on the next frame.
 
-use crate::vst3::com::{
-    IPlugFrameVtbl, ViewRect, FUNKNOWN_IID, IPLUG_FRAME_IID,
-};
+use crate::vst3::com::{FUNKNOWN_IID, IPLUG_FRAME_IID, IPlugFrameVtbl, ViewRect};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::debug;
 
 /// Result code: success.
@@ -74,7 +72,11 @@ impl HostPlugFrame {
                 return None;
             }
             let frame_ref = &*frame;
-            frame_ref.pending_resize.lock().ok().and_then(|mut r| r.take())
+            frame_ref
+                .pending_resize
+                .lock()
+                .ok()
+                .and_then(|mut r| r.take())
         }
     }
 
@@ -129,14 +131,14 @@ unsafe extern "system" fn host_plug_frame_release(this: *mut c_void) -> u32 {
             return 0;
         }
         let frame = &*(this as *const HostPlugFrame);
+        // Note: We don't auto-destroy here because the host manages the lifetime
+        // via `HostPlugFrame::destroy()`. Self-destruct on ref_count==0 would
+        // cause a double-free when `destroy()` is called after the plugin has
+        // already released all its references (e.g. during editor close sequence
+        // where removed() + setFrame(null) + release() can drop the count to 0
+        // before the host calls destroy()).
         let prev = frame.ref_count.fetch_sub(1, Ordering::SeqCst);
-        if prev == 1 {
-            // Last reference — free memory
-            drop(Box::from_raw(this as *mut HostPlugFrame));
-            0
-        } else {
-            prev - 1
-        }
+        prev - 1
     }
 }
 
@@ -325,16 +327,88 @@ mod tests {
             let vtbl = &HOST_PLUG_FRAME_VTBL;
 
             // Null this pointer
-            let result = (vtbl.resize_view)(std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            let result = (vtbl.resize_view)(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
             assert_ne!(result, K_RESULT_OK);
 
             // Null iid
-            let result = (vtbl.query_interface)(std::ptr::null_mut(), std::ptr::null(), std::ptr::null_mut());
+            let result = (vtbl.query_interface)(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+            );
             assert_eq!(result, K_NO_INTERFACE);
 
             // Null add_ref / release
             assert_eq!((vtbl.add_ref)(std::ptr::null_mut()), 0);
             assert_eq!((vtbl.release)(std::ptr::null_mut()), 0);
+        }
+    }
+
+    /// Regression test: release() must NOT self-destruct when ref_count
+    /// drops to zero, because the host calls destroy() explicitly afterward.
+    /// A self-destructing release caused a double-free ("Corruption of tiny
+    /// freelist") when the plugin released all its refs during editor close
+    /// before the host called destroy().
+    #[test]
+    fn test_plug_frame_release_does_not_self_destruct() {
+        unsafe {
+            let frame = HostPlugFrame::new();
+            let ptr = HostPlugFrame::as_ptr(frame);
+            let vtbl = &*(*frame).vtbl;
+
+            // Simulate plugin calling AddRef (e.g. during setFrame)
+            let count = (vtbl.add_ref)(ptr); // ref_count: 1 → 2
+            assert_eq!(count, 2);
+
+            // Simulate plugin releasing during removed() / setFrame(null)
+            let count = (vtbl.release)(ptr); // ref_count: 2 → 1
+            assert_eq!(count, 1);
+
+            // Simulate plugin releasing again during view destructor (release())
+            let count = (vtbl.release)(ptr); // ref_count: 1 → 0
+            assert_eq!(count, 0);
+
+            // Host calls destroy() — this must NOT be a double-free.
+            // If release() had self-destructed at ref_count==0, this would
+            // be a use-after-free / double-free.
+            HostPlugFrame::destroy(frame);
+        }
+    }
+
+    /// Simulates the full editor open/close lifecycle to verify no double-free.
+    /// Mirrors the sequence: setFrame(frame) → removed() → setFrame(null) → release()
+    #[test]
+    fn test_plug_frame_editor_close_lifecycle() {
+        unsafe {
+            let frame = HostPlugFrame::new();
+            let ptr = HostPlugFrame::as_ptr(frame);
+            let vtbl = &*(*frame).vtbl;
+
+            // Plugin AddRef during setFrame (ref_count: 1 → 2)
+            (vtbl.add_ref)(ptr);
+
+            // Plugin may call resizeView during its lifetime
+            let mut rect = ViewRect {
+                left: 0,
+                top: 0,
+                right: 640,
+                bottom: 480,
+            };
+            (vtbl.resize_view)(ptr, std::ptr::null_mut(), &mut rect);
+
+            // Editor close: plugin releases (ref_count: 2 → 1)
+            (vtbl.release)(ptr);
+
+            // View destructor releases again (ref_count: 1 → 0)
+            // This must NOT free the memory
+            (vtbl.release)(ptr);
+
+            // Host safely destroys the frame
+            HostPlugFrame::destroy(frame);
         }
     }
 }

@@ -10,12 +10,22 @@ mod vst3;
 use app::cli::{Cli, Command};
 use clap::Parser;
 
-// ── dhat global allocator (behind feature flag) ─────────────────────────────
+// ── Global allocator ────────────────────────────────────────────────────────
 //
-// When `debug-alloc` is enabled, dhat replaces the system allocator to
-// profile all heap allocations. On exit, writes `dhat-heap.json` showing
-// which allocation sites are hit (including those after crash recovery).
-// We keep the system malloc for non-debug builds to reproduce the corruption.
+// Default: mimalloc — a fast, compact allocator from Microsoft.
+// Using a non-system allocator isolates Rust heap allocations from the system
+// malloc heap. This is critical because loaded VST3 plugins (C++ code) use
+// system malloc directly. If a buggy plugin corrupts the system malloc heap
+// (e.g. buffer overflow, use-after-free), our Rust allocations are unaffected
+// because they live in mimalloc's separate heap.
+//
+// When `debug-alloc` is enabled, dhat replaces mimalloc to profile all heap
+// allocations. On exit, writes `dhat-heap.json` showing which allocation
+// sites are hit (including those after crash recovery).
+
+#[cfg(not(feature = "debug-alloc"))]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(feature = "debug-alloc")]
 #[global_allocator]

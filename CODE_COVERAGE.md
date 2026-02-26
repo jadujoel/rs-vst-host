@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.14.1 — heap corruption fix).
+Last updated: 2026-02-26 (v0.15.0 — mimalloc heap isolation).
 
 ## Summary
 
-- **Total tests:** 441 (442 with `--features debug-tools`)
+- **Total tests:** 445 (446 with `--features debug-tools`)
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (441 tests, 0 warnings; 442 with debug-tools)
+- **Last test run:** 2026-02-26 (445 tests, 0 warnings; 446 with debug-tools)
 
 ## Test Coverage by Module
 
@@ -29,8 +29,8 @@ Last updated: 2026-02-26 (v0.14.1 — heap corruption fix).
 | `src/gui/backend.rs` | 36 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag (default false, set on deactivation crash, propagated from thread-local); activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
 | `src/vst3/sandbox.rs` | 28 | ✅ Full | SandboxResult methods (is_ok, is_crashed, is_panicked, ok, unwrap), PluginCrash Display and Error (incl. backtrace/heap_corrupted fields), signal name lookup, panic message extraction (str, String, other), normal/unit/side-effect calls, panic recovery, nested calls, nested inner panic, signal recovery (SIGBUS, SIGSEGV, SIGABRT via raise()), crash-then-normal recovery cycle, handler refcount cleanup, backtrace capture/symbolication, heap integrity check, crash display with frames |
-| `src/diagnostics.rs` | 7 | ✅ Full | heap_check returns bool, check_malloc_env detection, recommended_env_vars non-empty, print_malloc_debug_instructions output, init_profiler/shutdown_profiler (feature-gated), malloc env not set by default |
-| `src/vst3/plug_frame.rs` | 10 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view |
+| `src/diagnostics.rs` | 9 | ✅ Full | heap_check returns bool, check_malloc_env detection, recommended_env_vars non-empty, print_malloc_debug_instructions output, init_profiler/shutdown_profiler (feature-gated), malloc env not set by default, active_allocator_name, global allocator smoke test |
+| `src/vst3/plug_frame.rs` | 12 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view, release-does-not-self-destruct regression, editor close lifecycle regression |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |

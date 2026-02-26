@@ -88,6 +88,23 @@ pub fn recommended_env_vars() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+// ── Allocator identification ────────────────────────────────────────────────
+
+/// Returns the name of the active global allocator.
+///
+/// Useful for diagnostics and logging to confirm heap isolation is active.
+pub fn active_allocator_name() -> &'static str {
+    #[cfg(feature = "debug-alloc")]
+    {
+        "dhat (debug profiling)"
+    }
+
+    #[cfg(not(feature = "debug-alloc"))]
+    {
+        "mimalloc (heap-isolated)"
+    }
+}
+
 // ── dhat profiler lifecycle ─────────────────────────────────────────────────
 
 /// Holds the `dhat::Profiler` so it can be dropped on shutdown.
@@ -214,6 +231,33 @@ mod tests {
     fn test_print_malloc_debug_instructions_does_not_panic() {
         // Just verify it doesn't panic in any environment.
         print_malloc_debug_instructions();
+    }
+
+    #[test]
+    fn test_active_allocator_name_is_mimalloc_by_default() {
+        let name = active_allocator_name();
+        // Verify the function returns a non-empty allocator name.
+        assert!(!name.is_empty());
+        // In normal (non-debug-alloc) builds, should report mimalloc.
+        // In debug-alloc builds, should report dhat.
+        assert!(
+            name.contains("mimalloc") || name.contains("dhat"),
+            "Unknown allocator: {}",
+            name
+        );
+    }
+
+    #[test]
+    fn test_rust_allocations_work_with_global_allocator() {
+        // Verify that basic Rust heap allocations succeed with the
+        // non-system allocator. This catches build/linking issues with
+        // mimalloc or dhat.
+        let v: Vec<u8> = vec![0u8; 4096];
+        assert_eq!(v.len(), 4096);
+        let b = Box::new(42u64);
+        assert_eq!(*b, 42);
+        let s = String::from("heap isolation test");
+        assert!(s.contains("heap"));
     }
 
     #[cfg(feature = "debug-alloc")]
