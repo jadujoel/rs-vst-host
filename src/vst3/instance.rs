@@ -199,11 +199,18 @@ impl Vst3Instance {
 
     /// Verify the plugin supports 32-bit float processing.
     pub fn can_process_f32(&self) -> bool {
-        unsafe {
-            let proc_vtbl = &*(*self.processor).vtbl;
-            let result =
-                (proc_vtbl.can_process_sample_size)(self.processor as *mut c_void, K_SAMPLE_32);
-            result == K_RESULT_OK
+        if self.crashed {
+            return false;
+        }
+        let proc = self.processor as usize;
+        let result = sandbox_call("can_process_f32", move || unsafe {
+            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let proc_vtbl = &*(*processor).vtbl;
+            (proc_vtbl.can_process_sample_size)(processor as *mut c_void, K_SAMPLE_32)
+        });
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => true,
+            _ => false,
         }
     }
 
@@ -215,40 +222,60 @@ impl Vst3Instance {
         input_arr: u64,
         output_arr: u64,
     ) -> Result<(), Vst3Error> {
-        unsafe {
-            let proc_vtbl = &*(*self.processor).vtbl;
+        if self.crashed {
+            return Err(Vst3Error::Factory("Plugin has crashed".to_string()));
+        }
+
+        let proc = self.processor as usize;
+        let comp = self.component as usize;
+        let in_ch = self.input_channels;
+
+        let result = sandbox_call("set_bus_arrangements", move || unsafe {
+            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let component = comp as *mut ComPtr<IComponentVtbl>;
+            let proc_vtbl = &*(*processor).vtbl;
+            let comp_vtbl = &*(*component).vtbl;
+
             let mut inputs = [input_arr];
             let mut outputs = [output_arr];
-
-            let num_ins = if self.input_channels > 0 { 1 } else { 0 };
+            let num_ins = if in_ch > 0 { 1 } else { 0 };
             let num_outs = 1i32;
 
-            let result = (proc_vtbl.set_bus_arrangements)(
-                self.processor as *mut c_void,
+            let _result = (proc_vtbl.set_bus_arrangements)(
+                processor as *mut c_void,
                 inputs.as_mut_ptr(),
                 num_ins,
                 outputs.as_mut_ptr(),
                 num_outs,
             );
-
-            if result != K_RESULT_OK {
-                warn!(
-                    plugin = %self.name,
-                    result,
-                    "setBusArrangements returned non-OK (may still work)"
-                );
-                // Many plugins return kResultFalse but still work with defaults
-            }
+            // Many plugins return kResultFalse but still work with defaults
 
             // Activate the audio buses
-            let comp_vtbl = &*(*self.component).vtbl;
-            if self.input_channels > 0 {
-                (comp_vtbl.activate_bus)(self.component as *mut c_void, K_AUDIO, K_INPUT, 0, 1);
+            if in_ch > 0 {
+                (comp_vtbl.activate_bus)(component as *mut c_void, K_AUDIO, K_INPUT, 0, 1);
             }
-            (comp_vtbl.activate_bus)(self.component as *mut c_void, K_AUDIO, K_OUTPUT, 0, 1);
+            (comp_vtbl.activate_bus)(component as *mut c_void, K_AUDIO, K_OUTPUT, 0, 1);
+        });
 
-            debug!(plugin = %self.name, "Bus arrangements configured");
-            Ok(())
+        match result {
+            SandboxResult::Ok(()) => {
+                debug!(plugin = %self.name, "Bus arrangements configured");
+                Ok(())
+            }
+            SandboxResult::Crashed(crash) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' crashed during bus arrangement ({})",
+                    self.name, crash.signal_name
+                )))
+            }
+            SandboxResult::Panicked(msg) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' panicked during bus arrangement: {}",
+                    self.name, msg
+                )))
+            }
         }
     }
 
@@ -258,31 +285,51 @@ impl Vst3Instance {
         sample_rate: f64,
         max_block_size: i32,
     ) -> Result<(), Vst3Error> {
-        unsafe {
-            let proc_vtbl = &*(*self.processor).vtbl;
+        if self.crashed {
+            return Err(Vst3Error::Factory("Plugin has crashed".to_string()));
+        }
+
+        let proc = self.processor as usize;
+        let result = sandbox_call("setup_processing", move || unsafe {
+            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let proc_vtbl = &*(*processor).vtbl;
             let mut setup = ProcessSetup {
                 process_mode: K_REALTIME,
                 symbolic_sample_size: K_SAMPLE_32,
                 max_samples_per_block: max_block_size,
                 sample_rate,
             };
+            (proc_vtbl.setup_processing)(processor as *mut c_void, &mut setup)
+        });
 
-            let result = (proc_vtbl.setup_processing)(self.processor as *mut c_void, &mut setup);
-
-            if result != K_RESULT_OK {
-                return Err(Vst3Error::Factory(format!(
-                    "setupProcessing failed for '{}' (result: {})",
-                    self.name, result
-                )));
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => {
+                info!(
+                    plugin = %self.name,
+                    sample_rate,
+                    max_block_size,
+                    "Processing setup complete"
+                );
+                Ok(())
             }
-
-            info!(
-                plugin = %self.name,
-                sample_rate,
-                max_block_size,
-                "Processing setup complete"
-            );
-            Ok(())
+            SandboxResult::Ok(r) => Err(Vst3Error::Factory(format!(
+                "setupProcessing failed for '{}' (result: {})",
+                self.name, r
+            ))),
+            SandboxResult::Crashed(crash) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' crashed during setupProcessing ({})",
+                    self.name, crash.signal_name
+                )))
+            }
+            SandboxResult::Panicked(msg) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' panicked during setupProcessing: {}",
+                    self.name, msg
+                )))
+            }
         }
     }
 
@@ -291,22 +338,42 @@ impl Vst3Instance {
         if self.active {
             return Ok(());
         }
-
-        unsafe {
-            let comp_vtbl = &*(*self.component).vtbl;
-            let result = (comp_vtbl.set_active)(self.component as *mut c_void, 1);
-
-            if result != K_RESULT_OK {
-                return Err(Vst3Error::Factory(format!(
-                    "setActive(true) failed for '{}' (result: {})",
-                    self.name, result
-                )));
-            }
-
-            self.active = true;
-            debug!(plugin = %self.name, "Component activated");
+        if self.crashed {
+            return Err(Vst3Error::Factory("Plugin has crashed".to_string()));
         }
-        Ok(())
+
+        let comp = self.component as usize;
+        let result = sandbox_call("activate", move || unsafe {
+            let component = comp as *mut ComPtr<IComponentVtbl>;
+            let comp_vtbl = &*(*component).vtbl;
+            (comp_vtbl.set_active)(component as *mut c_void, 1)
+        });
+
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => {
+                self.active = true;
+                debug!(plugin = %self.name, "Component activated");
+                Ok(())
+            }
+            SandboxResult::Ok(r) => Err(Vst3Error::Factory(format!(
+                "setActive(true) failed for '{}' (result: {})",
+                self.name, r
+            ))),
+            SandboxResult::Crashed(crash) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' crashed during activation ({})",
+                    self.name, crash.signal_name
+                )))
+            }
+            SandboxResult::Panicked(msg) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' panicked during activation: {}",
+                    self.name, msg
+                )))
+            }
+        }
     }
 
     /// Start processing.
@@ -314,22 +381,42 @@ impl Vst3Instance {
         if self.processing {
             return Ok(());
         }
-
-        unsafe {
-            let proc_vtbl = &*(*self.processor).vtbl;
-            let result = (proc_vtbl.set_processing)(self.processor as *mut c_void, 1);
-
-            if result != K_RESULT_OK {
-                return Err(Vst3Error::Factory(format!(
-                    "setProcessing(true) failed for '{}' (result: {})",
-                    self.name, result
-                )));
-            }
-
-            self.processing = true;
-            info!(plugin = %self.name, "Processing started");
+        if self.crashed {
+            return Err(Vst3Error::Factory("Plugin has crashed".to_string()));
         }
-        Ok(())
+
+        let proc = self.processor as usize;
+        let result = sandbox_call("start_processing", move || unsafe {
+            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let proc_vtbl = &*(*processor).vtbl;
+            (proc_vtbl.set_processing)(processor as *mut c_void, 1)
+        });
+
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => {
+                self.processing = true;
+                info!(plugin = %self.name, "Processing started");
+                Ok(())
+            }
+            SandboxResult::Ok(r) => Err(Vst3Error::Factory(format!(
+                "setProcessing(true) failed for '{}' (result: {})",
+                self.name, r
+            ))),
+            SandboxResult::Crashed(crash) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' crashed during start_processing ({})",
+                    self.name, crash.signal_name
+                )))
+            }
+            SandboxResult::Panicked(msg) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' panicked during start_processing: {}",
+                    self.name, msg
+                )))
+            }
+        }
     }
 
     /// Call the plugin's process function with crash protection.
@@ -382,9 +469,18 @@ impl Vst3Instance {
 
     /// Get the plugin's latency in samples.
     pub fn latency_samples(&self) -> u32 {
-        unsafe {
-            let proc_vtbl = &*(*self.processor).vtbl;
-            (proc_vtbl.get_latency_samples)(self.processor as *mut c_void)
+        if self.crashed {
+            return 0;
+        }
+        let proc = self.processor as usize;
+        let result = sandbox_call("get_latency_samples", move || unsafe {
+            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let proc_vtbl = &*(*processor).vtbl;
+            (proc_vtbl.get_latency_samples)(processor as *mut c_void)
+        });
+        match result {
+            SandboxResult::Ok(v) => v,
+            _ => 0,
         }
     }
 
@@ -620,6 +716,10 @@ impl Vst3Instance {
     /// Creates a `HostComponentHandler`, calls `setComponentHandler()` on the controller,
     /// and stores the handler for later polling.
     pub fn install_component_handler(&mut self) -> bool {
+        if self.crashed {
+            return false;
+        }
+
         let controller = match self.get_controller() {
             Some(c) => c,
             None => {
@@ -628,23 +728,49 @@ impl Vst3Instance {
             }
         };
 
-        unsafe {
+        let handler = HostComponentHandler::new();
+        let ctrl = controller as usize;
+        // Safety: HostPlugFrame::as_ptr returns the raw COM pointer.
+        let handler_ptr = unsafe { HostComponentHandler::as_ptr(handler) };
+        let result = sandbox_call("set_component_handler", move || unsafe {
+            let controller = ctrl as *mut ComPtr<IEditControllerVtbl>;
             let ctrl_vtbl = &*(*controller).vtbl;
+            (ctrl_vtbl.set_component_handler)(controller as *mut c_void, handler_ptr)
+        });
 
-            // Create and install the handler
-            let handler = HostComponentHandler::new();
-            let result = (ctrl_vtbl.set_component_handler)(
-                controller as *mut c_void,
-                HostComponentHandler::as_ptr(handler),
-            );
-
-            if result == K_RESULT_OK {
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => {
                 self.component_handler = handler;
                 info!(plugin = %self.name, "IComponentHandler installed");
                 true
-            } else {
-                HostComponentHandler::destroy(handler);
-                warn!(plugin = %self.name, result, "setComponentHandler failed");
+            }
+            SandboxResult::Ok(r) => {
+                // Safety: handler is our own Rust struct, never crashes.
+                unsafe { HostComponentHandler::destroy(handler) };
+                warn!(plugin = %self.name, result = r, "setComponentHandler failed");
+                false
+            }
+            SandboxResult::Crashed(crash) => {
+                // Handler was never accepted by the plugin, destroy it
+                // Safety: handler is our own Rust struct, never crashes.
+                unsafe { HostComponentHandler::destroy(handler) };
+                self.crashed = true;
+                warn!(
+                    plugin = %self.name,
+                    signal = %crash.signal_name,
+                    "Plugin crashed during setComponentHandler"
+                );
+                false
+            }
+            SandboxResult::Panicked(msg) => {
+                // Safety: handler is our own Rust struct, never crashes.
+                unsafe { HostComponentHandler::destroy(handler) };
+                self.crashed = true;
+                warn!(
+                    plugin = %self.name,
+                    panic = %msg,
+                    "Plugin panicked during setComponentHandler"
+                );
                 false
             }
         }
@@ -663,25 +789,54 @@ impl Vst3Instance {
     /// pointer if the plugin supports an editor UI. The caller is responsible
     /// for managing the view lifecycle (attached, removed, release).
     ///
-    /// Returns `None` if the plugin has no editor or no controller.
+    /// Returns `None` if the plugin has no editor, no controller, or crashes.
     pub fn create_editor_view(&mut self) -> Option<*mut ComPtr<IPlugViewVtbl>> {
+        if self.crashed {
+            return None;
+        }
+
         let controller = self.get_controller()?;
 
-        unsafe {
+        let ctrl = controller as usize;
+        let result = sandbox_call("create_editor_view", move || unsafe {
+            let controller = ctrl as *mut ComPtr<IEditControllerVtbl>;
             let ctrl_vtbl = &*(*controller).vtbl;
 
             // Call createView("editor")
             let view_name = b"editor\0";
             let view_ptr = (ctrl_vtbl.create_view)(controller as *mut c_void, view_name.as_ptr());
 
-            if view_ptr.is_null() {
-                debug!(plugin = %self.name, "Plugin does not provide an editor view");
-                return None;
-            }
+            view_ptr
+        });
 
-            let view = view_ptr as *mut ComPtr<IPlugViewVtbl>;
-            debug!(plugin = %self.name, "IPlugView created");
-            Some(view)
+        match result {
+            SandboxResult::Ok(view_ptr) => {
+                if view_ptr.is_null() {
+                    debug!(plugin = %self.name, "Plugin does not provide an editor view");
+                    return None;
+                }
+                let view = view_ptr as *mut ComPtr<IPlugViewVtbl>;
+                debug!(plugin = %self.name, "IPlugView created");
+                Some(view)
+            }
+            SandboxResult::Crashed(crash) => {
+                warn!(
+                    plugin = %self.name,
+                    signal = %crash.signal_name,
+                    "Plugin crashed during createView"
+                );
+                self.crashed = true;
+                None
+            }
+            SandboxResult::Panicked(msg) => {
+                warn!(
+                    plugin = %self.name,
+                    panic = %msg,
+                    "Plugin panicked during createView"
+                );
+                self.crashed = true;
+                None
+            }
         }
     }
 
@@ -689,11 +844,17 @@ impl Vst3Instance {
     ///
     /// Creates a temporary IPlugView and immediately releases it.
     pub fn has_editor(&mut self) -> bool {
+        if self.crashed {
+            return false;
+        }
+
         if let Some(view) = self.create_editor_view() {
-            unsafe {
+            let v = view as usize;
+            let _ = sandbox_call("has_editor_release", move || unsafe {
+                let view = v as *mut ComPtr<IPlugViewVtbl>;
                 let vtbl = &*(*view).vtbl;
-                (vtbl.release)(view as *mut c_void);
-            }
+                (vtbl.release)(view as *mut c_void)
+            });
             true
         } else {
             false
@@ -928,5 +1089,46 @@ mod tests {
         let size = std::mem::size_of::<IPluginFactoryVtbl>();
         #[cfg(target_pointer_width = "64")]
         assert_eq!(size, 7 * 8, "IPluginFactoryVtbl should be 7 pointers");
+    }
+
+    #[test]
+    fn test_sandbox_used_in_lifecycle_methods() {
+        // Verify sandbox_call is importable and usable from the instance module
+        use crate::vst3::sandbox::sandbox_call;
+
+        let result = sandbox_call("instance_test", || 42);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_sandbox_crash_recovery_in_instance_context() {
+        // Simulate the kind of crash that happens during plugin deactivation
+        use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+
+        let result: SandboxResult<()> = sandbox_call("simulate_deactivation_crash", || unsafe {
+            libc::raise(libc::SIGBUS);
+        });
+        assert!(result.is_crashed());
+
+        // The host should be able to continue after the crash
+        let normal = sandbox_call("post_crash_normal", || "recovered");
+        assert!(normal.is_ok());
+        assert_eq!(normal.unwrap(), "recovered");
+    }
+
+    #[test]
+    fn test_sandbox_catches_abort_during_cleanup() {
+        // Simulate malloc abort (like the report.txt crash) during cleanup
+        use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+
+        let result: SandboxResult<()> = sandbox_call("simulate_abort_crash", || unsafe {
+            libc::raise(libc::SIGABRT);
+        });
+        assert!(result.is_crashed());
+
+        if let SandboxResult::Crashed(crash) = result {
+            assert_eq!(crash.signal, libc::SIGABRT);
+        }
     }
 }

@@ -4,6 +4,7 @@
 //! build a host-side parameter registry, and convert between normalized/plain values.
 
 use crate::vst3::com::*;
+use crate::vst3::sandbox::{SandboxResult, sandbox_call};
 use std::ffi::c_void;
 use tracing::{debug, info, warn};
 
@@ -297,12 +298,30 @@ impl ParameterRegistry {
 impl Drop for ParameterRegistry {
     fn drop(&mut self) {
         if self.owns_controller && !self.controller.is_null() {
-            unsafe {
-                let vtbl = &*(*self.controller).vtbl;
-                (vtbl.terminate)(self.controller as *mut c_void);
-                (vtbl.release)(self.controller as *mut c_void);
+            let controller = self.controller as usize;
+            let result = sandbox_call("param_registry_drop", move || unsafe {
+                let ctrl = controller as *mut ComPtr<IEditControllerVtbl>;
+                let vtbl = &*(*ctrl).vtbl;
+                (vtbl.terminate)(ctrl as *mut c_void);
+                (vtbl.release)(ctrl as *mut c_void);
+            });
+            match &result {
+                SandboxResult::Crashed(crash) => {
+                    warn!(
+                        signal = %crash.signal_name,
+                        "Plugin crashed during IEditController cleanup — COM objects leaked (host is safe)"
+                    );
+                }
+                SandboxResult::Panicked(msg) => {
+                    warn!(
+                        panic = %msg,
+                        "Plugin panicked during IEditController cleanup"
+                    );
+                }
+                SandboxResult::Ok(()) => {
+                    debug!("IEditController released");
+                }
             }
-            debug!("IEditController released");
         }
     }
 }
@@ -475,5 +494,41 @@ mod tests {
         let debug = format!("{:?}", entry);
         assert!(debug.contains("Volume"));
         assert!(debug.contains("dB"));
+    }
+
+    #[test]
+    fn test_sandbox_import_available_in_params() {
+        // Verify sandbox_call is importable from the params module
+        use crate::vst3::sandbox::sandbox_call;
+
+        let result = sandbox_call("params_test", || 42);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_param_registry_drop_with_null_controller_is_safe() {
+        // A ParameterRegistry with a null controller should not attempt
+        // any COM calls during Drop (guard check in Drop impl)
+        let registry = ParameterRegistry {
+            controller: std::ptr::null_mut(),
+            owns_controller: true,
+            parameters: vec![],
+        };
+        // Drop should be a no-op — controller is null
+        drop(registry);
+    }
+
+    #[test]
+    fn test_param_registry_drop_non_owning_skips_release() {
+        // When owns_controller is false, Drop should not call terminate/release
+        // even with a non-null (but invalid) controller pointer
+        let fake_ptr = 0xDEAD_BEEF as *mut ComPtr<IEditControllerVtbl>;
+        let registry = ParameterRegistry {
+            controller: fake_ptr,
+            owns_controller: false, // <-- key: does not own
+            parameters: vec![],
+        };
+        // Drop should be a no-op — not the owner
+        drop(registry);
     }
 }

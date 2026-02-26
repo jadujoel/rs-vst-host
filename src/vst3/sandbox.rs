@@ -213,6 +213,13 @@ fn release_signal_handlers() {
 }
 
 /// Install our signal handlers, returning the previous handlers.
+///
+/// Uses `SA_NODEFER` so the caught signal is not blocked during handler
+/// execution. This is important because `siglongjmp` unwinds out of the
+/// handler without the normal return path that would unblock the signal.
+/// Without `SA_NODEFER`, on some ARM64 macOS configurations the signal
+/// can stay masked after recovery, causing subsequent crashes to
+/// terminate the process instead of being caught.
 fn install_handlers_impl() -> Vec<(libc::c_int, libc::sigaction)> {
     let mut old_handlers = Vec::with_capacity(SANDBOX_SIGNALS.len());
 
@@ -221,7 +228,11 @@ fn install_handlers_impl() -> Vec<(libc::c_int, libc::sigaction)> {
             let mut old_action: libc::sigaction = std::mem::zeroed();
             let mut new_action: libc::sigaction = std::mem::zeroed();
             new_action.sa_sigaction = sandbox_signal_handler as libc::sighandler_t;
-            new_action.sa_flags = 0;
+            // SA_NODEFER: don't block the signal during handler execution.
+            // This ensures siglongjmp-based recovery works reliably even on
+            // ARM64 macOS where PAC-related faults may interact with signal
+            // masking.
+            new_action.sa_flags = libc::SA_NODEFER;
             libc::sigemptyset(&mut new_action.sa_mask);
 
             if libc::sigaction(sig, &new_action, &mut old_action) == 0 {
@@ -589,5 +600,61 @@ mod tests {
         // After sandbox_call completes, the refcount should be 0
         let _ = sandbox_call("refcount_test", || 42);
         assert_eq!(HANDLER_REFCOUNT.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_sandbox_sa_nodefer_flag_set() {
+        // Verify that our handlers are installed with SA_NODEFER.
+        // Install handlers, check the current sigaction, then restore.
+        acquire_signal_handlers();
+
+        unsafe {
+            let mut current: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut current);
+            assert!(
+                current.sa_flags & libc::SA_NODEFER != 0,
+                "SA_NODEFER should be set on SIGBUS handler"
+            );
+        }
+
+        release_signal_handlers();
+    }
+
+    #[test]
+    fn test_sandbox_multiple_crashes_same_signal() {
+        // Verify SA_NODEFER works: the same signal can be caught repeatedly
+        // without becoming blocked
+        for i in 0..5 {
+            let result: SandboxResult<()> =
+                sandbox_call(&format!("repeated_crash_{}", i), || unsafe {
+                    libc::raise(libc::SIGBUS);
+                });
+            assert!(
+                result.is_crashed(),
+                "Iteration {} should have caught the crash",
+                i
+            );
+        }
+
+        // A normal call should still work after repeated crashes
+        let normal = sandbox_call("after_repeated_crashes", || 99);
+        assert!(normal.is_ok());
+        assert_eq!(normal.unwrap(), 99);
+    }
+
+    #[test]
+    fn test_sandbox_alternating_crash_and_normal() {
+        // Interleave crashes and normal calls to verify handler state is clean
+        for i in 0..3 {
+            let crash_result: SandboxResult<()> =
+                sandbox_call(&format!("crash_{}", i), || unsafe {
+                    libc::raise(libc::SIGSEGV);
+                });
+            assert!(crash_result.is_crashed());
+
+            let normal_result = sandbox_call(&format!("normal_{}", i), || i * 10);
+            assert!(normal_result.is_ok());
+            assert_eq!(normal_result.unwrap(), i * 10);
+        }
     }
 }
