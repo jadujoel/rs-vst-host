@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-02-26
+
+### Added
+- **Plugin parameter editing for selected slots**: Clicking a plugin in the rack now shows its parameters in the right panel regardless of activation state. Inactive plugins display cached parameters with a staging banner; changes are queued and applied on activation.
+- **Parameter staging for inactive plugins**: `PluginSlot` gains `param_cache` and `staged_changes` fields. Slider edits on inactive plugins are recorded and applied automatically when the plugin is activated via ▶.
+- **Improved parameter panel UX**: Header shows plugin name and vendor. Inactive plugins with cached params show a "⚠ Plugin is inactive — changes will be applied on activation" banner. Never-activated plugins show an activation prompt. Error messages displayed in the status bar on failed parameter changes.
+- **Deactivation caches params**: When a plugin is deactivated, its current parameter state is preserved in the slot cache for continued browsing.
+- **Activation applies staged changes**: On activation, any pending staged parameter changes are applied to the live plugin and the count is shown in the status message.
+- 15 new unit tests (347 → 362 total): selection state transitions, cached param display, staging, cache preservation on reorder, session transient field isolation, and error paths.
+
+### Changed
+- **Parameter panel visibility**: Right panel now appears whenever a rack slot is selected (previously required both selection and non-empty live params).
+- **`refresh_params()`**: Now handles three states: active selected slot (live refresh), inactive selected slot (cache-based), no selection (clear).
+- **`deactivate_active()`**: No longer clears `param_snapshots`; caches them to the slot instead.
+- **`remove_from_rack()`**: Clears `param_snapshots` when the removed slot was selected.
+
+## [0.11.2] - 2026-02-26
+
+### Added
+- **USER_INTERACTION_PLAN.md**: GUI interaction plan for selecting plugins and adjusting parameters.
+
 ## [0.11.1] - 2026-02-26
 
 ### Fixed

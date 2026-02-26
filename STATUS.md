@@ -17,6 +17,8 @@
 **Rust 2024 compliance**: Fixed `unsafe_op_in_unsafe_fn` warnings in `plug_frame.rs` and `editor.rs` by wrapping unsafe operations in explicit `unsafe {}` blocks.
 **UI readability**: Adjusted glass panel alpha handling for higher text contrast on light cards and controls.
 **Validation**: `cargo test` (347 tests) passes after the theme update.
+**Interaction plan**: Added a GUI interaction plan for plugin parameter editing workflows.
+**Parameter editing for selected slots**: Implemented the interaction plan — clicking a rack slot shows its parameters (cached or live); inactive plugins support staged changes applied on activation. 362 tests passing.
 
 ### Completed
 
@@ -121,7 +123,7 @@
 - **Improved scan progress**: Shows module count, class count, and error count
 
 ### Test Results
-- 347 unit tests passing (error Display/From, CLI parsing incl. safe-mode, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout, GUI theme colours/constants/apply, GUI app state/rack/filter/browser/backend integration/session roundtrip/device selection/parameter refresh/safe mode/transport sync/editor/param filter/audio status, plug_frame COM ref counting/QI/resize, editor module)
+- 362 unit tests passing (error Display/From, CLI parsing incl. safe-mode, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout, GUI theme colours/constants/apply, GUI app state/rack/filter/browser/backend integration/session roundtrip/device selection/parameter refresh/safe mode/transport sync/editor/param filter/audio status/param staging/selection transitions, plug_frame COM ref counting/QI/resize, editor module)
 - Clean build with zero warnings
 - Test stability verified across multiple consecutive runs
 - Successfully loads and runs real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)

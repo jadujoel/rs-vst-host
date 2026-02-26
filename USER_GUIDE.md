@@ -339,7 +339,10 @@ When a plugin provides a native editor view (most commercial plugins do), click 
 
 ### Parameter View
 
-When a plugin is active, a right-side panel appears showing all of its parameters:
+When a plugin slot is selected (clicked) in the rack, a right-side panel appears showing its parameters:
+- **Active plugins**: Live parameter sliders with real-time feedback from the audio engine.
+- **Inactive plugins with cached params**: Parameter sliders are shown with a warning banner ("⚠ Plugin is inactive — changes will be applied on activation"). Edits are staged and automatically applied when the plugin is next activated.
+- **Never-activated plugins**: A placeholder prompts the user to activate the plugin to view parameters.
 - **Search filter** — type to filter parameters by name (useful for plugins with many parameters)
 - **Sliders** — drag to adjust normalized parameter values (0.0–1.0)
 - **Display values** — formatted value text with units (e.g. "-3.0 dB")
@@ -383,6 +386,7 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 ## Documentation
 
 - [PRD.md](PRD.md) — Product requirements for the GUI application
+- [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
 
 ---
 

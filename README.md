@@ -13,7 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Cross-platform** — macOS, Linux, and Windows support
-- **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view, device selection, session save/load, and improved text contrast on glass panels
+- **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 
 ## Requirements
 
@@ -164,7 +164,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-347 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
+362 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
@@ -176,6 +176,7 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 - [CHANGELOG.md](CHANGELOG.md) — Version history
 - [CODE_COVERAGE.md](CODE_COVERAGE.md) — Test coverage analysis by module
 - [PRD.md](PRD.md) — Product requirements for the GUI application
+- [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
 
 ## Roadmap
 

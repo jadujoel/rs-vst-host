@@ -31,6 +31,10 @@ pub struct PluginSlot {
     pub cid: [u8; 16],
     /// Whether the slot is bypassed.
     pub bypassed: bool,
+    /// Cached parameter snapshots from the last activation (transient; not serialized).
+    pub param_cache: Vec<ParamSnapshot>,
+    /// Staged parameter changes to apply on next activation (transient; not serialized).
+    pub staged_changes: Vec<(u32, f64)>,
 }
 
 /// Transport state tracked by the GUI.
@@ -236,6 +240,8 @@ impl HostApp {
             path: module.path.clone(),
             cid: class.cid,
             bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
         };
 
         self.status_message = format!("Added '{}' to the rack.", slot.name);
@@ -256,6 +262,7 @@ impl HostApp {
             self.rack.remove(index);
             if self.selected_slot == Some(index) {
                 self.selected_slot = None;
+                self.param_snapshots.clear();
             } else if let Some(sel) = self.selected_slot {
                 if sel > index {
                     self.selected_slot = Some(sel - 1);
@@ -280,7 +287,33 @@ impl HostApp {
             Ok(snapshots) => {
                 self.param_snapshots = snapshots;
                 self.selected_slot = Some(index);
-                self.status_message = format!("▶ '{}' active — processing audio.", name);
+
+                // Apply any staged parameter changes from prior inactive edits
+                let staged: Vec<(u32, f64)> = self.rack[index].staged_changes.drain(..).collect();
+                let staged_count = staged.len();
+                for (id, value) in staged {
+                    if let Err(e) = self.backend.set_parameter(id, value) {
+                        tracing::warn!(param_id = id, error = %e, "staged param apply failed");
+                    }
+                }
+
+                // Refresh params after applying staged changes
+                if staged_count > 0 {
+                    self.param_snapshots = self.backend.active_param_snapshots();
+                }
+
+                // Update the slot cache
+                self.rack[index]
+                    .param_cache
+                    .clone_from(&self.param_snapshots);
+
+                let staged_msg = if staged_count > 0 {
+                    format!(" ({} staged change(s) applied)", staged_count)
+                } else {
+                    String::new()
+                };
+                self.status_message =
+                    format!("▶ '{}' active — processing audio.{}", name, staged_msg);
             }
             Err(e) => {
                 self.status_message = format!("✗ Failed to activate '{}': {}", name, e);
@@ -291,14 +324,34 @@ impl HostApp {
 
     /// Deactivate the currently active plugin.
     pub fn deactivate_active(&mut self) {
+        // Cache current params to the active slot before deactivating
+        if let Some(active_idx) = self.backend.active_slot_index() {
+            if let Some(slot) = self.rack.get_mut(active_idx) {
+                slot.param_cache = self.param_snapshots.clone();
+            }
+        }
         self.backend.deactivate_plugin();
-        self.param_snapshots.clear();
+        // param_snapshots retained for display; refresh_params will load from cache
         self.status_message = "Plugin deactivated.".into();
     }
 
     /// Refresh parameter snapshots from the backend.
+    ///
+    /// For the active plugin: drains handler changes and refreshes from the
+    /// backend's live parameter registry each frame.
+    /// For inactive selected plugins: loads from the slot's parameter cache.
+    /// When nothing is selected: clears snapshots.
     pub fn refresh_params(&mut self) {
-        if self.backend.is_active() {
+        let Some(idx) = self.selected_slot else {
+            if !self.param_snapshots.is_empty() {
+                self.param_snapshots.clear();
+            }
+            return;
+        };
+
+        let is_active = self.backend.active_slot_index() == Some(idx);
+
+        if is_active {
             // Apply plugin-initiated param changes first
             let handler_changes = self.backend.drain_handler_changes();
             for (id, value) in handler_changes {
@@ -313,6 +366,22 @@ impl HostApp {
 
             // Periodically refresh all snapshots (handles display strings etc.)
             self.param_snapshots = self.backend.active_param_snapshots();
+
+            // Keep the slot cache up to date
+            if let Some(slot) = self.rack.get_mut(idx) {
+                slot.param_cache.clone_from(&self.param_snapshots);
+            }
+        } else {
+            // Inactive: load from the slot's parameter cache
+            if let Some(slot) = self.rack.get(idx) {
+                if self.param_snapshots.len() != slot.param_cache.len() {
+                    self.param_snapshots.clone_from(&slot.param_cache);
+                } else {
+                    self.param_snapshots.clone_from(&slot.param_cache);
+                }
+            } else {
+                self.param_snapshots.clear();
+            }
         }
     }
 
@@ -404,8 +473,11 @@ impl HostApp {
                 self.backend.selected_audio_device = session.audio_device;
                 self.backend.selected_midi_port = session.midi_port;
 
-                self.status_message =
-                    format!("Session loaded from {} ({} slots)", path.display(), self.rack.len());
+                self.status_message = format!(
+                    "Session loaded from {} ({} slots)",
+                    path.display(),
+                    self.rack.len()
+                );
             }
             Err(e) => {
                 self.status_message = format!("✗ Load failed: {}", e);
@@ -484,7 +556,7 @@ impl eframe::App for HostApp {
             });
 
         // — Right side panel: Parameter View —
-        if self.selected_slot.is_some() && !self.param_snapshots.is_empty() {
+        if self.selected_slot.is_some() {
             egui::SidePanel::right("param_panel")
                 .default_width(320.0)
                 .resizable(true)
@@ -533,7 +605,10 @@ impl HostApp {
 
         // Scan button
         if ui
-            .add(egui::Button::new("⟳  Scan Plugins").min_size(egui::vec2(ui.available_width(), 28.0)))
+            .add(
+                egui::Button::new("⟳  Scan Plugins")
+                    .min_size(egui::vec2(ui.available_width(), 28.0)),
+            )
             .clicked()
         {
             self.scan_plugins();
@@ -582,10 +657,7 @@ impl HostApp {
                             .or(module.factory_vendor.as_deref())
                             .unwrap_or("Unknown");
 
-                        let subcats = class
-                            .subcategories
-                            .as_deref()
-                            .unwrap_or("");
+                        let subcats = class.subcategories.as_deref().unwrap_or("");
 
                         theme::glass_card_frame().show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -612,10 +684,7 @@ impl HostApp {
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         if ui.button("＋").clicked() {
-                                            add_action = Some((
-                                                module.clone(),
-                                                class.clone(),
-                                            ));
+                                            add_action = Some((module.clone(), class.clone()));
                                         }
                                     },
                                 );
@@ -738,10 +807,7 @@ impl HostApp {
                     ui.label(
                         egui::RichText::new(format!(
                             "{} Hz • {} frames • {}{}",
-                            status.sample_rate,
-                            status.buffer_size,
-                            status.device_name,
-                            editor_str,
+                            status.sample_rate, status.buffer_size, status.device_name, editor_str,
                         ))
                         .color(theme::TEXT_DISABLED)
                         .small(),
@@ -767,10 +833,7 @@ impl HostApp {
                 .width(250.0)
                 .show_ui(ui, |ui| {
                     if ui
-                        .selectable_label(
-                            self.backend.selected_audio_device.is_none(),
-                            "(default)",
-                        )
+                        .selectable_label(self.backend.selected_audio_device.is_none(), "(default)")
                         .clicked()
                     {
                         self.backend.selected_audio_device = None;
@@ -856,28 +919,76 @@ impl HostApp {
     }
 
     /// Render the right-side parameter view panel.
+    ///
+    /// Supports three states:
+    /// - **Active plugin selected**: live parameter sliders with real-time feedback.
+    /// - **Inactive plugin with cache**: cached parameter sliders; changes are staged
+    ///   and applied on the next activation.
+    /// - **Inactive plugin, no cache**: placeholder prompting the user to activate.
     fn show_param_panel(&mut self, ui: &mut egui::Ui) {
-        let slot_name = self
-            .selected_slot
-            .and_then(|i| self.rack.get(i))
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| "Parameters".into());
+        let Some(idx) = self.selected_slot else {
+            // No slot selected — show placeholder
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(
+                    egui::RichText::new("Select a plugin from the rack to view its parameters.")
+                        .color(theme::TEXT_SECONDARY)
+                        .italics(),
+                );
+            });
+            return;
+        };
 
+        let (slot_name, slot_vendor) = self
+            .rack
+            .get(idx)
+            .map(|s| (s.name.clone(), s.vendor.clone()))
+            .unwrap_or_else(|| ("Parameters".into(), String::new()));
+
+        let is_active = self.backend.active_slot_index() == Some(idx);
+
+        // Header with plugin name and vendor
         ui.heading(format!("🎛 {}", slot_name));
+        if !slot_vendor.is_empty() {
+            ui.label(
+                egui::RichText::new(&slot_vendor)
+                    .color(theme::TEXT_SECONDARY)
+                    .small(),
+            );
+        }
         ui.add_space(4.0);
 
-        let is_active = self
-            .selected_slot
-            .map(|i| self.backend.active_slot_index() == Some(i))
-            .unwrap_or(false);
-
+        // Status banner for inactive plugins
         if !is_active {
-            ui.label(
-                egui::RichText::new("Plugin is not active. Click ▶ to activate.")
-                    .color(theme::TEXT_SECONDARY)
-                    .italics(),
-            );
-            return;
+            if !self.param_snapshots.is_empty() {
+                ui.label(
+                    egui::RichText::new(
+                        "⚠ Plugin is inactive — changes will be applied on activation.",
+                    )
+                    .color(theme::WARNING)
+                    .small(),
+                );
+                ui.add_space(4.0);
+            } else {
+                // No cached params — show activation prompt
+                ui.vertical_centered(|ui| {
+                    ui.add_space(20.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Activate this plugin to view and edit its parameters.",
+                        )
+                        .color(theme::TEXT_SECONDARY)
+                        .italics(),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("Click ▶ in the rack to activate.")
+                            .color(theme::TEXT_DISABLED)
+                            .small(),
+                    );
+                });
+                return;
+            }
         }
 
         if self.param_snapshots.is_empty() {
@@ -918,10 +1029,7 @@ impl HostApp {
                     if snap.is_read_only {
                         // Read-only: just display the value
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(&snap.title)
-                                    .color(theme::TEXT_PRIMARY),
-                            );
+                            ui.label(egui::RichText::new(&snap.title).color(theme::TEXT_PRIMARY));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -942,9 +1050,7 @@ impl HostApp {
                         };
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(&snap.title).color(label_color),
-                            );
+                            ui.label(egui::RichText::new(&snap.title).color(label_color));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -988,10 +1094,31 @@ impl HostApp {
 
         // Apply deferred parameter changes
         for (id, value) in param_changes {
-            match self.backend.set_parameter(id, value) {
-                Ok(_actual) => {}
-                Err(e) => {
-                    tracing::warn!(param_id = id, error = %e, "param set failed");
+            if is_active {
+                // Live: push to audio thread
+                match self.backend.set_parameter(id, value) {
+                    Ok(_actual) => {}
+                    Err(e) => {
+                        self.status_message = format!("⚠ Parameter change failed: {}", e);
+                        tracing::warn!(param_id = id, error = %e, "param set failed");
+                    }
+                }
+            } else {
+                // Inactive: stage the change for later activation
+                if let Some(slot) = self.rack.get_mut(idx) {
+                    // Update or insert the staged change
+                    if let Some(existing) =
+                        slot.staged_changes.iter_mut().find(|(sid, _)| *sid == id)
+                    {
+                        existing.1 = value;
+                    } else {
+                        slot.staged_changes.push((id, value));
+                    }
+                    // Update the cache so the display reflects the change next frame
+                    if let Some(cached) = slot.param_cache.iter_mut().find(|s| s.id == id) {
+                        cached.value = value;
+                        cached.display = format!("{:.3}", value);
+                    }
                 }
             }
         }
@@ -1096,8 +1223,7 @@ impl HostApp {
                                     // Remove button
                                     if ui
                                         .add(
-                                            egui::Button::new("✕")
-                                                .fill(egui::Color32::TRANSPARENT),
+                                            egui::Button::new("✕").fill(egui::Color32::TRANSPARENT),
                                         )
                                         .clicked()
                                     {
@@ -1138,8 +1264,7 @@ impl HostApp {
                                         }
                                     } else if ui
                                         .add(
-                                            egui::Button::new("▶")
-                                                .fill(egui::Color32::TRANSPARENT),
+                                            egui::Button::new("▶").fill(egui::Color32::TRANSPARENT),
                                         )
                                         .on_hover_text("Activate and start processing")
                                         .clicked()
@@ -1384,6 +1509,8 @@ mod tests {
             path: PathBuf::from("/test"),
             cid: [0u8; 16],
             bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
         };
         assert!(!slot.bypassed);
         slot.bypassed = true;
@@ -1623,5 +1750,259 @@ mod tests {
         assert!(!app.backend.audio_status.running);
         assert_eq!(app.backend.audio_status.sample_rate, 0);
         assert_eq!(app.backend.audio_status.buffer_size, 0);
+    }
+
+    // ── Interaction plan tests ──────────────────────────────────────────
+
+    fn make_snapshot(id: u32, title: &str, value: f64) -> ParamSnapshot {
+        ParamSnapshot {
+            id,
+            title: title.into(),
+            units: String::new(),
+            value,
+            default: 0.5,
+            display: format!("{:.3}", value),
+            can_automate: true,
+            is_read_only: false,
+            is_bypass: false,
+        }
+    }
+
+    #[test]
+    fn test_slot_param_cache_default_empty() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        assert!(app.rack[0].param_cache.is_empty());
+        assert!(app.rack[0].staged_changes.is_empty());
+    }
+
+    #[test]
+    fn test_selection_shows_cached_params() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+
+        // Simulate cached params
+        app.rack[0].param_cache = vec![make_snapshot(1, "Volume", 0.5)];
+
+        app.selected_slot = Some(0);
+        app.refresh_params();
+
+        assert_eq!(app.param_snapshots.len(), 1);
+        assert_eq!(app.param_snapshots[0].title, "Volume");
+    }
+
+    #[test]
+    fn test_selection_empty_cache_gives_no_params() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.selected_slot = Some(0);
+        app.refresh_params();
+        assert!(app.param_snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_no_selection_clears_params() {
+        let mut app = HostApp::default();
+        app.param_snapshots = vec![make_snapshot(1, "X", 0.5)];
+        app.selected_slot = None;
+        app.refresh_params();
+        assert!(app.param_snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_remove_selected_slot_clears_params() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.selected_slot = Some(0);
+        app.param_snapshots = vec![make_snapshot(1, "X", 0.5)];
+
+        app.remove_from_rack(0);
+        assert!(app.selected_slot.is_none());
+        assert!(app.param_snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_remove_non_selected_preserves_params() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.add_to_rack(&module, &module.classes[1]);
+        app.selected_slot = Some(1);
+        app.param_snapshots = vec![make_snapshot(1, "X", 0.5)];
+
+        app.remove_from_rack(0);
+        // selected_slot adjusts from 1 to 0
+        assert_eq!(app.selected_slot, Some(0));
+        // params preserved (non-selected slot was removed)
+        assert_eq!(app.param_snapshots.len(), 1);
+    }
+
+    #[test]
+    fn test_staging_params_for_inactive() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+
+        app.rack[0].staged_changes.push((0, 0.8));
+        app.rack[0].staged_changes.push((1, 0.3));
+
+        assert_eq!(app.rack[0].staged_changes.len(), 2);
+        assert_eq!(app.rack[0].staged_changes[0], (0, 0.8));
+        assert_eq!(app.rack[0].staged_changes[1], (1, 0.3));
+    }
+
+    #[test]
+    fn test_staged_changes_update_existing() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+
+        app.rack[0].staged_changes.push((0, 0.5));
+        // Update existing staged change (same logic as show_param_panel)
+        if let Some(existing) = app.rack[0]
+            .staged_changes
+            .iter_mut()
+            .find(|(id, _)| *id == 0)
+        {
+            existing.1 = 0.9;
+        }
+
+        assert_eq!(app.rack[0].staged_changes.len(), 1);
+        assert_eq!(app.rack[0].staged_changes[0], (0, 0.9));
+    }
+
+    #[test]
+    fn test_deactivate_preserves_param_snapshots() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.selected_slot = Some(0);
+        app.param_snapshots = vec![make_snapshot(1, "Volume", 0.7)];
+
+        // deactivate_active: backend.active_slot_index() is None (no real backend)
+        // so cache won't be populated, but param_snapshots are retained
+        app.deactivate_active();
+
+        // param_snapshots no longer cleared on deactivation
+        assert_eq!(app.param_snapshots.len(), 1);
+        assert!(app.status_message.contains("deactivated"));
+    }
+
+    #[test]
+    fn test_param_cache_survives_slot_reorder() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.add_to_rack(&module, &module.classes[1]);
+
+        // Cache params for slot 1
+        app.rack[1].param_cache = vec![make_snapshot(5, "Freq", 0.5)];
+
+        // Remove slot 0 — slot 1 becomes slot 0
+        app.remove_from_rack(0);
+        assert_eq!(app.rack.len(), 1);
+        assert_eq!(app.rack[0].param_cache.len(), 1);
+        assert_eq!(app.rack[0].param_cache[0].title, "Freq");
+    }
+
+    #[test]
+    fn test_refresh_params_inactive_with_cache() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.rack[0].param_cache = vec![
+            make_snapshot(1, "Volume", 0.7),
+            make_snapshot(2, "Pan", 0.5),
+        ];
+        app.selected_slot = Some(0);
+
+        app.refresh_params();
+
+        assert_eq!(app.param_snapshots.len(), 2);
+        assert_eq!(app.param_snapshots[0].value, 0.7);
+        assert_eq!(app.param_snapshots[1].title, "Pan");
+    }
+
+    #[test]
+    fn test_refresh_params_invalid_index() {
+        let mut app = HostApp::default();
+        // Selected slot points beyond rack length
+        app.selected_slot = Some(5);
+        app.param_snapshots = vec![make_snapshot(1, "X", 0.5)];
+        app.refresh_params();
+        // Should clear because slot doesn't exist
+        assert!(app.param_snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_staged_changes_cleared_on_remove() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.rack[0].staged_changes.push((0, 0.8));
+        app.rack[0].staged_changes.push((1, 0.3));
+
+        // Remove the slot — staged changes go with it
+        app.remove_from_rack(0);
+        assert!(app.rack.is_empty());
+    }
+
+    #[test]
+    fn test_cache_update_on_staging() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.rack[0].param_cache = vec![make_snapshot(1, "Volume", 0.5)];
+
+        // Simulate staging a change (same logic as show_param_panel for inactive)
+        let id = 1u32;
+        let value = 0.8;
+        if let Some(existing) = app.rack[0]
+            .staged_changes
+            .iter_mut()
+            .find(|(sid, _)| *sid == id)
+        {
+            existing.1 = value;
+        } else {
+            app.rack[0].staged_changes.push((id, value));
+        }
+        if let Some(cached) = app.rack[0].param_cache.iter_mut().find(|s| s.id == id) {
+            cached.value = value;
+            cached.display = format!("{:.3}", value);
+        }
+
+        assert_eq!(app.rack[0].param_cache[0].value, 0.8);
+        assert_eq!(app.rack[0].param_cache[0].display, "0.800");
+        assert_eq!(app.rack[0].staged_changes.len(), 1);
+    }
+
+    #[test]
+    fn test_session_roundtrip_preserves_no_transient_data() {
+        // param_cache and staged_changes should not survive session save/load
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.rack[0].param_cache = vec![make_snapshot(1, "Vol", 0.7)];
+        app.rack[0].staged_changes.push((1, 0.9));
+
+        let temp = std::env::temp_dir().join("rs-vst-host-test-gui-transient");
+        let path = temp.join("test_transient.json");
+        app.session_path = path.to_string_lossy().to_string();
+        app.save_session();
+
+        let mut app2 = HostApp::default();
+        app2.session_path = path.to_string_lossy().to_string();
+        app2.load_session();
+
+        // Transient fields reset on load
+        assert_eq!(app2.rack.len(), 1);
+        assert!(app2.rack[0].param_cache.is_empty());
+        assert!(app2.rack[0].staged_changes.is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

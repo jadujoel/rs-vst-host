@@ -103,6 +103,8 @@ impl Session {
                 path: snap.path.clone(),
                 cid: snap.cid,
                 bypassed: snap.bypassed,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
             })
             .collect();
 
@@ -160,6 +162,8 @@ mod tests {
                 path: PathBuf::from("/Library/Audio/Plug-Ins/VST3/TestSynth.vst3"),
                 cid: [1u8; 16],
                 bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
             },
             PluginSlot {
                 name: "TestEQ".into(),
@@ -168,6 +172,8 @@ mod tests {
                 path: PathBuf::from("/Library/Audio/Plug-Ins/VST3/TestEQ.vst3"),
                 cid: [2u8; 16],
                 bypassed: true,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
             },
         ]
     }
@@ -308,6 +314,8 @@ mod tests {
             path: PathBuf::from("/test"),
             cid,
             bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
         };
 
         let session = Session::capture(&TransportState::default(), &[slot], None, None);
