@@ -34,6 +34,9 @@ midir = "0.10"
 # Ctrl+C handling
 ctrlc = "3"
 
+# Low-level libc bindings (signal handling for plugin sandboxing)
+libc = "0.2"
+
 # GUI framework
 eframe = "0.31"
 egui = "0.31"

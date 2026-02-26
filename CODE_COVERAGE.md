@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.12.1 — fix SIGSEGV on plugin activation).
+Last updated: 2026-02-26 (v0.13.0 — plugin crash sandbox).
 
 ## Summary
 
-- **Total tests:** 364
+- **Total tests:** 389
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (364 tests, 0 warnings)
+- **Last test run:** 2026-02-26 (389 tests, 0 warnings)
 
 ## Test Coverage by Module
 
@@ -26,8 +26,9 @@ Last updated: 2026-02-26 (v0.12.1 — fix SIGSEGV on plugin activation).
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
 | `src/gui/app.rs` | 56 | ✅ Full | TransportState default, HostApp default, safe mode, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
-| `src/gui/backend.rs` | 24 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status; activation requires real .vst3 plugins |
+| `src/gui/backend.rs` | 27 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type; activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
+| `src/vst3/sandbox.rs` | 21 | ✅ Full | SandboxResult methods (is_ok, is_crashed, is_panicked, ok, unwrap), PluginCrash Display and Error, signal name lookup, panic message extraction (str, String, other), normal/unit/side-effect calls, panic recovery, nested calls, nested inner panic, signal recovery (SIGBUS, SIGSEGV, SIGABRT via raise()), crash-then-normal recovery cycle, handler refcount cleanup |
 | `src/vst3/plug_frame.rs` | 10 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
@@ -37,14 +38,14 @@ Last updated: 2026-02-26 (v0.12.1 — fix SIGSEGV on plugin activation).
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
 | `src/vst3/instance.rs` | 7 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size; create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 6 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification; module loading requires real .vst3 bundles |
-| `src/audio/engine.rs` | 5 | ⚠️ Partial | TestToneGenerator only; AudioEngine requires live Vst3Instance |
+| `src/audio/engine.rs` | 6 | ⚠️ Partial | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled); AudioEngine requires live Vst3Instance |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 
 ## Coverage Analysis
 
-### Fully Tested (✅) — 18 modules
+### Fully Tested (✅) — 19 modules
 All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
 ### Partially Tested (⚠️) — 10 modules
@@ -99,6 +100,14 @@ Based on module-level analysis:
 | VST3 com | 7 | IPlugView/IPlugFrame IID lengths, UUID verification, IPlugViewVtbl/IPlugFrameVtbl sizes, ViewRect width/height |
 | GUI editor | 3 | Platform constant, struct size, result constant |
 | CLI parsing | 1 | `gui --safe-mode` flag |
+
+## v0.13.0 Test Additions (Plugin Crash Sandbox)
+
+21 new tests added (368 → 389 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| VST3 sandbox | 21 | SandboxResult is_ok/is_crashed/is_panicked/ok, PluginCrash Display+Error, signal_name (known+unknown), panic_message (str/String/other), sandbox normal/unit/side-effect, panic recovery, nested calls, nested inner panic, catches raised SIGBUS, catches raised SIGSEGV, catches SIGABRT, recovery allows subsequent calls, handler refcount cleanup |
 
 ## v0.10.0 Test Additions (GUI Live Integration)
 

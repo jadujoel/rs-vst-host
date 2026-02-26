@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-02-26
+
+### Added
+- **Plugin crash sandbox** (`vst3/sandbox.rs`): New module providing signal-handler-based crash isolation for VST3 plugin calls. Uses `sigsetjmp`/`siglongjmp` to recover from SIGBUS, SIGSEGV, SIGABRT, and SIGFPE triggered by buggy plugins. Thread-safe with per-thread jump buffers and reference-counted signal handler installation.
+- **Sandboxed plugin lifecycle**: All plugin-facing COM calls are now wrapped in `sandbox_call()` — including `process()`, `shutdown()`, `Drop` (COM cleanup), and module exit (factory release, `bundleExit`). If a plugin crashes at any point, the host catches the signal and continues running.
+- **Crash-aware instance state**: `Vst3Instance` gains a `crashed` flag. Once set, all subsequent COM calls are skipped, and the `Drop` impl intentionally leaks COM objects to avoid further crashes.
+- **GUI crash detection**: `HostBackend::is_crashed()` polls the engine for crash state. The GUI update loop auto-deactivates crashed plugins and displays a status message (e.g., "⚠ 'FabFilter Pro-Q 4' crashed — deactivated safely. The host is unaffected.").
+- `libc` dependency for low-level signal handling (`sigaction`, `sigsetjmp`/`siglongjmp`, `raise`).
+- 21 new unit tests (368 → 389 total): `SandboxResult` methods, `PluginCrash` display/error impl, signal name lookup, panic message extraction, sandbox normal/panic/nested execution, signal recovery (SIGBUS, SIGSEGV, SIGABRT via `raise()`), crash-then-normal recovery cycle, handler refcount cleanup.
+
+### Changed
+- `Vst3Instance::process()` signature changed from `&self → i32` to `&mut self → bool`. Returns `false` if the plugin crashed.
+- `Vst3Instance::shutdown()` now wraps each COM call (`set_processing`, `set_active`) in a sandbox. If either crashes, the instance is marked crashed and remaining calls are skipped.
+- `Vst3Instance::Drop` now performs all COM cleanup (disconnect, terminate, release) inside a single `sandbox_call`. On crash, resources are intentionally leaked.
+- `Vst3Module::Drop` wraps factory release and `bundleExit` in sandboxed calls.
+- `AudioEngine::process()` checks `instance.is_crashed()` as an early-exit guard alongside `is_shutdown`.
+
+## [0.12.2] - 2026-02-26
+
+### Fixed
+- **SIGSEGV on plugin deactivation (stop button)** (`audio/engine.rs`, `gui/backend.rs`): Race condition between the GUI thread and the audio callback caused a crash when stopping a plugin. After `engine.shutdown()` released the Mutex lock, the audio callback could re-acquire the lock and call `process()` on a deactivated/stopped VST3 plugin — undefined behavior per the VST3 spec, causing SIGSEGV on many plugins. Fixed with a two-part approach:
+  1. Added `is_shutdown` flag to `AudioEngine` — set atomically in `shutdown()`, checked at the top of `process()`. Racing audio callbacks now immediately output silence instead of calling the plugin.
+  2. Implemented custom `Drop` for `ActiveState` with controlled teardown order: params → stream → engine → MIDI → module. The audio stream is explicitly dropped before the `Vst3Module`, ensuring all COM references are released while the dynamic library is still loaded.
+  3. Wrapped `_stream` in `Option<cpal::Stream>` so `deactivate_plugin()` can explicitly drop the stream (via `.take()`) before the rest of `ActiveState` is dropped.
+
+### Added
+- 4 new unit tests (364 → 368 total): `test_backend_deactivate_idempotent`, `test_backend_deactivate_clears_editors`, `test_active_state_stream_is_option`, `test_tone_generator_zero_amplitude_when_disabled`.
+
 ## [0.12.1] - 2026-02-26
 
 ### Fixed

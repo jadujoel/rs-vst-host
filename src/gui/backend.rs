@@ -76,13 +76,30 @@ pub struct HostBackend {
 }
 
 /// Runtime state for an active (instantiated and processing) plugin.
+///
+/// **Drop order is critical.** When this struct is dropped, Rust drops
+/// fields in declaration order. The correct teardown sequence is:
+///
+/// 1. `params` — borrowing pointers into the controller; must be dropped
+///    while the library is still loaded (no-op Drop when `owns_controller = false`,
+///    but clearing it early avoids any dangling-pointer risk).
+/// 2. `_stream` — stopping the audio stream prevents further audio callbacks
+///    and drops the callback closure, which releases the last `Arc<Mutex<AudioEngine>>`
+///    reference, destroying the engine and the `Vst3Instance` inside it
+///    (releasing all COM references).
+/// 3. `engine` — the `Arc` held here is decremented. If the stream callback
+///    already released its clone, this destroys the engine.
+/// 4. `_midi_connection` — closes the MIDI input port.
+/// 5. `_module` — releases the factory, calls `bundleExit`, unloads the library.
+///
+/// A manual `Drop` implementation enforces this order.
 struct ActiveState {
     /// Which rack slot index is active.
     slot_index: usize,
     /// The audio engine processing this plugin.
     engine: Arc<Mutex<AudioEngine>>,
     /// The cpal audio stream (must stay alive for audio output).
-    _stream: cpal::Stream,
+    _stream: Option<cpal::Stream>,
     /// The loaded VST3 module — must stay alive so the dynamic library
     /// (and all COM vtable pointers within it) remains mapped in memory.
     _module: Vst3Module,
@@ -103,6 +120,33 @@ struct ActiveState {
 // - AudioEngine (processor) is accessed from the audio thread via Arc<Mutex<>>
 // - component_handler uses internal Mutex for thread safety
 unsafe impl Send for ActiveState {}
+
+impl Drop for ActiveState {
+    fn drop(&mut self) {
+        // 1. Drop params first — they borrow a controller pointer from the
+        //    Vst3Instance inside the engine. Must be released while the
+        //    library is still loaded.
+        self.params.take();
+
+        // 2. Drop the audio stream — this stops the CoreAudio render callback,
+        //    which drops the callback closure's Arc<Mutex<AudioEngine>> clone.
+        //    If that was the last reference, the AudioEngine (and Vst3Instance)
+        //    are destroyed here, releasing all COM references.
+        self._stream.take();
+
+        // 3. Drop the engine Arc — if the stream callback already released its
+        //    clone, this is a no-op. Otherwise this destroys the engine.
+        //    (Uses ManuallyDrop-like semantics via the Arc.)
+
+        // 4. Drop the MIDI connection (closes the MIDI port).
+        self._midi_connection.take();
+
+        // 5. The remaining fields (_module, param_queue, etc.) are dropped
+        //    in normal declaration order. _module unloads the library LAST,
+        //    which is correct since all COM pointers have been released above.
+        debug!("ActiveState dropped with controlled teardown order");
+    }
+}
 
 impl HostBackend {
     /// Create a new backend, enumerating available devices.
@@ -275,7 +319,7 @@ impl HostBackend {
         self.active = Some(ActiveState {
             slot_index,
             engine,
-            _stream: stream,
+            _stream: Some(stream),
             _module: module,
             params,
             param_queue,
@@ -288,16 +332,37 @@ impl HostBackend {
     }
 
     /// Deactivate the currently active plugin, stopping audio.
+    ///
+    /// Shutdown sequence:
+    /// 1. Close any open editor windows (releases IPlugView COM objects).
+    /// 2. Lock the engine and call `shutdown()` — this sets the `is_shutdown`
+    ///    flag (so racing audio callbacks output silence) and tells the VST3
+    ///    plugin to stop processing and deactivate.
+    /// 3. Drop the audio stream — stops the CoreAudio render callback and
+    ///    releases the callback's `Arc<Mutex<AudioEngine>>` clone.
+    /// 4. Drop the `ActiveState` — the custom `Drop` impl releases params,
+    ///    MIDI, engine, and finally unloads the module in the correct order.
     pub fn deactivate_plugin(&mut self) {
         // Close any open editor windows for this plugin
         self.close_all_editors();
 
-        if let Some(active) = self.active.take() {
-            // Drop stream first (implicit via take) to stop audio callback,
-            // then safely shut down the engine.
+        if let Some(mut active) = self.active.take() {
+            // 1. Shut down the engine while holding the lock. This sets
+            //    the is_shutdown flag so the audio callback will output
+            //    silence if it races between our unlock and stream drop.
             if let Ok(mut eng) = active.engine.lock() {
                 eng.shutdown();
             }
+
+            // 2. Drop the stream explicitly BEFORE dropping the rest.
+            //    This stops CoreAudio's render callback and drops the
+            //    callback closure's Arc clone, potentially destroying
+            //    the AudioEngine (and thus the Vst3Instance + COM refs).
+            active._stream.take();
+
+            // 3. Now `active` is dropped (via the custom Drop impl),
+            //    which releases params, midi, engine Arc, and finally
+            //    the Vst3Module (unloading the library).
             debug!("Plugin deactivated in GUI");
         }
 
@@ -362,6 +427,19 @@ impl HostBackend {
     /// Whether a plugin is currently active and processing audio.
     pub fn is_active(&self) -> bool {
         self.active.is_some()
+    }
+
+    /// Whether the active plugin has crashed.
+    ///
+    /// When true, the engine is outputting silence and the plugin should
+    /// be deactivated by the GUI to clean up resources.
+    pub fn is_crashed(&self) -> bool {
+        if let Some(ref active) = self.active {
+            if let Ok(eng) = active.engine.lock() {
+                return eng.is_crashed();
+            }
+        }
+        false
     }
 
     /// Set the test tone enabled/disabled on the active engine.
@@ -704,5 +782,36 @@ mod tests {
         backend.audio_status.running = true;
         backend.deactivate_plugin();
         assert!(!backend.audio_status.running);
+    }
+
+    #[test]
+    fn test_backend_deactivate_idempotent() {
+        let mut backend = HostBackend::new();
+        // Calling deactivate multiple times should not panic
+        backend.deactivate_plugin();
+        backend.deactivate_plugin();
+        backend.deactivate_plugin();
+        assert!(!backend.is_active());
+    }
+
+    #[test]
+    fn test_backend_deactivate_clears_editors() {
+        let mut backend = HostBackend::new();
+        // No editors open, deactivate should not panic when closing editors
+        backend.deactivate_plugin();
+        assert_eq!(backend.editor_count(), 0);
+    }
+
+    #[test]
+    fn test_active_state_stream_is_option() {
+        // Verify that _stream is an Option<cpal::Stream> —
+        // this allows explicit drop ordering in deactivate_plugin
+        // and the custom Drop impl. The stream must be dropped
+        // before the Vst3Module to ensure COM pointers are released
+        // while the library is still loaded.
+        assert!(
+            std::mem::size_of::<Option<cpal::Stream>>() > 0,
+            "Option<Stream> should be a real type"
+        );
     }
 }

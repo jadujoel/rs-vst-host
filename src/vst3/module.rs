@@ -343,22 +343,45 @@ impl Vst3Module {
 
 impl Drop for Vst3Module {
     fn drop(&mut self) {
-        // Release the factory COM reference
-        let vtbl = unsafe { &*(*self.factory).vtbl };
-        unsafe {
-            (vtbl.base.release)(self.factory as *mut c_void);
+        use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+
+        // Release the factory COM reference (sandboxed — plugin code)
+        let factory = self.factory;
+        let result = sandbox_call("module_factory_release", move || unsafe {
+            let vtbl = &*(*factory).vtbl;
+            (vtbl.base.release)(factory as *mut c_void);
+        });
+        if let SandboxResult::Crashed(crash) = &result {
+            warn!(
+                signal = %crash.signal_name,
+                "Plugin factory release crashed — reference leaked"
+            );
         }
 
-        // Destroy host context
+        // Destroy host context (safe — our own code)
         unsafe {
             crate::vst3::host_context::HostApplication::destroy(self.host_context);
         }
 
-        // Platform-specific module exit (must happen before library unload)
+        // Platform-specific module exit (sandboxed — plugin code)
         #[cfg(target_os = "macos")]
         {
-            call_bundle_exit(&self._library, self.cf_bundle_ref);
-            cf_bundle::release(self.cf_bundle_ref);
+            let cf_ref = self.cf_bundle_ref;
+            let result = sandbox_call("module_bundle_exit", || {
+                call_bundle_exit(&self._library, cf_ref);
+            });
+
+            match &result {
+                SandboxResult::Crashed(crash) => {
+                    warn!(
+                        signal = %crash.signal_name,
+                        "Plugin bundleExit crashed — skipping CFBundle release"
+                    );
+                }
+                _ => {
+                    cf_bundle::release(self.cf_bundle_ref);
+                }
+            }
         }
     }
 }

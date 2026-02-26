@@ -631,6 +631,15 @@ You need to run `rs-vst-host scan` before `list` or `run` (by name) will work. T
 - Try running with `RUST_LOG=debug` to see the exact failure point.
 - Report the plugin name and error message as an issue.
 
+### Plugin crashes when stopping (Stop button)
+
+The host includes a crash sandbox that protects against buggy plugins. If a plugin crashes during shutdown or processing, the host catches the signal (SIGBUS, SIGSEGV, etc.) and recovers:
+
+- In the **GUI**: The crashed plugin is automatically deactivated and a warning message appears in the status bar (e.g., "⚠ 'Plugin Name' crashed — deactivated safely. The host is unaffected."). You can re-activate the plugin or load a different one.
+- In the **CLI**: The host logs a warning and continues running.
+
+Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The operating system reclaims this memory when the process exits.
+
 ### Audio glitches or dropouts
 
 - Try increasing the buffer size: `--buffer-size 1024` or `--buffer-size 2048`.

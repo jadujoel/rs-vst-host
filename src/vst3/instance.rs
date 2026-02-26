@@ -13,8 +13,9 @@ use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::host_context::HostApplication;
 use crate::vst3::module::IPluginFactoryVtbl;
 use crate::vst3::params::ParameterRegistry;
+use crate::vst3::sandbox::{SandboxResult, sandbox_call};
 use std::ffi::c_void;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// A fully initialized VST3 plugin instance ready for audio processing.
 ///
@@ -49,6 +50,8 @@ pub struct Vst3Instance {
     owns_separate_controller: bool,
     /// Host context for the separate controller (destroyed on drop if non-null).
     controller_host_context: *mut HostApplication,
+    /// Whether the plugin has crashed (signals all COM calls should be skipped).
+    crashed: bool,
 }
 
 // Safety: COM pointers are accessed from the thread that creates the instance
@@ -189,6 +192,7 @@ impl Vst3Instance {
                 cached_controller: std::ptr::null_mut(),
                 owns_separate_controller: false,
                 controller_host_context: std::ptr::null_mut(),
+                crashed: false,
             })
         }
     }
@@ -328,16 +332,52 @@ impl Vst3Instance {
         Ok(())
     }
 
-    /// Call the plugin's process function with prepared buffers.
+    /// Call the plugin's process function with crash protection.
+    ///
+    /// Returns `true` if processing succeeded. Returns `false` if the plugin
+    /// crashed (the instance is then marked as crashed and all subsequent
+    /// COM calls will be skipped).
     ///
     /// # Safety
     /// The `data` must point to a valid, fully initialized `ProcessData` with
     /// stable buffer pointers for the duration of the call.
-    pub unsafe fn process(&self, data: *mut ProcessData) -> i32 {
-        unsafe {
-            let proc_vtbl = &*(*self.processor).vtbl;
-            (proc_vtbl.process)(self.processor as *mut c_void, data)
+    pub unsafe fn process(&mut self, data: *mut ProcessData) -> bool {
+        if self.crashed {
+            return false;
         }
+
+        let proc = self.processor;
+        let result = sandbox_call("audio_process", move || unsafe {
+            let proc_vtbl = &*(*proc).vtbl;
+            (proc_vtbl.process)(proc as *mut c_void, data)
+        });
+
+        match result {
+            SandboxResult::Ok(_) => true,
+            SandboxResult::Crashed(crash) => {
+                self.crashed = true;
+                error!(
+                    plugin = %self.name,
+                    signal = %crash.signal_name,
+                    "Plugin crashed during audio processing — instance marked as crashed"
+                );
+                false
+            }
+            SandboxResult::Panicked(msg) => {
+                self.crashed = true;
+                error!(
+                    plugin = %self.name,
+                    panic = %msg,
+                    "Plugin panicked during audio processing — instance marked as crashed"
+                );
+                false
+            }
+        }
+    }
+
+    /// Whether this plugin instance has crashed and should not be used.
+    pub fn is_crashed(&self) -> bool {
+        self.crashed
     }
 
     /// Get the plugin's latency in samples.
@@ -511,7 +551,11 @@ impl Vst3Instance {
         }
     }
 
-    /// Disconnect component and controller IConnectionPoint (best-effort, called on drop).
+    /// Disconnect component and controller IConnectionPoint (best-effort).
+    ///
+    /// Note: The Drop impl inlines this logic inside a sandbox_call.
+    /// This method is kept for potential use in non-drop code paths.
+    #[allow(dead_code)]
     fn disconnect_component_controller(&self) {
         if !self.owns_separate_controller || self.cached_controller.is_null() {
             return;
@@ -628,10 +672,7 @@ impl Vst3Instance {
 
             // Call createView("editor")
             let view_name = b"editor\0";
-            let view_ptr = (ctrl_vtbl.create_view)(
-                controller as *mut c_void,
-                view_name.as_ptr(),
-            );
+            let view_ptr = (ctrl_vtbl.create_view)(controller as *mut c_void, view_name.as_ptr());
 
             if view_ptr.is_null() {
                 debug!(plugin = %self.name, "Plugin does not provide an editor view");
@@ -659,21 +700,51 @@ impl Vst3Instance {
         }
     }
 
-    /// Stop processing and deactivate the component.
+    /// Stop processing and deactivate the component (with crash protection).
+    ///
+    /// Each COM call is sandboxed so that a plugin crash during shutdown
+    /// does not terminate the host. If a crash is detected, the instance
+    /// is marked as crashed and remaining COM calls are skipped.
     pub fn shutdown(&mut self) {
-        unsafe {
-            if self.processing {
-                let proc_vtbl = &*(*self.processor).vtbl;
-                (proc_vtbl.set_processing)(self.processor as *mut c_void, 0);
-                self.processing = false;
-                debug!(plugin = %self.name, "Processing stopped");
-            }
+        if self.crashed {
+            debug!(plugin = %self.name, "Skipping shutdown for crashed plugin");
+            return;
+        }
 
-            if self.active {
-                let comp_vtbl = &*(*self.component).vtbl;
-                (comp_vtbl.set_active)(self.component as *mut c_void, 0);
-                self.active = false;
-                debug!(plugin = %self.name, "Component deactivated");
+        if self.processing {
+            let proc = self.processor;
+            let result = sandbox_call("set_processing_off", move || unsafe {
+                let proc_vtbl = &*(*proc).vtbl;
+                (proc_vtbl.set_processing)(proc as *mut c_void, 0)
+            });
+            match result {
+                SandboxResult::Ok(_) => {
+                    self.processing = false;
+                    debug!(plugin = %self.name, "Processing stopped");
+                }
+                _ => {
+                    self.crashed = true;
+                    warn!(plugin = %self.name, "Plugin crashed during set_processing(0) — skipping remaining shutdown");
+                    return;
+                }
+            }
+        }
+
+        if self.active {
+            let comp = self.component;
+            let result = sandbox_call("set_active_off", move || unsafe {
+                let comp_vtbl = &*(*comp).vtbl;
+                (comp_vtbl.set_active)(comp as *mut c_void, 0)
+            });
+            match result {
+                SandboxResult::Ok(_) => {
+                    self.active = false;
+                    debug!(plugin = %self.name, "Component deactivated");
+                }
+                _ => {
+                    self.crashed = true;
+                    warn!(plugin = %self.name, "Plugin crashed during set_active(0) — skipping remaining shutdown");
+                }
             }
         }
     }
@@ -681,57 +752,131 @@ impl Vst3Instance {
 
 impl Drop for Vst3Instance {
     fn drop(&mut self) {
-        // Ensure processing is stopped and component is deactivated
+        // Ensure processing is stopped and component is deactivated (sandboxed)
         self.shutdown();
 
-        unsafe {
-            // Disconnect IConnectionPoint before releasing the controller
-            self.disconnect_component_controller();
+        if !self.crashed {
+            // Extract all raw pointers (Copy types) so the closure doesn't
+            // borrow self — required for sandbox_call.
+            let component = self.component;
+            let processor = self.processor;
+            let cached_controller = self.cached_controller;
+            let owns_separate_controller = self.owns_separate_controller;
+            let factory = self.factory;
+            let factory_vtbl = self.factory_vtbl;
 
-            // Release the cached controller
-            if self.owns_separate_controller && !self.cached_controller.is_null() {
-                // Terminate and release the separately created controller
-                let ctrl_vtbl = &*(*self.cached_controller).vtbl;
-                (ctrl_vtbl.terminate)(self.cached_controller as *mut c_void);
-                (ctrl_vtbl.release)(self.cached_controller as *mut c_void);
-                debug!(plugin = %self.name, "Separate IEditController terminated and released");
+            // Wrap ALL plugin-facing COM cleanup in a single sandbox.
+            // If any COM call crashes, we catch the signal and skip the
+            // rest of the cleanup (intentionally leaking COM objects).
+            let result = sandbox_call("instance_drop", move || unsafe {
+                // 1. Disconnect IConnectionPoint between component and controller
+                if owns_separate_controller && !cached_controller.is_null() {
+                    let comp_vtbl = &*(*component).vtbl;
+                    let ctrl_vtbl = &*(*cached_controller).vtbl;
 
-                // Destroy controller's host context
-                if !self.controller_host_context.is_null() {
-                    HostApplication::destroy(self.controller_host_context);
+                    let mut comp_cp: *mut c_void = std::ptr::null_mut();
+                    let qi1 = (comp_vtbl.query_interface)(
+                        component as *mut c_void,
+                        ICONNECTION_POINT_IID.as_ptr(),
+                        &mut comp_cp,
+                    );
+
+                    let mut ctrl_cp: *mut c_void = std::ptr::null_mut();
+                    let qi2 = (ctrl_vtbl.query_interface)(
+                        cached_controller as *mut c_void,
+                        ICONNECTION_POINT_IID.as_ptr(),
+                        &mut ctrl_cp,
+                    );
+
+                    if qi1 == K_RESULT_OK
+                        && !comp_cp.is_null()
+                        && qi2 == K_RESULT_OK
+                        && !ctrl_cp.is_null()
+                    {
+                        let comp_cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                        let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+
+                        (comp_cp_vtbl.disconnect)(comp_cp, ctrl_cp);
+                        (ctrl_cp_vtbl.disconnect)(ctrl_cp, comp_cp);
+
+                        (comp_cp_vtbl.release)(comp_cp);
+                        (ctrl_cp_vtbl.release)(ctrl_cp);
+                    } else {
+                        if qi1 == K_RESULT_OK && !comp_cp.is_null() {
+                            let vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                            (vtbl.release)(comp_cp);
+                        }
+                        if qi2 == K_RESULT_OK && !ctrl_cp.is_null() {
+                            let vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                            (vtbl.release)(ctrl_cp);
+                        }
+                    }
                 }
-            } else if !self.cached_controller.is_null() {
-                // Release QI'd controller reference (one Release for the QI AddRef)
-                let ctrl_vtbl = &*(*self.cached_controller).vtbl;
-                (ctrl_vtbl.release)(self.cached_controller as *mut c_void);
+
+                // 2. Release the cached controller
+                if owns_separate_controller && !cached_controller.is_null() {
+                    let ctrl_vtbl = &*(*cached_controller).vtbl;
+                    (ctrl_vtbl.terminate)(cached_controller as *mut c_void);
+                    (ctrl_vtbl.release)(cached_controller as *mut c_void);
+                } else if !cached_controller.is_null() {
+                    let ctrl_vtbl = &*(*cached_controller).vtbl;
+                    (ctrl_vtbl.release)(cached_controller as *mut c_void);
+                }
+
+                // 3. Terminate the component
+                let comp_vtbl = &*(*component).vtbl;
+                (comp_vtbl.terminate)(component as *mut c_void);
+
+                // 4. Release COM references
+                let proc_vtbl = &*(*processor).vtbl;
+                (proc_vtbl.release)(processor as *mut c_void);
+                (comp_vtbl.release)(component as *mut c_void);
+
+                // 5. Release factory reference (balances AddRef in create())
+                if !factory_vtbl.is_null() {
+                    let fvtbl = &*factory_vtbl;
+                    (fvtbl.base.release)(factory);
+                }
+            });
+
+            match &result {
+                SandboxResult::Crashed(crash) => {
+                    warn!(
+                        plugin = %self.name,
+                        signal = %crash.signal_name,
+                        "Plugin crashed during COM cleanup — resources leaked (host is safe)"
+                    );
+                }
+                SandboxResult::Panicked(msg) => {
+                    warn!(
+                        plugin = %self.name,
+                        panic = %msg,
+                        "Plugin panicked during COM cleanup"
+                    );
+                }
+                SandboxResult::Ok(()) => {
+                    debug!(plugin = %self.name, "COM references released");
+                }
             }
+        } else {
+            warn!(
+                plugin = %self.name,
+                "Skipping COM cleanup for crashed plugin — resources leaked intentionally"
+            );
+        }
 
-            // Terminate the component
-            let comp_vtbl = &*(*self.component).vtbl;
-            (comp_vtbl.terminate)(self.component as *mut c_void);
-            debug!(plugin = %self.name, "Component terminated");
-
-            // Release COM references
-            let proc_vtbl = &*(*self.processor).vtbl;
-            (proc_vtbl.release)(self.processor as *mut c_void);
-            (comp_vtbl.release)(self.component as *mut c_void);
-
-            // Release factory reference (balances the AddRef in create())
-            if !self.factory_vtbl.is_null() {
-                let fvtbl = &*self.factory_vtbl;
-                (fvtbl.base.release)(self.factory);
+        // Always clean up our own resources (these are pure Rust, never crash)
+        unsafe {
+            if !self.controller_host_context.is_null() {
+                HostApplication::destroy(self.controller_host_context);
             }
-
-            // Destroy host context
             HostApplication::destroy(self.host_context);
-
-            // Destroy component handler
             if !self.component_handler.is_null() {
                 HostComponentHandler::destroy(self.component_handler);
             }
-
-            info!(plugin = %self.name, "VST3 instance destroyed");
         }
+
+        info!(plugin = %self.name, "VST3 instance destroyed");
     }
 }
 

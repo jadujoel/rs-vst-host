@@ -12,6 +12,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Audio devices** — Enumerate and select audio output devices
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
+- **Plugin crash sandbox** — Signal-handler-based crash isolation: if a plugin crashes (SIGBUS/SIGSEGV/SIGABRT), the host recovers gracefully and continues running
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 
@@ -27,25 +28,25 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 cargo build --release
 
 # Scan for installed VST3 plugins
-rs-vst-host scan
+cargo run -- scan
 
 # List discovered plugins
-rs-vst-host list
+cargo run -- list
 
 # Run a plugin with real-time audio
-rs-vst-host run "Plugin Name"
+cargo run -- run "Plugin Name"
 
 # Run with MIDI input
-rs-vst-host run "Plugin Name" --midi "IAC Driver Bus 1"
+cargo run -- run "Plugin Name" --midi "IAC Driver Bus 1"
 
 # List audio output devices
-rs-vst-host devices
+cargo run -- devices
 
 # List MIDI input ports
-rs-vst-host midi-ports
+cargo run -- midi-ports
 
 # Launch the graphical interface
-rs-vst-host gui
+cargo run -- gui
 ```
 
 ## Commands
@@ -108,6 +109,7 @@ src/
     ├── plug_frame.rs # IPlugFrame COM implementation for editor resize requests
     ├── process.rs   # Process buffer management (interleaved ↔ deinterleaved)
     ├── process_context.rs # ProcessContext transport timing
+    ├── sandbox.rs   # Plugin crash sandbox (sigsetjmp/siglongjmp signal recovery)
     ├── scanner.rs   # Plugin directory scanning
     └── types.rs     # Shared types
 ```
@@ -156,6 +158,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 | `thiserror` / `anyhow` | Error handling |
 | `tracing` | Structured logging |
 | `dirs` 6 | Platform-specific directories |
+| `libc` 0.2 | Low-level signal handling for plugin sandbox |
 | `eframe` / `egui` 0.31 | Graphical user interface |
 
 ## Testing
@@ -164,7 +167,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-362 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
+389 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing), and concurrency.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 

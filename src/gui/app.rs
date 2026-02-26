@@ -529,6 +529,20 @@ impl eframe::App for HostApp {
         // Refresh parameters each frame if a plugin is active
         self.refresh_params();
 
+        // Detect plugin crashes and deactivate safely
+        if self.backend.is_crashed() {
+            let active_name = self.backend.active_slot_index()
+                .and_then(|idx| self.rack.get(idx))
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "Unknown".into());
+            self.backend.deactivate_plugin();
+            self.status_message = format!(
+                "⚠ '{}' crashed — deactivated safely. The host is unaffected.",
+                active_name
+            );
+            tracing::warn!(plugin = %active_name, "Plugin crash detected by GUI — deactivated");
+        }
+
         // Sync transport state changes to the audio engine
         self.sync_transport();
 

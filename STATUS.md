@@ -20,6 +20,8 @@
 **Interaction plan**: Added a GUI interaction plan for plugin parameter editing workflows.
 **Parameter editing for selected slots**: Implemented the interaction plan — clicking a rack slot shows its parameters (cached or live); inactive plugins support staged changes applied on activation. 362 tests passing.
 **Bug fix (v0.12.1)**: Fixed SIGSEGV (exit 139) on plugin activation — `Vst3Module` was dropped prematurely, unloading the dynamic library while COM vtable pointers were still in use. Module now kept alive in `ActiveState`. 364 tests passing.
+**Bug fix (v0.12.2)**: Fixed SIGSEGV (exit 139) on plugin deactivation (stop button) — race condition between GUI thread calling `shutdown()` and the audio callback calling `process()` on a deactivated VST3 plugin. Added `is_shutdown` guard flag to `AudioEngine`, custom `Drop` for `ActiveState` ensuring correct resource teardown order (params → stream → engine → MIDI → module), and wrapped `_stream` in `Option` for explicit early drop in `deactivate_plugin`. 368 tests passing.
+**Plugin sandboxing (v0.13.0)**: Crash-safe plugin isolation using `sigsetjmp`/`siglongjmp` signal handlers. All plugin COM calls (process, shutdown, drop, module exit) are sandboxed — if a plugin crashes with SIGBUS, SIGSEGV, SIGABRT, or SIGFPE, the host recovers gracefully instead of terminating. Crashed plugins are auto-deactivated by the GUI with a status message. 389 tests passing.
 
 ### Completed
 

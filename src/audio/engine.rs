@@ -99,6 +99,8 @@ pub struct AudioEngine {
     param_changes: *mut HostParameterChanges,
     /// Pending parameter changes from control thread.
     pending_param_changes: Arc<std::sync::Mutex<Vec<(u32, f64)>>>,
+    /// Whether the engine has been shut down (prevents process calls after deactivation).
+    is_shutdown: bool,
 }
 
 // Safety: AudioEngine is protected by Mutex in the shared Arc. The event_list
@@ -126,10 +128,7 @@ impl AudioEngine {
 
         debug!(
             input_channels,
-            output_channels,
-            max_block_size,
-            device_channels,
-            "Audio engine created"
+            output_channels, max_block_size, device_channels, "Audio engine created"
         );
 
         Self {
@@ -143,6 +142,7 @@ impl AudioEngine {
             process_context,
             param_changes,
             pending_param_changes: Arc::new(std::sync::Mutex::new(Vec::new())),
+            is_shutdown: false,
         }
     }
 
@@ -158,6 +158,12 @@ impl AudioEngine {
     /// The engine fills input from the test tone, processes MIDI events,
     /// calls the VST3 plugin, and writes the result to `output`.
     pub fn process(&mut self, output: &mut [f32]) {
+        // Guard: do not call the VST3 plugin after shutdown or crash.
+        if self.is_shutdown || self.instance.is_crashed() {
+            output.fill(0.0);
+            return;
+        }
+
         let num_channels = self.device_channels;
         if num_channels == 0 {
             return;
@@ -202,7 +208,8 @@ impl AudioEngine {
             }
 
             // Set the event list on the process data
-            self.buffers.set_input_events(HostEventList::as_ptr(self.event_list));
+            self.buffers
+                .set_input_events(HostEventList::as_ptr(self.event_list));
         }
 
         // Handle parameter changes from the control thread
@@ -215,18 +222,23 @@ impl AudioEngine {
                 }
             }
 
-            self.buffers.set_input_parameter_changes(
-                HostParameterChanges::as_ptr(self.param_changes),
-            );
+            self.buffers
+                .set_input_parameter_changes(HostParameterChanges::as_ptr(self.param_changes));
         }
 
         // Set process context (transport info)
-        self.buffers.set_process_context(self.process_context.as_ptr());
+        self.buffers
+            .set_process_context(self.process_context.as_ptr());
 
-        // Call VST3 process
+        // Call VST3 process (sandboxed — crash protection)
         unsafe {
             let data = self.buffers.process_data_ptr();
-            self.instance.process(data);
+            if !self.instance.process(data) {
+                // Plugin crashed during processing — output silence
+                self.is_shutdown = true;
+                output.fill(0.0);
+                return;
+            }
         }
 
         // Advance transport
@@ -234,7 +246,8 @@ impl AudioEngine {
 
         // Clear pointers after processing
         self.buffers.set_input_events(std::ptr::null_mut());
-        self.buffers.set_input_parameter_changes(std::ptr::null_mut());
+        self.buffers
+            .set_input_parameter_changes(std::ptr::null_mut());
         self.buffers.set_process_context(std::ptr::null_mut());
 
         // Read output back to interleaved cpal buffer
@@ -249,9 +262,28 @@ impl AudioEngine {
     }
 
     /// Shut down the VST3 instance (stop processing + deactivate).
+    ///
+    /// Sets the shutdown flag first so that any subsequent audio callback
+    /// (racing between lock release and stream stop) will output silence
+    /// instead of calling the deactivated plugin's process method.
     pub fn shutdown(&mut self) {
+        self.is_shutdown = true;
         self.instance.shutdown();
         debug!("Audio engine shut down");
+    }
+
+    /// Whether the engine has been shut down.
+    #[allow(dead_code)]
+    pub fn is_shutdown(&self) -> bool {
+        self.is_shutdown
+    }
+
+    /// Whether the plugin instance has crashed.
+    ///
+    /// When true, the engine outputs silence and all further plugin
+    /// COM calls are skipped. The GUI should deactivate the plugin.
+    pub fn is_crashed(&self) -> bool {
+        self.instance.is_crashed()
     }
 
     /// Get a reference to the test tone generator.
@@ -360,5 +392,14 @@ mod tests {
         tone.fill_buffer(&mut buf);
         // Phase should have wrapped many times without issues
         assert!(tone.phase >= 0.0 && tone.phase < 1.0);
+    }
+
+    #[test]
+    fn test_tone_generator_zero_amplitude_when_disabled() {
+        let mut tone = TestToneGenerator::new(44100.0);
+        tone.enabled = false;
+        let mut buf = vec![1.0f32; 64];
+        tone.fill_buffer(&mut buf);
+        assert!(buf.iter().all(|&s| s == 0.0));
     }
 }

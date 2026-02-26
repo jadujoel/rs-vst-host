@@ -12,5 +12,6 @@ pub mod params;
 pub mod plug_frame;
 pub mod process;
 pub mod process_context;
+pub mod sandbox;
 pub mod scanner;
 pub mod types;
