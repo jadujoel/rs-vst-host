@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
         )?,
         Command::Devices => app::commands::devices()?,
         Command::MidiPorts => app::commands::midi_ports()?,
-        Command::Gui => gui::launch()?,
+        Command::Gui { safe_mode } => gui::launch(safe_mode)?,
     }
 
     Ok(())

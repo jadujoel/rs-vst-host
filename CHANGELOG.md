@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-02-26
+
+### Added
+- **Plugin Editor Windows** (`gui/editor.rs`): Native macOS NSWindow hosting for VST3 plugin editor views. Creates an NSWindow with NSView via Objective-C runtime FFI, calls `IPlugView::attached()` to embed the plugin UI, and handles resize requests through `IPlugFrame`. Lifecycle management with `open()`, `poll_resize()`, and `close()`.
+- **IPlugView/IPlugFrame COM interfaces** (`vst3/com.rs`): Added `IPLUG_VIEW_IID`, `IPLUG_FRAME_IID`, `ViewRect` struct, `IPlugViewVtbl` (15 function pointers), `IPlugFrameVtbl`, and platform type constants (`K_PLATFORM_TYPE_NSVIEW`, `K_PLATFORM_TYPE_HWND`, `K_PLATFORM_TYPE_X11`).
+- **Host IPlugFrame** (`vst3/plug_frame.rs`): COM implementation for plugin-to-host resize requests. Reference-counted with atomic operations, thread-safe pending resize via Mutex.
+- **Editor creation on Vst3Instance** (`vst3/instance.rs`): `create_editor_view()` and `has_editor()` methods on VST3 plugin instances, querying IEditController for "editor" views.
+- **Transport sync**: GUI transport changes (tempo, time signature, play/pause) are now pushed to the audio engine in real time. Space bar toggles play/pause.
+- **Audio engine status display**: Bottom bar shows sample rate, buffer size, device name, and open editor count when audio is active.
+- **Parameter search filter**: Text search field in the parameter panel filters parameters by title for quick access in plugins with many parameters.
+- **Improved scan progress**: Scan status message now shows module count, class count, and error count (e.g. "3 module(s), 12 class(es), 1 error(s)").
+- **Safe mode** (`--safe-mode` flag on `gui` command): Disables plugin editor window opening. Useful when a plugin editor causes instability.
+- **Keyboard shortcut**: Space bar toggles play/pause in the transport.
+- **Editor button** (🎹): Shown in rack slot controls for active plugins that have an editor view. Disabled in safe mode.
+- 43 new unit tests (304 → 347 total): 12 new app tests (safe mode, transport sync, editor, param filter, audio status), 10 new backend tests (editor, transport, audio status), 7 COM interface tests (IPlugView/IPlugFrame IIDs, vtable sizes, ViewRect), 10 plug_frame tests, 3 editor tests, 1 CLI safe mode test.
+
+### Changed
+- **Minimum window size**: Increased from 800×500 to 1024×640 for better layout at default size.
+- **`gui` command**: Now accepts `--safe-mode` flag.
+- **`launch()` function**: Accepts `safe_mode: bool` parameter.
+
+## [0.10.1] - 2026-02-26
+
+### Fixed
+- **Rust 2024 `unsafe_op_in_unsafe_fn` compliance** (`vst3/plug_frame.rs`, `gui/editor.rs`): Wrapped all unsafe operations inside `unsafe fn` bodies with explicit `unsafe {}` blocks, as required by the Rust 2024 edition. Affected functions: `host_plug_frame_query_interface`, `host_plug_frame_add_ref`, `host_plug_frame_release`, `host_plug_frame_resize_view`, `take_pending_resize`, `destroy`, `class`, `sel`, `create_window`, `show_window`, `resize_window`, `close_window`.
+- Removed unused `ComPtr` import in `plug_frame.rs`.
+- Prefixed unused variable `init_string` → `_init_string` and unused constant `nil` → `_nil` in `editor.rs`.
+
+## [0.10.0] - 2026-02-26
+
+### Added
+- **GUI Backend Bridge** (`gui/backend.rs`): Full integration between the GUI and audio engine. Manages plugin activation lifecycle (load, instantiate, configure audio, start processing), audio output stream via cpal, MIDI input connections, and parameter queues for thread-safe GUI ↔ audio communication.
+- **Parameter View Panel**: Right-side panel in the GUI displaying all parameters for the active plugin. Normalized sliders with display values and units, bypass parameter highlighting (warning colour), read-only parameter display, double-click to reset to default value.
+- **Device Selection UI**: Bottom-bar "Devices" tab with ComboBox dropdowns for selecting audio output device and MIDI input port. Refresh button to re-enumerate system devices.
+- **Session Save/Load** (`gui/session.rs`): Serialize and restore full host state — transport settings, rack plugin slots, and device selections — as JSON files. Bottom-bar "Session" tab with path input and save/load buttons. Default session path in platform data directory.
+- **Plugin Activation from Rack**: ▶ button on each rack slot to activate a plugin and start real-time audio processing. ⏹ button to deactivate. Active slot visually highlighted with green border and "active" status text.
+- **Test Tone Toggle**: 🔔/🔕 button in Transport tab to enable/disable the built-in 440 Hz sine wave test tone input for effect plugins.
+- **Bottom Bar Tabs**: Transport, Devices, and Session views selectable via tabbed bottom panel.
+- **ParamSnapshot**: Fully owned, Clone-safe parameter representation for safe GUI-thread rendering without COM pointer lifetime concerns.
+- 31 new unit tests (273 → 304 total): 12 backend tests, 9 session tests, 10 app integration tests (session roundtrip, device selection, parameter refresh, activation/deactivation).
+
+## [0.9.1] - 2026-02-26
+
+### Added
+- **GUI PRD** (`PRD.md`): Product requirements document for the GUI application.
+
+### Changed
+- **Documentation**: Linked the PRD from README and USER_GUIDE.
+
 ## [0.9.0] - 2026-02-25
 
 ### Added

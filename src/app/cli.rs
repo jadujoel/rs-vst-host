@@ -53,7 +53,11 @@ pub enum Command {
     /// List available MIDI input ports.
     MidiPorts,
     /// Launch the graphical user interface.
-    Gui,
+    Gui {
+        /// Launch in safe mode with no plugins loaded from cache.
+        #[arg(long)]
+        safe_mode: bool,
+    },
 }
 
 #[cfg(test)]
@@ -195,6 +199,12 @@ mod tests {
     #[test]
     fn test_parse_gui() {
         let cli = Cli::try_parse_from(["rs-vst-host", "gui"]).unwrap();
-        matches!(cli.command, Command::Gui);
+        assert!(matches!(cli.command, Command::Gui { safe_mode: false }));
+    }
+
+    #[test]
+    fn test_parse_gui_safe_mode() {
+        let cli = Cli::try_parse_from(["rs-vst-host", "gui", "--safe-mode"]).unwrap();
+        assert!(matches!(cli.command, Command::Gui { safe_mode: true }));
     }
 }

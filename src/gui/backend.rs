@@ -1,0 +1,677 @@
+//! Host backend — bridges the GUI with audio engine, plugin instances, and MIDI.
+//!
+//! Manages the lifecycle of active plugin instances, audio streams, and MIDI
+//! connections. The GUI thread interacts with the backend through high-level
+//! methods; the audio thread receives work via lock-free queues.
+
+use crate::audio::device::{AudioConfig, AudioDevice, DeviceInfo};
+use crate::audio::engine::AudioEngine;
+use crate::gui::editor::EditorWindow;
+use crate::midi::device::{MidiDevice, MidiPortInfo};
+use crate::vst3::com::K_SPEAKER_STEREO;
+use crate::vst3::component_handler::HostComponentHandler;
+use crate::vst3::module::Vst3Module;
+use crate::vst3::params::ParameterRegistry;
+use std::sync::{Arc, Mutex};
+use tracing::{debug, info, warn};
+
+/// A parameter snapshot for safe GUI display.
+///
+/// Contains only owned data — no COM pointers — so it can be freely
+/// cloned, stored, and rendered by the UI without lifetime concerns.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ParamSnapshot {
+    /// Parameter ID.
+    pub id: u32,
+    /// Display title.
+    pub title: String,
+    /// Units label (e.g. "dB", "Hz").
+    pub units: String,
+    /// Current normalized value [0..1].
+    pub value: f64,
+    /// Default normalized value [0..1].
+    pub default: f64,
+    /// Display string for the current value.
+    pub display: String,
+    /// Whether the parameter can be automated.
+    pub can_automate: bool,
+    /// Whether the parameter is read-only.
+    pub is_read_only: bool,
+    /// Whether this is a bypass parameter.
+    pub is_bypass: bool,
+}
+
+/// Audio engine status snapshot for GUI display.
+#[derive(Debug, Clone, Default)]
+pub struct AudioStatus {
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Buffer/block size in frames.
+    pub buffer_size: u32,
+    /// Audio output device name.
+    pub device_name: String,
+    /// Whether audio engine is running.
+    pub running: bool,
+}
+
+/// The host backend managing audio engine and plugin lifecycle.
+pub struct HostBackend {
+    /// Audio device manager.
+    audio_manager: AudioDevice,
+    /// Cached audio output devices.
+    pub audio_devices: Vec<DeviceInfo>,
+    /// Cached MIDI input ports.
+    pub midi_ports: Vec<MidiPortInfo>,
+    /// Selected audio device name.
+    pub selected_audio_device: Option<String>,
+    /// Selected MIDI port name.
+    pub selected_midi_port: Option<String>,
+    /// Currently active plugin processing audio.
+    active: Option<ActiveState>,
+    /// Open editor windows.
+    pub editor_windows: Vec<EditorWindow>,
+    /// Current audio engine status.
+    pub audio_status: AudioStatus,
+}
+
+/// Runtime state for an active (instantiated and processing) plugin.
+struct ActiveState {
+    /// Which rack slot index is active.
+    slot_index: usize,
+    /// The audio engine processing this plugin.
+    engine: Arc<Mutex<AudioEngine>>,
+    /// The cpal audio stream (must stay alive for audio output).
+    _stream: cpal::Stream,
+    /// Parameter registry for this plugin (used from the GUI thread).
+    params: Option<ParameterRegistry>,
+    /// Queue for parameter changes from GUI → audio thread.
+    param_queue: Arc<Mutex<Vec<(u32, f64)>>>,
+    /// Component handler for plugin-initiated parameter changes.
+    component_handler: *mut HostComponentHandler,
+    /// MIDI connection (must stay alive for MIDI input).
+    _midi_connection: Option<midir::MidiInputConnection<()>>,
+    /// Whether the plugin has an editor available.
+    has_editor: bool,
+}
+
+// Safety: COM pointers in ActiveState are accessed consistently:
+// - ParameterRegistry (controller) is only accessed from the main/GUI thread
+// - AudioEngine (processor) is accessed from the audio thread via Arc<Mutex<>>
+// - component_handler uses internal Mutex for thread safety
+unsafe impl Send for ActiveState {}
+
+impl HostBackend {
+    /// Create a new backend, enumerating available devices.
+    pub fn new() -> Self {
+        let audio_manager = AudioDevice::new();
+        let audio_devices = audio_manager.list_output_devices();
+        let midi_ports = MidiDevice::new()
+            .ok()
+            .map(|d| d.list_input_ports())
+            .unwrap_or_default();
+
+        Self {
+            audio_manager,
+            audio_devices,
+            midi_ports,
+            selected_audio_device: None,
+            selected_midi_port: None,
+            active: None,
+            editor_windows: Vec::new(),
+            audio_status: AudioStatus::default(),
+        }
+    }
+
+    /// Refresh the cached device lists.
+    pub fn refresh_devices(&mut self) {
+        self.audio_devices = self.audio_manager.list_output_devices();
+        self.midi_ports = MidiDevice::new()
+            .ok()
+            .map(|d| d.list_input_ports())
+            .unwrap_or_default();
+    }
+
+    /// Activate a plugin from a rack slot, starting audio processing.
+    ///
+    /// If another plugin is already active, it is deactivated first.
+    /// Returns parameter snapshots for the newly activated plugin.
+    pub fn activate_plugin(
+        &mut self,
+        slot_index: usize,
+        path: &std::path::Path,
+        cid: &[u8; 16],
+        name: &str,
+    ) -> Result<Vec<ParamSnapshot>, String> {
+        // Deactivate current plugin if any
+        self.deactivate_plugin();
+
+        // 1. Load module
+        let module = Vst3Module::load(path)
+            .map_err(|e| format!("Failed to load module: {}", e))?;
+
+        // 2. Create instance
+        let mut instance = module
+            .create_instance(cid, name)
+            .map_err(|e| format!("Failed to create instance: {}", e))?;
+
+        // 3. Verify 32-bit float support
+        if !instance.can_process_f32() {
+            return Err(format!(
+                "Plugin '{}' does not support 32-bit float processing",
+                name
+            ));
+        }
+
+        // 4. Get audio device
+        let device = self
+            .audio_manager
+            .get_output_device(self.selected_audio_device.as_deref())
+            .ok_or_else(|| "No audio output device available".to_string())?;
+
+        let default_config =
+            AudioDevice::default_config(&device).map_err(|e| e.to_string())?;
+
+        let config = AudioConfig {
+            sample_rate: default_config.sample_rate,
+            channels: default_config.channels.min(2),
+            buffer_size: 0,
+        };
+
+        let max_block_size = 4096i32;
+
+        // 5. Configure plugin
+        instance
+            .set_bus_arrangements(K_SPEAKER_STEREO, K_SPEAKER_STEREO)
+            .map_err(|e| format!("Bus arrangement setup failed: {}", e))?;
+
+        instance
+            .setup_processing(config.sample_rate as f64, max_block_size)
+            .map_err(|e| format!("Processing setup failed: {}", e))?;
+
+        instance
+            .activate()
+            .map_err(|e| format!("Activation failed: {}", e))?;
+
+        instance
+            .start_processing()
+            .map_err(|e| format!("Start processing failed: {}", e))?;
+
+        // 6. Install component handler
+        instance.install_component_handler();
+        let component_handler = instance.component_handler();
+
+        // 7. Query parameters
+        let params = instance.query_parameters();
+        let snapshots = self.build_snapshots(&params);
+
+        // 7b. Check for editor availability
+        let has_editor = instance.has_editor();
+
+        // 8. Create audio engine
+        let mut engine = AudioEngine::new(
+            instance,
+            config.sample_rate as f64,
+            max_block_size as usize,
+            config.channels as usize,
+        );
+
+        // 9. Setup MIDI if selected
+        let midi_connection = if let Some(ref midi_name) = self.selected_midi_port {
+            match crate::midi::device::open_midi_input(Some(midi_name)) {
+                Ok((conn, port_name, receiver)) => {
+                    engine.set_midi_receiver(receiver);
+                    info!(port = %port_name, "MIDI input connected");
+                    Some(conn)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to open MIDI input");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // 10. Capture state handles
+        let param_queue = engine.pending_param_queue();
+        let engine = Arc::new(Mutex::new(engine));
+
+        // 11. Build audio stream
+        let engine_cb = engine.clone();
+        let stream = AudioDevice::build_output_stream(
+            &device,
+            &config,
+            move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+                if let Ok(mut eng) = engine_cb.try_lock() {
+                    eng.process(data);
+                } else {
+                    data.fill(0.0);
+                }
+            },
+            |err| {
+                tracing::error!(error = %err, "Audio stream error");
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+        AudioDevice::play(&stream).map_err(|e| e.to_string())?;
+
+        info!(plugin = %name, slot = slot_index, "Plugin activated in GUI");
+
+        // Update audio status
+        let device_name = self
+            .selected_audio_device
+            .clone()
+            .unwrap_or_else(|| "(default)".into());
+        self.audio_status = AudioStatus {
+            sample_rate: config.sample_rate,
+            buffer_size: max_block_size as u32,
+            device_name,
+            running: true,
+        };
+
+        self.active = Some(ActiveState {
+            slot_index,
+            engine,
+            _stream: stream,
+            params,
+            param_queue,
+            component_handler,
+            _midi_connection: midi_connection,
+            has_editor,
+        });
+
+        Ok(snapshots)
+    }
+
+    /// Deactivate the currently active plugin, stopping audio.
+    pub fn deactivate_plugin(&mut self) {
+        // Close any open editor windows for this plugin
+        self.close_all_editors();
+
+        if let Some(active) = self.active.take() {
+            // Drop stream first (implicit via take) to stop audio callback,
+            // then safely shut down the engine.
+            if let Ok(mut eng) = active.engine.lock() {
+                eng.shutdown();
+            }
+            debug!("Plugin deactivated in GUI");
+        }
+
+        self.audio_status.running = false;
+    }
+
+    /// Get the currently active slot index, if any.
+    pub fn active_slot_index(&self) -> Option<usize> {
+        self.active.as_ref().map(|a| a.slot_index)
+    }
+
+    /// Get fresh parameter snapshots for the active plugin.
+    pub fn active_param_snapshots(&self) -> Vec<ParamSnapshot> {
+        let params_ref = self.active.as_ref().and_then(|a| a.params.as_ref());
+        self.build_snapshots_ref(params_ref)
+    }
+
+    /// Set a parameter value on the active plugin.
+    ///
+    /// Pushes the change to the audio thread queue and updates the controller.
+    /// Returns the actual value set (read back from the controller).
+    pub fn set_parameter(&mut self, id: u32, value: f64) -> Result<f64, String> {
+        let active = self.active.as_mut().ok_or("No active plugin")?;
+
+        // Push to audio thread
+        if let Ok(mut queue) = active.param_queue.lock() {
+            queue.push((id, value));
+        }
+
+        // Update on the controller (for display feedback)
+        if let Some(ref mut params) = active.params {
+            return params.set_normalized(id, value);
+        }
+
+        Ok(value)
+    }
+
+    /// Get the display string for a parameter value.
+    pub fn param_value_string(&self, id: u32, value: f64) -> Option<String> {
+        self.active
+            .as_ref()
+            .and_then(|a| a.params.as_ref())
+            .and_then(|p| p.value_to_string(id, value))
+    }
+
+    /// Drain plugin-initiated parameter changes from the component handler.
+    pub fn drain_handler_changes(&self) -> Vec<(u32, f64)> {
+        let Some(active) = &self.active else {
+            return Vec::new();
+        };
+        if active.component_handler.is_null() {
+            return Vec::new();
+        }
+        unsafe {
+            HostComponentHandler::drain_changes(active.component_handler)
+                .into_iter()
+                .map(|c| (c.id, c.value))
+                .collect()
+        }
+    }
+
+    /// Whether a plugin is currently active and processing audio.
+    pub fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// Set the test tone enabled/disabled on the active engine.
+    pub fn set_tone_enabled(&self, enabled: bool) {
+        if let Some(ref active) = self.active {
+            if let Ok(mut eng) = active.engine.lock() {
+                eng.tone().enabled = enabled;
+            }
+        }
+    }
+
+    // ── Editor Window Methods ───────────────────────────────────────────────
+
+    /// Whether the active plugin has an editor UI available.
+    pub fn active_has_editor(&self) -> bool {
+        self.active.as_ref().is_some_and(|a| a.has_editor)
+    }
+
+    /// Open the plugin editor window for the active plugin.
+    ///
+    /// Creates an IPlugView and a native window, then attaches the view.
+    /// Returns `Ok(())` if the editor was opened successfully.
+    pub fn open_editor(&mut self, plugin_name: &str) -> Result<(), String> {
+        let active = self.active.as_mut().ok_or("No active plugin")?;
+
+        // Get an IPlugView from the engine's instance
+        // We need to lock the engine to access the instance
+        let view = {
+            let mut eng = active.engine.lock().map_err(|_| "Engine lock failed")?;
+            eng.create_editor_view()
+                .ok_or("Plugin does not provide an editor view")?
+        };
+
+        // Create the editor window
+        let window = EditorWindow::open(view, plugin_name)
+            .ok_or("Failed to create editor window")?;
+
+        self.editor_windows.push(window);
+        Ok(())
+    }
+
+    /// Close all open editor windows.
+    pub fn close_all_editors(&mut self) {
+        for mut window in self.editor_windows.drain(..) {
+            window.close();
+        }
+    }
+
+    /// Poll all open editor windows for resize requests and prune closed ones.
+    pub fn poll_editors(&mut self) {
+        // Poll for resize requests
+        for window in &mut self.editor_windows {
+            window.poll_resize();
+        }
+
+        // Remove closed windows
+        self.editor_windows.retain(|w| w.is_open());
+    }
+
+    /// Get the number of open editor windows.
+    pub fn editor_count(&self) -> usize {
+        self.editor_windows.len()
+    }
+
+    // ── Transport Methods ───────────────────────────────────────────────────
+
+    /// Update the audio engine's tempo.
+    pub fn set_tempo(&self, bpm: f64) {
+        if let Some(ref active) = self.active {
+            if let Ok(mut eng) = active.engine.lock() {
+                eng.set_tempo(bpm);
+            }
+        }
+    }
+
+    /// Update the audio engine's playing state.
+    pub fn set_playing(&self, playing: bool) {
+        if let Some(ref active) = self.active {
+            if let Ok(mut eng) = active.engine.lock() {
+                eng.set_playing(playing);
+            }
+        }
+    }
+
+    /// Update the audio engine's time signature.
+    pub fn set_time_signature(&self, numerator: u32, denominator: u32) {
+        if let Some(ref active) = self.active {
+            if let Ok(mut eng) = active.engine.lock() {
+                eng.set_time_signature(numerator, denominator);
+            }
+        }
+    }
+
+    // ── Internal Helpers ────────────────────────────────────────────────────
+
+    /// Build parameter snapshots from an Option<ParameterRegistry>.
+    fn build_snapshots(&self, params: &Option<ParameterRegistry>) -> Vec<ParamSnapshot> {
+        self.build_snapshots_ref(params.as_ref())
+    }
+
+    /// Build parameter snapshots from an Option<&ParameterRegistry>.
+    fn build_snapshots_ref(&self, params: Option<&ParameterRegistry>) -> Vec<ParamSnapshot> {
+        let Some(params) = params else {
+            return Vec::new();
+        };
+        params
+            .parameters
+            .iter()
+            .map(|e| {
+                let display = params
+                    .value_to_string(e.id, e.current_normalized)
+                    .unwrap_or_else(|| format!("{:.3}", e.current_normalized));
+                ParamSnapshot {
+                    id: e.id,
+                    title: e.title.clone(),
+                    units: e.units.clone(),
+                    value: e.current_normalized,
+                    default: e.default_normalized,
+                    display,
+                    can_automate: e.can_automate,
+                    is_read_only: e.is_read_only,
+                    is_bypass: e.is_bypass,
+                }
+            })
+            .collect()
+    }
+}
+
+impl Drop for HostBackend {
+    fn drop(&mut self) {
+        self.deactivate_plugin();
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backend_new() {
+        let backend = HostBackend::new();
+        // Device lists depend on system; verify construction doesn't panic
+        assert!(!backend.is_active());
+        assert_eq!(backend.active_slot_index(), None);
+    }
+
+    #[test]
+    fn test_backend_no_active_params() {
+        let backend = HostBackend::new();
+        let params = backend.active_param_snapshots();
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn test_backend_no_active_handler_changes() {
+        let backend = HostBackend::new();
+        let changes = backend.drain_handler_changes();
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_backend_set_parameter_no_active() {
+        let mut backend = HostBackend::new();
+        let result = backend.set_parameter(0, 0.5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_backend_deactivate_when_none() {
+        let mut backend = HostBackend::new();
+        backend.deactivate_plugin(); // should not panic
+        assert!(!backend.is_active());
+    }
+
+    #[test]
+    fn test_backend_refresh_devices() {
+        let mut backend = HostBackend::new();
+        backend.refresh_devices(); // should not panic
+    }
+
+    #[test]
+    fn test_backend_device_selection() {
+        let mut backend = HostBackend::new();
+        assert!(backend.selected_audio_device.is_none());
+        assert!(backend.selected_midi_port.is_none());
+
+        backend.selected_audio_device = Some("Test Device".into());
+        backend.selected_midi_port = Some("Port 1".into());
+
+        assert_eq!(
+            backend.selected_audio_device.as_deref(),
+            Some("Test Device")
+        );
+        assert_eq!(backend.selected_midi_port.as_deref(), Some("Port 1"));
+    }
+
+    #[test]
+    fn test_backend_tone_no_active() {
+        let backend = HostBackend::new();
+        // Should not panic even without an active plugin
+        backend.set_tone_enabled(false);
+    }
+
+    #[test]
+    fn test_param_snapshot_clone() {
+        let snap = ParamSnapshot {
+            id: 42,
+            title: "Volume".into(),
+            units: "dB".into(),
+            value: 0.7,
+            default: 0.5,
+            display: "-3.0 dB".into(),
+            can_automate: true,
+            is_read_only: false,
+            is_bypass: false,
+        };
+        let clone = snap.clone();
+        assert_eq!(clone.id, 42);
+        assert_eq!(clone.title, "Volume");
+        assert_eq!(clone.display, "-3.0 dB");
+    }
+
+    #[test]
+    fn test_param_snapshot_debug() {
+        let snap = ParamSnapshot {
+            id: 1,
+            title: "Gain".into(),
+            units: "dB".into(),
+            value: 0.5,
+            default: 0.5,
+            display: "0.0".into(),
+            can_automate: true,
+            is_read_only: false,
+            is_bypass: false,
+        };
+        let debug = format!("{:?}", snap);
+        assert!(debug.contains("Gain"));
+        assert!(debug.contains("dB"));
+    }
+
+    #[test]
+    fn test_param_value_string_no_active() {
+        let backend = HostBackend::new();
+        assert!(backend.param_value_string(0, 0.5).is_none());
+    }
+
+    // ── New feature tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_audio_status_default() {
+        let status = AudioStatus::default();
+        assert_eq!(status.sample_rate, 0);
+        assert_eq!(status.buffer_size, 0);
+        assert!(status.device_name.is_empty());
+        assert!(!status.running);
+    }
+
+    #[test]
+    fn test_backend_audio_status_initial() {
+        let backend = HostBackend::new();
+        assert!(!backend.audio_status.running);
+    }
+
+    #[test]
+    fn test_backend_editor_count_none() {
+        let backend = HostBackend::new();
+        assert_eq!(backend.editor_count(), 0);
+    }
+
+    #[test]
+    fn test_backend_active_has_editor_none() {
+        let backend = HostBackend::new();
+        assert!(!backend.active_has_editor());
+    }
+
+    #[test]
+    fn test_backend_poll_editors_empty() {
+        let mut backend = HostBackend::new();
+        backend.poll_editors(); // Should not panic
+        assert_eq!(backend.editor_count(), 0);
+    }
+
+    #[test]
+    fn test_backend_close_all_editors_empty() {
+        let mut backend = HostBackend::new();
+        backend.close_all_editors(); // Should not panic
+    }
+
+    #[test]
+    fn test_backend_set_tempo_no_active() {
+        let mut backend = HostBackend::new();
+        backend.set_tempo(145.0); // Should not panic
+    }
+
+    #[test]
+    fn test_backend_set_playing_no_active() {
+        let mut backend = HostBackend::new();
+        backend.set_playing(true); // Should not panic
+    }
+
+    #[test]
+    fn test_backend_set_time_signature_no_active() {
+        let mut backend = HostBackend::new();
+        backend.set_time_signature(3, 8); // Should not panic
+    }
+
+    #[test]
+    fn test_backend_open_editor_no_active() {
+        let mut backend = HostBackend::new();
+        let result = backend.open_editor("Test");
+        assert!(result.is_err());
+    }
+}

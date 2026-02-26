@@ -19,6 +19,7 @@ A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audi
   - [midi-ports](#midi-ports)
   - [gui](#gui)
 - [Graphical Interface](#graphical-interface)
+- [Documentation](#documentation)
 - [Plugin Search Paths](#plugin-search-paths)
 - [Plugin Cache](#plugin-cache)
 - [Verbose Logging](#verbose-logging)
@@ -276,10 +277,19 @@ Launch the graphical user interface.
 rs-vst-host gui
 ```
 
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--safe-mode` | Disable plugin editor windows (parameter-only mode) |
+
 This opens a window with the **Liquid Glass** themed interface containing:
 - **Plugin Browser** (left sidebar) — scan for plugins, search/filter, add to rack
-- **Plugin Rack** (central panel) — manage loaded plugin slots with bypass and remove controls
-- **Transport Bar** (bottom) — play/pause, tempo, time signature, status messages
+- **Plugin Rack** (central panel) — manage loaded plugin slots with activate, bypass, editor, and remove controls
+- **Parameter View** (right panel) — sliders and display values for the active plugin's parameters, with search filter
+- **Transport** (bottom tab) — play/pause, tempo, time signature, test tone toggle, audio engine status
+- **Devices** (bottom tab) — select audio output device and MIDI input port
+- **Session** (bottom tab) — save and load host state as JSON files
 
 See [Graphical Interface](#graphical-interface) for details.
 
@@ -293,21 +303,84 @@ The GUI provides a modern glassmorphism-styled interface for managing plugins. L
 rs-vst-host gui
 ```
 
+To launch in safe mode (no plugin editor windows):
+
+```sh
+rs-vst-host gui --safe-mode
+```
+
 ### Plugin Browser
 
-The left sidebar shows all cached plugins. Use the **Scan Plugins** button to discover VST3 plugins, then filter the list by typing in the search box. Matches on plugin name, vendor, category, and subcategory. Click the **＋** button on any plugin to add it to the rack.
+The left sidebar shows all cached plugins. Use the **Scan Plugins** button to discover VST3 plugins, then filter the list by typing in the search box. Matches on plugin name, vendor, category, and subcategory. Click the **＋** button on any plugin to add it to the rack. The scan progress shows module count, class count, and any errors encountered.
 
 ### Plugin Rack
 
-The central panel displays loaded plugin slots as glass cards. Each slot shows the plugin name, vendor, a bypass toggle (🔊/🔇), and a remove button (✕). Click a slot to select it (highlighted with an accent border).
+The central panel displays loaded plugin slots as glass cards. Each slot shows the plugin name, vendor, and control buttons:
+- **▶ Activate** — start real-time audio processing through this plugin
+- **⏹ Deactivate** — stop processing (shown only for the active slot)
+- **🎹 Editor** — open the plugin's native editor window (if the plugin provides one; hidden in safe mode)
+- **🔊/🔇 Bypass** — toggle plugin bypass
+- **✕ Remove** — remove from rack
+
+Click a slot to select it (highlighted with an accent border). The active slot has a green border and shows "active" in the status text.
+
+### Plugin Editor Windows
+
+When a plugin provides a native editor view (most commercial plugins do), click the **🎹** button to open it in a separate macOS window. The editor window:
+
+- Is created as a native NSWindow with the plugin's preferred initial size
+- Supports resize requests from the plugin via the IPlugFrame protocol
+- Auto-closes when the plugin is deactivated or removed from the rack
+- Can be disabled entirely by launching with `--safe-mode`
+
+> **Note:** If a plugin's editor causes instability, use `--safe-mode` to access parameters via sliders only.
+
+### Parameter View
+
+When a plugin is active, a right-side panel appears showing all of its parameters:
+- **Search filter** — type to filter parameters by name (useful for plugins with many parameters)
+- **Sliders** — drag to adjust normalized parameter values (0.0–1.0)
+- **Display values** — formatted value text with units (e.g. "-3.0 dB")
+- **Bypass parameters** — highlighted in warning colour
+- **Read-only parameters** — displayed as text only
+- **Double-click** any slider to reset to the parameter's default value
+
+Parameters are refreshed every frame, reflecting both user changes and plugin-initiated changes (e.g. from modulators or sidechain).
 
 ### Transport Controls
 
-The bottom bar contains:
-- **Play/Pause** — toggle transport state
+The bottom bar has three tabs:
+
+**🎵 Transport:**
+- **Play/Pause** — toggle transport state (also via **Space** key)
 - **BPM** — drag to adjust tempo (20–300)
 - **Time Signature** — numerator/denominator (1–16 each)
-- A status message showing the last operation result
+- **🔔/🔕 Tone** — enable/disable the 440 Hz test tone input (useful for testing effect plugins)
+- **Audio Status** (right side) — shows sample rate, buffer size, device name, and open editor count when active
+
+Transport state changes (tempo, time signature, play/pause) are synced to the audio engine in real time.
+
+**🔊 Devices:**
+- **Audio Output** dropdown — select the audio output device (or use system default)
+- **MIDI Input** dropdown — select a MIDI input port (or none)
+- **⟳ Refresh** — re-enumerate available devices
+
+**💾 Session:**
+- **Path** — file path for saving/loading session state
+- **💾 Save** — save current transport, rack, and device settings to JSON
+- **📂 Load** — restore a previously saved session
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| **Space** | Toggle play/pause |
+
+---
+
+## Documentation
+
+- [PRD.md](PRD.md) — Product requirements for the GUI application
 
 ---
 

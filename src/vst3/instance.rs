@@ -613,6 +613,52 @@ impl Vst3Instance {
         self.component_handler
     }
 
+    /// Create a plugin editor view (IPlugView).
+    ///
+    /// Calls `IEditController::createView("editor")` and returns the IPlugView
+    /// pointer if the plugin supports an editor UI. The caller is responsible
+    /// for managing the view lifecycle (attached, removed, release).
+    ///
+    /// Returns `None` if the plugin has no editor or no controller.
+    pub fn create_editor_view(&mut self) -> Option<*mut ComPtr<IPlugViewVtbl>> {
+        let controller = self.get_controller()?;
+
+        unsafe {
+            let ctrl_vtbl = &*(*controller).vtbl;
+
+            // Call createView("editor")
+            let view_name = b"editor\0";
+            let view_ptr = (ctrl_vtbl.create_view)(
+                controller as *mut c_void,
+                view_name.as_ptr(),
+            );
+
+            if view_ptr.is_null() {
+                debug!(plugin = %self.name, "Plugin does not provide an editor view");
+                return None;
+            }
+
+            let view = view_ptr as *mut ComPtr<IPlugViewVtbl>;
+            debug!(plugin = %self.name, "IPlugView created");
+            Some(view)
+        }
+    }
+
+    /// Check if the plugin provides an editor UI.
+    ///
+    /// Creates a temporary IPlugView and immediately releases it.
+    pub fn has_editor(&mut self) -> bool {
+        if let Some(view) = self.create_editor_view() {
+            unsafe {
+                let vtbl = &*(*view).vtbl;
+                (vtbl.release)(view as *mut c_void);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Stop processing and deactivate the component.
     pub fn shutdown(&mut self) {
         unsafe {

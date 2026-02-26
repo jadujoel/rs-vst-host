@@ -1,16 +1,20 @@
 # Status
 
-## Current Phase: Phase 7 — GUI Design and Implementation
+## Current Phase: Phase 7 — GUI Design and Implementation (Step 3: Editor Windows & PRD Features)
 
 **Milestone M2 achieved**: Single plugin instantiates and initializes.
 **Milestone M3 achieved**: Real-time audio callback calls plugin process reliably.
 **Milestone M4 achieved**: MIDI note input triggers instrument output.
 **Milestone M5 achieved**: Parameter control + stable CLI UX.
-**Quality gate achieved**: 273 tests passing, zero warnings, comprehensive coverage of non-RT components.
+**Quality gate achieved**: 347 tests passing, zero warnings, comprehensive coverage of non-RT components.
 **Bug fix release**: IAudioProcessor IID corrected, CFBundleRef support added, IPluginFactory3 support added.
 **Compatibility fix**: Separate IEditController support — split component/controller plugins (e.g. FabFilter) now expose parameters.
 **GUI Design**: Created `DESIGN_DOCUMENT.md` outlining the Liquid Glass style architecture using `egui` + `wgpu`.
 **GUI Skeleton**: Basic `egui`/`eframe` GUI window with Liquid Glass theme, plugin browser, plugin rack, and transport controls. New `gui` CLI command.
+**GUI PRD**: Added `PRD.md` with product requirements for the GUI application.
+**GUI Integration**: Full backend bridge connecting GUI to audio engine — plugin activation/deactivation from rack, parameter view panel with sliders, audio/MIDI device selection, session save/load, test tone toggle.
+**GUI Editor Windows**: IPlugView/IPlugFrame COM interfaces, native macOS NSWindow hosting for plugin editors, editor lifecycle management, transport sync, audio status display, parameter search filter, safe mode, keyboard shortcuts.
+**Rust 2024 compliance**: Fixed `unsafe_op_in_unsafe_fn` warnings in `plug_frame.rs` and `editor.rs` by wrapping unsafe operations in explicit `unsafe {}` blocks.
 
 ### Completed
 
@@ -91,7 +95,7 @@
 - **Clean build**: Zero warnings
 
 #### Phase 7 — GUI Implementation (Step 1: Skeleton)
-- **GUI module** (`gui/mod.rs`): New top-level module with `app` and `theme` submodules
+- **GUI module** (`gui/mod.rs`): New top-level module with `app`, `theme`, `editor`, `backend`, `session` submodules
 - **Liquid Glass theme** (`gui/theme.rs`): Full egui 0.31 theme — color palette (BG_BASE, PANEL_FILL, ACCENT, etc.), CornerRadius constants (card 12px, button 8px, small 6px), Shadow, Margin constants, widget/selection/window visuals, text styles, glass_card_frame() and section_frame() helpers
 - **HostApp** (`gui/app.rs`): `eframe::App` implementation with three-panel layout:
   - Left sidebar: Plugin browser with scan button, search filter, scrollable list of glass-card plugin entries with add-to-rack buttons
@@ -101,8 +105,21 @@
 - **CLI integration**: `gui` subcommand added to `clap` CLI, launches the eframe window from `main.rs`
 - **Dependencies**: Added `eframe` 0.31 and `egui` 0.31 to `Cargo.toml`
 
+#### Phase 7 — GUI Implementation (Step 3: Editor Windows & PRD Features)
+- **IPlugView/IPlugFrame COM** (`vst3/com.rs`): Added IIDs, vtable structs, ViewRect, platform type constants for editor view support
+- **Host IPlugFrame** (`vst3/plug_frame.rs`): COM implementation for plugin resize requests with atomic ref counting and thread-safe pending resize
+- **Editor window management** (`gui/editor.rs`): Native macOS NSWindow creation via ObjC runtime FFI, IPlugView attach/detach lifecycle, resize propagation
+- **Editor on Vst3Instance** (`vst3/instance.rs`): `create_editor_view()` and `has_editor()` methods
+- **Backend editor integration** (`gui/backend.rs`): Editor window tracking, open/close/poll methods, AudioStatus struct, transport sync methods (set_tempo, set_playing, set_time_signature)
+- **Transport sync** (`gui/app.rs`): GUI transport state changes pushed to audio engine in real time
+- **Audio engine status**: Sample rate, buffer size, device name displayed in transport bar
+- **Parameter search**: Text filter in parameter panel for quick param lookup
+- **Safe mode**: `--safe-mode` CLI flag disables plugin editor windows
+- **Keyboard shortcuts**: Space bar toggles play/pause
+- **Improved scan progress**: Shows module count, class count, and error count
+
 ### Test Results
-- 273 unit tests passing (error Display/From, CLI parsing, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification, tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout, GUI theme colours/constants/apply, GUI app state management/rack/filter/browser)
+- 347 unit tests passing (error Display/From, CLI parsing incl. safe-mode, types serde, scanner edge cases, cache I/O, parameter utilities, event list COM, parameter changes COM, process buffers, MIDI translation, interactive commands, host context COM, component handler concurrency, process context, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), tone generator, audio device, MIDI receiver, CFBundleRef creation, IConnectionPoint IID, factory vtable layout, GUI theme colours/constants/apply, GUI app state/rack/filter/browser/backend integration/session roundtrip/device selection/parameter refresh/safe mode/transport sync/editor/param filter/audio status, plug_frame COM ref counting/QI/resize, editor module)
 - Clean build with zero warnings
 - Test stability verified across multiple consecutive runs
 - Successfully loads and runs real VST3 plugins on macOS (tested with FabFilter Pro-MB, Pro-Q 4)
@@ -116,10 +133,11 @@
 - `CHANGELOG.md` — version history
 - `CODE_COVERAGE.md` — test coverage analysis by module
 
-### Next Steps (Phase 7 — Iteration Beyond MVP)
-- Integrate GUI with live audio engine (load + run plugins from the rack)
-- Plugin editor window support where available
+### Next Steps (Phase 8 — Beyond MVP)
+- Full integration testing of plugin editor windows with real VST3 plugins
 - Preset/program management
-- Parameter view panel in the GUI for selected plugin
-- Multiple plugin instances and simple routing graph
-- Session save/load
+- Multiple simultaneous plugin instances and simple routing graph
+- Undo/redo for parameter changes
+- Plugin state persistence (component state save/load)
+- Drag-and-drop plugin reordering in rack
+- Linux/Windows editor window implementations

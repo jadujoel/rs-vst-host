@@ -268,9 +268,29 @@ impl AudioEngine {
     }
 
     /// Set the tempo in BPM.
-    #[allow(dead_code)]
     pub fn set_tempo(&mut self, bpm: f64) {
         self.process_context.set_tempo(bpm);
+    }
+
+    /// Set the playing state.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.process_context.set_playing(playing);
+    }
+
+    /// Set the time signature.
+    pub fn set_time_signature(&mut self, numerator: u32, denominator: u32) {
+        self.process_context
+            .set_time_signature(numerator as i32, denominator as i32);
+    }
+
+    /// Create an IPlugView for the plugin's editor.
+    ///
+    /// This must be called from the main/GUI thread. The returned pointer
+    /// is a COM object that the caller must release.
+    pub fn create_editor_view(
+        &mut self,
+    ) -> Option<*mut crate::vst3::com::ComPtr<crate::vst3::com::IPlugViewVtbl>> {
+        self.instance.create_editor_view()
     }
 
     /// Get the plugin name.

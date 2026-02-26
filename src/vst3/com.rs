@@ -541,6 +541,131 @@ pub struct IConnectionPointVtbl {
     pub disconnect: unsafe extern "system" fn(this: *mut c_void, other: *mut c_void) -> i32,
 }
 
+// ─── IPlugView vtable ─────────────────────────────────────────────────────
+
+/// IPlugView IID: {5BC32507-D060-49EA-A615-1B522B755B29}
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+pub const IPLUG_VIEW_IID: [u8; 16] = [
+    0x5B, 0xC3, 0x25, 0x07, 0xD0, 0x60, 0x49, 0xEA, 0xA6, 0x15, 0x1B, 0x52, 0x2B, 0x75, 0x5B, 0x29,
+];
+
+/// IPlugView IID in COM-compatible byte order (Windows).
+#[cfg(target_os = "windows")]
+pub const IPLUG_VIEW_IID: [u8; 16] = [
+    0x07, 0x25, 0xC3, 0x5B, 0x60, 0xD0, 0xEA, 0x49, 0xA6, 0x15, 0x1B, 0x52, 0x2B, 0x75, 0x5B, 0x29,
+];
+
+/// IPlugFrame IID: {367FAF01-AFA9-4693-8D4D-A2A0ED0882A3}
+#[cfg(not(target_os = "windows"))]
+pub const IPLUG_FRAME_IID: [u8; 16] = [
+    0x36, 0x7F, 0xAF, 0x01, 0xAF, 0xA9, 0x46, 0x93, 0x8D, 0x4D, 0xA2, 0xA0, 0xED, 0x08, 0x82, 0xA3,
+];
+
+/// IPlugFrame IID in COM-compatible byte order (Windows).
+#[cfg(target_os = "windows")]
+pub const IPLUG_FRAME_IID: [u8; 16] = [
+    0x01, 0xAF, 0x7F, 0x36, 0xA9, 0xAF, 0x93, 0x46, 0x8D, 0x4D, 0xA2, 0xA0, 0xED, 0x08, 0x82, 0xA3,
+];
+
+/// Rectangle used by IPlugView for editor sizing.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ViewRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+impl ViewRect {
+    /// Width of the rectangle.
+    pub fn width(&self) -> i32 {
+        self.right - self.left
+    }
+
+    /// Height of the rectangle.
+    pub fn height(&self) -> i32 {
+        self.bottom - self.top
+    }
+}
+
+/// Platform type string for macOS NSView.
+pub const K_PLATFORM_TYPE_NSVIEW: &[u8] = b"NSView\0";
+
+/// Platform type string for Windows HWND.
+#[allow(dead_code)]
+pub const K_PLATFORM_TYPE_HWND: &[u8] = b"HWND\0";
+
+/// Platform type string for X11 window.
+#[allow(dead_code)]
+pub const K_PLATFORM_TYPE_X11: &[u8] = b"X11EmbedWindowID\0";
+
+/// IPlugView vtable (extends FUnknown).
+///
+/// vtable layout:
+///   [0-2]   FUnknown: queryInterface, addRef, release
+///   [3-13]  IPlugView methods
+#[repr(C)]
+pub struct IPlugViewVtbl {
+    // FUnknown
+    pub query_interface:
+        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    // IPlugView
+    pub is_platform_type_supported:
+        unsafe extern "system" fn(this: *mut c_void, platform_type: *const u8) -> i32,
+    pub attached: unsafe extern "system" fn(
+        this: *mut c_void,
+        parent: *mut c_void,
+        platform_type: *const u8,
+    ) -> i32,
+    pub removed: unsafe extern "system" fn(this: *mut c_void) -> i32,
+    pub on_wheel: unsafe extern "system" fn(this: *mut c_void, distance: f32) -> i32,
+    pub on_key_down: unsafe extern "system" fn(
+        this: *mut c_void,
+        key: i16,
+        key_code: i16,
+        modifiers: i16,
+    ) -> i32,
+    pub on_key_up: unsafe extern "system" fn(
+        this: *mut c_void,
+        key: i16,
+        key_code: i16,
+        modifiers: i16,
+    ) -> i32,
+    pub get_size: unsafe extern "system" fn(this: *mut c_void, size: *mut ViewRect) -> i32,
+    pub on_size: unsafe extern "system" fn(this: *mut c_void, new_size: *mut ViewRect) -> i32,
+    pub on_focus: unsafe extern "system" fn(this: *mut c_void, state: i32) -> i32,
+    pub set_frame: unsafe extern "system" fn(this: *mut c_void, frame: *mut c_void) -> i32,
+    pub can_resize: unsafe extern "system" fn(this: *mut c_void) -> i32,
+    pub check_size_constraint:
+        unsafe extern "system" fn(this: *mut c_void, rect: *mut ViewRect) -> i32,
+}
+
+/// IPlugFrame vtable (extends FUnknown).
+///
+/// The host implements this interface so the plugin can request window resizes.
+///
+/// vtable layout:
+///   [0-2]  FUnknown: queryInterface, addRef, release
+///   [3]    IPlugFrame: resizeView
+#[repr(C)]
+pub struct IPlugFrameVtbl {
+    // FUnknown
+    pub query_interface:
+        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    // IPlugFrame
+    pub resize_view: unsafe extern "system" fn(
+        this: *mut c_void,
+        view: *mut c_void,
+        new_size: *mut ViewRect,
+    ) -> i32,
+}
+
 // ─── COM pointer wrapper ──────────────────────────────────────────────────
 
 /// Generic COM object: pointer-to-vtable-pointer layout.
@@ -756,6 +881,8 @@ mod tests {
         assert_eq!(IEVENT_LIST_IID.len(), 16);
         assert_eq!(IPARAMETER_CHANGES_IID.len(), 16);
         assert_eq!(ICONNECTION_POINT_IID.len(), 16);
+        assert_eq!(IPLUG_VIEW_IID.len(), 16);
+        assert_eq!(IPLUG_FRAME_IID.len(), 16);
     }
 
     #[test]
@@ -833,5 +960,73 @@ mod tests {
         assert_eq!(K_CAN_AUTOMATE, 1);
         assert_eq!(K_IS_READ_ONLY, 2);
         assert_eq!(K_IS_LIST, 8);
+    }
+
+    #[test]
+    fn test_iplug_view_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("5BC32507-D060-49EA-A615-1B522B755B29");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(IPLUG_VIEW_IID, expected, "IPlugView IID mismatch");
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IPLUG_VIEW_IID,
+            uuid_to_com("5BC32507-D060-49EA-A615-1B522B755B29"),
+            "IPlugView IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_iplug_frame_iid_matches_uuid() {
+        let expected = uuid_to_big_endian("367FAF01-AFA9-4693-8D4D-A2A0ED0882A3");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(IPLUG_FRAME_IID, expected, "IPlugFrame IID mismatch");
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            IPLUG_FRAME_IID,
+            uuid_to_com("367FAF01-AFA9-4693-8D4D-A2A0ED0882A3"),
+            "IPlugFrame IID COM mismatch"
+        );
+        let _ = expected;
+    }
+
+    #[test]
+    fn test_view_rect_default() {
+        let rect = ViewRect::default();
+        assert_eq!(rect.left, 0);
+        assert_eq!(rect.top, 0);
+        assert_eq!(rect.right, 0);
+        assert_eq!(rect.bottom, 0);
+    }
+
+    #[test]
+    fn test_view_rect_dimensions() {
+        let rect = ViewRect {
+            left: 10,
+            top: 20,
+            right: 810,
+            bottom: 620,
+        };
+        assert_eq!(rect.width(), 800);
+        assert_eq!(rect.height(), 600);
+    }
+
+    #[test]
+    fn test_iplug_view_vtbl_size() {
+        // FUnknown (3) + IPlugView (12) = 15 function pointers
+        let expected = mem::size_of::<usize>() * 15;
+        assert_eq!(mem::size_of::<IPlugViewVtbl>(), expected);
+    }
+
+    #[test]
+    fn test_iplug_frame_vtbl_size() {
+        // FUnknown (3) + IPlugFrame (1) = 4 function pointers
+        let expected = mem::size_of::<usize>() * 4;
+        assert_eq!(mem::size_of::<IPlugFrameVtbl>(), expected);
+    }
+
+    #[test]
+    fn test_platform_type_nsview() {
+        assert_eq!(K_PLATFORM_TYPE_NSVIEW, b"NSView\0");
     }
 }

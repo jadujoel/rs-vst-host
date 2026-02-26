@@ -13,7 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Cross-platform** — macOS, Linux, and Windows support
-- **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, and transport controls
+- **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view, device selection, and session save/load
 
 ## Requirements
 
@@ -57,7 +57,7 @@ rs-vst-host gui
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
 | `midi-ports` | List available MIDI input ports |
-| `gui` | Launch the graphical user interface |
+| `gui [--safe-mode]` | Launch the graphical user interface |
 
 ### `run` Options
 
@@ -84,7 +84,10 @@ src/
 │   ├── device.rs    # cpal audio device management
 │   └── engine.rs    # Audio processing engine, test tone generator
 ├── gui/
-│   ├── app.rs       # HostApp eframe::App — plugin browser, rack, transport
+│   ├── app.rs       # HostApp eframe::App — plugin browser, rack, transport, parameter view, editor buttons
+│   ├── backend.rs   # Host backend — bridges GUI with audio engine, MIDI, and plugin editors
+│   ├── editor.rs    # Native OS window management for VST3 plugin editor views (macOS NSWindow)
+│   ├── session.rs   # Session save/load — serialize/restore host state as JSON
 │   └── theme.rs     # Liquid Glass theme — colours, corner radii, shadows, styling
 ├── host/
 │   └── mod.rs       # Host-side abstractions
@@ -94,14 +97,15 @@ src/
 └── vst3/
     ├── cache.rs     # JSON plugin cache
     ├── cf_bundle.rs # CoreFoundation CFBundleRef FFI (macOS)
-    ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor, IEditController, IEventList)
+    ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor, IEditController, IEventList, IPlugView, IPlugFrame)
     ├── component_handler.rs # IComponentHandler COM for parameter notifications
     ├── event_list.rs    # IEventList COM implementation for MIDI events
     ├── host_context.rs  # IHostApplication COM implementation
-    ├── instance.rs  # VST3 component lifecycle management
+    ├── instance.rs  # VST3 component lifecycle management (incl. editor view creation)
     ├── module.rs    # Dynamic library loading, IPluginFactory FFI
     ├── param_changes.rs # IParameterChanges + IParamValueQueue COM implementations
     ├── params.rs    # Parameter registry via IEditController
+    ├── plug_frame.rs # IPlugFrame COM implementation for editor resize requests
     ├── process.rs   # Process buffer management (interleaved ↔ deinterleaved)
     ├── process_context.rs # ProcessContext transport timing
     ├── scanner.rs   # Plugin directory scanning
@@ -160,7 +164,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-273 unit tests covering error types, GUI theme, GUI app state, CLI parsing, scanner, cache I/O, COM struct layouts, IID UUID verification, host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
+347 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, and concurrency.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
@@ -171,6 +175,7 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 - [STATUS.md](STATUS.md) — Current project status and progress
 - [CHANGELOG.md](CHANGELOG.md) — Version history
 - [CODE_COVERAGE.md](CODE_COVERAGE.md) — Test coverage analysis by module
+- [PRD.md](PRD.md) — Product requirements for the GUI application
 
 ## Roadmap
 
@@ -182,8 +187,9 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 - [x] Phase 6 — Validation and quality gates (223 tests)
 - [x] Phase 7 — Bug fixes and compatibility (IID fix, CFBundleRef, IPluginFactory3)
 - [x] Phase 7 Step 1 — GUI skeleton (plugin browser, rack, transport controls)
-- [ ] Phase 7 Step 2 — Live audio integration in GUI
-- [ ] Phase 8 — Beyond MVP (editor windows, presets, routing)
+- [x] Phase 7 Step 2 — Live audio integration in GUI (backend bridge, parameter view, device selection, session save/load)
+- [x] Phase 7 Step 3 — Plugin editor windows, transport sync, audio status, parameter search, safe mode
+- [ ] Phase 8 — Beyond MVP (presets, routing, multi-instance)
 
 ## License
 

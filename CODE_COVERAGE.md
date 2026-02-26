@@ -1,8 +1,10 @@
 # Code Coverage Report
 
+Last updated: 2026-02-26 (v0.11.0 — Plugin editor windows, transport sync, audio status, param search, safe mode).
+
 ## Summary
 
-- **Total tests:** 273
+- **Total tests:** 347
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
@@ -11,50 +13,48 @@
 
 | Module | Tests | Coverage Level | Notes |
 |--------|------:|---------------|-------|
-| `src/vst3/com.rs` | 22 | ✅ Full | Struct layouts, IIDs, Event construction, parameter flags, speaker arrangements, UUID-to-bytes verification for all 8 IIDs including IConnectionPoint |
+| `src/vst3/com.rs` | 29 | ✅ Full | Struct layouts, IIDs, Event construction, parameter flags, speaker arrangements, UUID-to-bytes verification for all 10 IIDs including IPlugView/IPlugFrame, ViewRect, platform types |
 | `src/error.rs` | 20 | ✅ Full | Display formatting, From conversions, Debug for all 4 error types |
 | `src/vst3/process.rs` | 20 | ✅ Full | Buffer creation, interleaving, edge cases, setter methods, zero-channel configs |
 | `src/midi/translate.rs` | 18 | ✅ Full | Note On/Off, channels, pitches, velocity range, batch, truncation, unsupported |
 | `src/vst3/param_changes.rs` | 16 | ✅ Full | COM vtable ops, queue overflow (MAX_PARAM_QUEUES/MAX_POINTS_PER_PARAM), QI, null safety |
 | `src/vst3/params.rs` | 14 | ⚠️ Partial | Utility functions (utf16, truncate) + ParameterEntry types; from_controller requires live plugin |
 | `src/vst3/event_list.rs` | 14 | ✅ Full | COM vtable, add/get/clear, overflow (MAX_EVENTS_PER_BLOCK), null pointers, QI |
+| `src/app/cli.rs` | 14 | ✅ Full | Parse all subcommands including `gui` and `gui --safe-mode`, required/optional args, invalid input rejection |
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
-| `src/app/cli.rs` | 12 | ✅ Full | Parse all subcommands including `gui`, required/optional args, invalid input rejection |
+| `src/gui/app.rs` | 41 | ✅ Full | TransportState default, HostApp default, safe mode, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default |
+| `src/gui/backend.rs` | 22 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status; activation requires real .vst3 plugins |
+| `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
+| `src/vst3/plug_frame.rs` | 10 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
+| `src/gui/session.rs` | 9 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
+| `src/vst3/instance.rs` | 7 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size; create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 6 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification; module loading requires real .vst3 bundles |
 | `src/audio/engine.rs` | 5 | ⚠️ Partial | TestToneGenerator only; AudioEngine requires live Vst3Instance |
+| `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
-| `src/vst3/instance.rs` | 7 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size; all methods require real COM objects |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
-| `src/app/commands.rs` | 0 | ❌ None | Integration-level orchestration; requires plugins + hardware |
-| `src/app/mod.rs` | 0 | N/A | Module declarations only |
-| `src/vst3/mod.rs` | 0 | N/A | Module declarations only |
-| `src/audio/mod.rs` | 0 | N/A | Module declarations only |
-| `src/midi/mod.rs` | 0 | N/A | Module declarations only |
-| `src/host/mod.rs` | 0 | N/A | Placeholder module |
-| `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
-| `src/gui/app.rs` | 19 | ✅ Full | TransportState default, HostApp default, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, multiple adds |
-| `src/gui/mod.rs` | 0 | N/A | Module declarations only |
-| `src/main.rs` | 0 | N/A | Entry point only |
 
 ## Coverage Analysis
 
-### Fully Tested (✅) — 16 modules
+### Fully Tested (✅) — 18 modules
 All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
-### Partially Tested (⚠️) — 8 modules
+### Partially Tested (⚠️) — 10 modules
 These modules have tests for pure-logic components but cannot be fully unit-tested because they depend on:
 - **Live VST3 plugins** (`instance.rs`, `module.rs`, `params.rs from_controller`)
 - **Audio hardware** (`audio/device.rs`, `audio/engine.rs`)
 - **MIDI hardware** (`midi/device.rs`)
 - **Interactive stdin** (`interactive.rs run_interactive`)
 - **CoreFoundation / .vst3 bundles** (`cf_bundle.rs` full path)
+- **Native GUI / ObjC runtime** (`gui/editor.rs` open/close/poll)
+- **Plugin editor views / IPlugView** (`gui/backend.rs` full activation)
 
 ### Not Testable in CI (❌) — 1 module
 - `app/commands.rs` — Heavy I/O orchestration requiring both plugins and hardware
@@ -85,6 +85,29 @@ Based on module-level analysis:
 | Host context | 7 | IHost QI, ref counting, null safety, destroy null |
 | Component handler | 4 | Concurrent perform_edit, restart flag OR, destroy null, as_ptr |
 | Process context | 0 | Already well-covered at 10 tests |
+
+## v0.11.0 Test Additions (Editor Windows & PRD Features)
+
+43 new tests added (304 → 347 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| GUI app | 12 | Safe mode constructor, param filter default, prev transport defaults, sync transport, open editor (no slot, no active), editor count, audio status default |
+| GUI backend | 10 | Audio status default/initial, editor count, active_has_editor, poll/close editors empty, set_tempo/playing/time_signature no active, open_editor no active |
+| VST3 plug_frame | 10 | Creation, as_ptr, pending resize, QI (IPlugFrame/FUnknown/unknown), add_ref/release, destroy, resize_view |
+| VST3 com | 7 | IPlugView/IPlugFrame IID lengths, UUID verification, IPlugViewVtbl/IPlugFrameVtbl sizes, ViewRect width/height |
+| GUI editor | 3 | Platform constant, struct size, result constant |
+| CLI parsing | 1 | `gui --safe-mode` flag |
+
+## v0.10.0 Test Additions (GUI Live Integration)
+
+31 new tests added (273 → 304 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| GUI backend | 12 | Backend construction, no-active params/handler/set_parameter, deactivate-when-none, refresh devices, device selection, tone control, param snapshot clone/debug, param value string |
+| GUI session | 9 | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
+| GUI app | 10 | BottomTab default/variants, deactivate_active, activate_slot invalid, refresh_params no active, session_path default, save/load session roundtrip, load nonexistent, tone_enabled default |
 
 ## v0.9.0 Test Additions (GUI Skeleton)
 

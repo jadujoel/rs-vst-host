@@ -9,6 +9,7 @@ pub mod instance;
 pub mod module;
 pub mod param_changes;
 pub mod params;
+pub mod plug_frame;
 pub mod process;
 pub mod process_context;
 pub mod scanner;
