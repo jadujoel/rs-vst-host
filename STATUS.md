@@ -19,6 +19,7 @@
 **Validation**: `cargo test` (347 tests) passes after the theme update.
 **Interaction plan**: Added a GUI interaction plan for plugin parameter editing workflows.
 **Parameter editing for selected slots**: Implemented the interaction plan — clicking a rack slot shows its parameters (cached or live); inactive plugins support staged changes applied on activation. 362 tests passing.
+**Bug fix (v0.12.1)**: Fixed SIGSEGV (exit 139) on plugin activation — `Vst3Module` was dropped prematurely, unloading the dynamic library while COM vtable pointers were still in use. Module now kept alive in `ActiveState`. 364 tests passing.
 
 ### Completed
 

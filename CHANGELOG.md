@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1] - 2026-02-26
+
+### Fixed
+- **SIGSEGV on plugin activation** (`gui/backend.rs`): The `Vst3Module` (which owns the dynamic library handle) was dropped at the end of `activate_plugin`, unloading the shared library while the `Vst3Instance` COM vtable pointers still referenced code in it. Any subsequent call (e.g. `process()` in the audio callback) dereferenced unmapped memory, causing exit code 139 (SIGSEGV). Fixed by storing the `Vst3Module` in `ActiveState` so the library stays loaded for the lifetime of the plugin instance.
+
+### Added
+- 2 new unit tests (362 → 364 total): `test_active_state_holds_module` documents the module-lifetime invariant, `test_backend_deactivate_clears_audio_status` verifies cleanup.
+
 ## [0.12.0] - 2026-02-26
 
 ### Added

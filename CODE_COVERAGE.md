@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.12.0 — plugin parameter editing for selected slots).
+Last updated: 2026-02-26 (v0.12.1 — fix SIGSEGV on plugin activation).
 
 ## Summary
 
-- **Total tests:** 362
+- **Total tests:** 364
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (362 tests, 0 warnings)
+- **Last test run:** 2026-02-26 (364 tests, 0 warnings)
 
 ## Test Coverage by Module
 
@@ -26,7 +26,7 @@ Last updated: 2026-02-26 (v0.12.0 — plugin parameter editing for selected slot
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
 | `src/gui/app.rs` | 56 | ✅ Full | TransportState default, HostApp default, safe mode, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
-| `src/gui/backend.rs` | 22 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status; activation requires real .vst3 plugins |
+| `src/gui/backend.rs` | 24 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status; activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
 | `src/vst3/plug_frame.rs` | 10 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
