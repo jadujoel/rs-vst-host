@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-02-26
+
+### Added
+- **Debug & profiling infrastructure** (`diagnostics.rs`, `sandbox.rs`, `main.rs`, `cli.rs`, `app.rs`, `backend.rs`, `instance.rs`, `engine.rs`): Comprehensive diagnostic tooling for characterising heap corruption caused by `siglongjmp`-based crash recovery from C++ plugin code.
+  1. **Cargo feature flags**: `debug-alloc` (dhat heap profiler), `debug-trace` (Chrome trace export), `debug-tools` (both). All diagnostic code is zero-cost when features are disabled.
+  2. **Diagnostics module** (`src/diagnostics.rs`): Central hub with `heap_check()` (wraps macOS `malloc_zone_check`), `check_malloc_env()`, `recommended_env_vars()`, `init_profiler()`/`shutdown_profiler()` (dhat, feature-gated), and `print_malloc_debug_instructions()`.
+  3. **Backtrace capture in signal handler** (`sandbox.rs`): Signal-safe `backtrace()` call captures up to 64 frames before `siglongjmp`. Frames are symbolicated after recovery. `PluginCrash` now carries `backtrace: Vec<String>` and `heap_corrupted: bool` fields.
+  4. **Heap integrity checks** (`sandbox.rs`, `instance.rs`, `app.rs`): `malloc_zone_check(NULL)` called after sandbox crash recovery, during plugin instance drop, and periodically in the GUI update loop (~every 60 frames when `--malloc-debug` is active).
+  5. **dhat global allocator**: Optional heap profiling via `#[global_allocator]` behind `debug-alloc` feature flag.
+  6. **Structured tracing refactor** (`main.rs`): Layered `Registry`-based subscriber with optional Chrome trace layer (behind `debug-trace` feature).
+  7. **Performance spans**: `trace_span!` / `info_span!` on hot paths — `sandbox_call`, `audio_engine_process`, `vst3_process`, `vst3_instance_drop`, `gui_update`, plugin activate/deactivate.
+  8. **`--malloc-debug` CLI flag** (`cli.rs`): Prints macOS malloc environment variable instructions and enables periodic heap checking in the GUI.
+  9. **Heap corruption GUI warning** (`app.rs`): Red banner at top of window when `malloc_zone_check` detects corruption. `HostBackend` propagates heap corruption status from `DEACTIVATION_HEAP_CORRUPTED` thread-local.
+- 22 new unit tests (415 → 437 total): diagnostics module (7), sandbox backtrace/heap (7), CLI malloc-debug (2), GUI app heap checks (4), backend heap corruption (3). 438 tests with `--features debug-tools`.
+
 ## [0.13.2] - 2026-02-26
 
 ### Fixed
