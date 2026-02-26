@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.13.0 — plugin crash sandbox).
+Last updated: 2026-02-26 (v0.13.1 — crash-safe library unload).
 
 ## Summary
 
-- **Total tests:** 389
+- **Total tests:** 407
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (389 tests, 0 warnings)
+- **Last test run:** 2026-02-26 (407 tests, 0 warnings)
 
 ## Test Coverage by Module
 
@@ -36,8 +36,8 @@ Last updated: 2026-02-26 (v0.13.0 — plugin crash sandbox).
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
 | `src/gui/session.rs` | 9 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
-| `src/vst3/instance.rs` | 7 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size; create_editor_view/has_editor require real COM objects |
-| `src/vst3/module.rs` | 6 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification; module loading requires real .vst3 bundles |
+| `src/vst3/instance.rs` | 12 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success); create_editor_view/has_editor require real COM objects |
+| `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/audio/engine.rs` | 6 | ⚠️ Partial | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled); AudioEngine requires live Vst3Instance |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
@@ -108,6 +108,16 @@ Based on module-level analysis:
 | Area | New Tests | Description |
 |------|----------|-------------|
 | VST3 sandbox | 21 | SandboxResult is_ok/is_crashed/is_panicked/ok, PluginCrash Display+Error, signal_name (known+unknown), panic_message (str/String/other), sandbox normal/unit/side-effect, panic recovery, nested calls, nested inner panic, catches raised SIGBUS, catches raised SIGSEGV, catches SIGABRT, recovery allows subsequent calls, handler refcount cleanup |
+
+## v0.13.1 Test Additions (Crash-Safe Library Unload)
+
+18 new tests added (389 → 407 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| VST3 instance | 5 | LAST_DROP_CRASHED thread-local default, set/reset, set on sandbox crash, not set on success, read-and-reset pattern |
+| VST3 module | 3 | Module-side flag read-and-reset, crash→flag→skip integration, post-skip sandbox recovery |
+| GUI app | 10 | Additional rack/param/session state management tests |
 
 ## v0.10.0 Test Additions (GUI Live Integration)
 

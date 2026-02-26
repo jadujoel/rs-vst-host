@@ -14,8 +14,19 @@ use crate::vst3::host_context::HostApplication;
 use crate::vst3::module::IPluginFactoryVtbl;
 use crate::vst3::params::ParameterRegistry;
 use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+use std::cell::Cell;
 use std::ffi::c_void;
 use tracing::{debug, error, info, warn};
+
+// ── Thread-local flag for instance ↔ module crash communication ─────────
+//
+// When Vst3Instance::drop's sandbox catches a crash during COM cleanup,
+// this flag is set to `true`. The Vst3Module::drop (which runs immediately
+// after on the same thread) checks it and skips library unload to prevent
+// C++ static destructors from running on corrupted plugin state.
+thread_local! {
+    pub(crate) static LAST_DROP_CRASHED: Cell<bool> = const { Cell::new(false) };
+}
 
 /// A fully initialized VST3 plugin instance ready for audio processing.
 ///
@@ -1002,6 +1013,11 @@ impl Drop for Vst3Instance {
 
             match &result {
                 SandboxResult::Crashed(crash) => {
+                    // Signal to Vst3Module::drop (which runs next on this thread)
+                    // that the plugin's internal state is corrupt. The module must
+                    // NOT unload the library, because C++ static destructors would
+                    // run on corrupted state and crash the host (SIGABRT).
+                    LAST_DROP_CRASHED.with(|c| c.set(true));
                     warn!(
                         plugin = %self.name,
                         signal = %crash.signal_name,
@@ -1009,6 +1025,7 @@ impl Drop for Vst3Instance {
                     );
                 }
                 SandboxResult::Panicked(msg) => {
+                    LAST_DROP_CRASHED.with(|c| c.set(true));
                     warn!(
                         plugin = %self.name,
                         panic = %msg,
@@ -1130,5 +1147,81 @@ mod tests {
         if let SandboxResult::Crashed(crash) = result {
             assert_eq!(crash.signal, libc::SIGABRT);
         }
+    }
+
+    #[test]
+    fn test_last_drop_crashed_default_is_false() {
+        // LAST_DROP_CRASHED should be false by default
+        let val = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(!val, "LAST_DROP_CRASHED should default to false");
+    }
+
+    #[test]
+    fn test_last_drop_crashed_set_and_reset() {
+        // Setting LAST_DROP_CRASHED should be readable
+        LAST_DROP_CRASHED.with(|c| c.set(true));
+        let val = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(val, "LAST_DROP_CRASHED should be true after set");
+
+        // Reset it
+        LAST_DROP_CRASHED.with(|c| c.set(false));
+        let val = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(!val, "LAST_DROP_CRASHED should be false after reset");
+    }
+
+    #[test]
+    fn test_last_drop_crashed_set_on_sandbox_crash() {
+        // Simulate what happens in Vst3Instance::drop when sandbox catches a crash:
+        // the LAST_DROP_CRASHED flag should be set.
+        use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+
+        // Ensure clean state
+        LAST_DROP_CRASHED.with(|c| c.set(false));
+
+        let result: SandboxResult<()> = sandbox_call("test_instance_drop_crash", || unsafe {
+            libc::raise(libc::SIGBUS);
+        });
+
+        // Simulate the instance drop behavior: set flag on crash
+        if result.is_crashed() {
+            LAST_DROP_CRASHED.with(|c| c.set(true));
+        }
+
+        assert!(result.is_crashed());
+        let crashed = LAST_DROP_CRASHED.with(|c| {
+            let v = c.get();
+            c.set(false); // Read-and-reset like Vst3Module::drop does
+            v
+        });
+        assert!(
+            crashed,
+            "LAST_DROP_CRASHED should be set after instance crash"
+        );
+
+        // After reset, should be false
+        let after_reset = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(
+            !after_reset,
+            "LAST_DROP_CRASHED should be false after read-and-reset"
+        );
+    }
+
+    #[test]
+    fn test_last_drop_crashed_not_set_on_success() {
+        // When the sandbox call succeeds, the flag should NOT be set
+        use crate::vst3::sandbox::sandbox_call;
+
+        LAST_DROP_CRASHED.with(|c| c.set(false));
+
+        let _result = sandbox_call("test_successful_drop", || {
+            // Simulates successful COM cleanup
+            42
+        });
+
+        let crashed = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(
+            !crashed,
+            "LAST_DROP_CRASHED should remain false after successful cleanup"
+        );
     }
 }

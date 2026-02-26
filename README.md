@@ -167,7 +167,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-389 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing), and concurrency.
+407 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload), and concurrency.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 

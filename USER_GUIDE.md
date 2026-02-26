@@ -638,7 +638,7 @@ The host includes a crash sandbox that protects against buggy plugins. If a plug
 - In the **GUI**: The crashed plugin is automatically deactivated and a warning message appears in the status bar (e.g., "⚠ 'Plugin Name' crashed — deactivated safely. The host is unaffected."). You can re-activate the plugin or load a different one.
 - In the **CLI**: The host logs a warning and continues running.
 
-Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The operating system reclaims this memory when the process exits.
+Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The plugin's dynamic library is also kept loaded in memory to prevent C++ static destructors from running on corrupted state. The operating system reclaims all memory when the process exits.
 
 ### Audio glitches or dropouts
 

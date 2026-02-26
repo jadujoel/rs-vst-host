@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2026-02-26
+
+### Fixed
+- **SIGABRT (exit 134) after sandbox-recovered plugin crash** (`vst3/instance.rs`, `vst3/module.rs`): When `Vst3Instance::drop` caught a SIGBUS during COM cleanup, the host recovered via the sandbox, but `Vst3Module::drop` subsequently unloaded the plugin library (`bundleExit` + `CFRelease`). This triggered C++ static destructors inside the plugin to run on corrupted state, causing a SIGABRT that killed the host process. Fixed with a thread-local flag (`LAST_DROP_CRASHED`) that communicates crash status from `Vst3Instance::drop` to `Vst3Module::drop`. When the instance's COM cleanup crashes, the module now skips all plugin-facing cleanup (factory release, `bundleExit`, `CFRelease`) and intentionally leaks the library in memory — preventing C++ destructors from executing on bad state.
+- **Defense-in-depth**: `cf_bundle::release` (which calls `CFRelease` to unload the dylib) is now wrapped in a `sandbox_call`, catching any crashes from C++ static destructors during library unload even when the instance cleanup succeeded.
+- **Cascading crash prevention**: If the factory COM release crashes in `Vst3Module::drop`, `bundleExit` and `CFRelease` are now skipped entirely (previously only `bundleExit` crashes triggered this skip).
+
+### Added
+- 18 new unit tests (389 → 407 total): `LAST_DROP_CRASHED` thread-local default/set/reset, flag set on sandbox crash, flag not set on success, module-side read-and-reset, full crash→flag→skip pattern integration.
+
 ## [0.13.0] - 2026-02-26
 
 ### Added

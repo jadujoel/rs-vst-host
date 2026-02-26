@@ -343,7 +343,30 @@ impl Vst3Module {
 
 impl Drop for Vst3Module {
     fn drop(&mut self) {
+        use crate::vst3::instance::LAST_DROP_CRASHED;
         use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+
+        // Check if the Vst3Instance's COM cleanup crashed on this thread.
+        // If so, the plugin's internal state is corrupt. Unloading the library
+        // would run C++ static destructors on corrupted state, causing SIGABRT.
+        // We skip ALL plugin-facing cleanup and intentionally leak the library.
+        let instance_cleanup_crashed = LAST_DROP_CRASHED.with(|c| {
+            let v = c.get();
+            c.set(false); // Reset for next use
+            v
+        });
+
+        if instance_cleanup_crashed {
+            warn!(
+                "Instance COM cleanup crashed — skipping library unload \
+                 (factory, bundleExit, CFBundle intentionally leaked)"
+            );
+            // Still clean up our OWN Rust-side resources (never crash)
+            unsafe {
+                crate::vst3::host_context::HostApplication::destroy(self.host_context);
+            }
+            return;
+        }
 
         // Release the factory COM reference (sandboxed — plugin code)
         let factory = self.factory;
@@ -351,6 +374,7 @@ impl Drop for Vst3Module {
             let vtbl = &*(*factory).vtbl;
             (vtbl.base.release)(factory as *mut c_void);
         });
+        let factory_crashed = matches!(&result, SandboxResult::Crashed(_));
         if let SandboxResult::Crashed(crash) = &result {
             warn!(
                 signal = %crash.signal_name,
@@ -366,6 +390,13 @@ impl Drop for Vst3Module {
         // Platform-specific module exit (sandboxed — plugin code)
         #[cfg(target_os = "macos")]
         {
+            // If the factory release crashed, the plugin is unstable.
+            // Skip bundleExit and library unload entirely.
+            if factory_crashed {
+                warn!("Skipping bundleExit and CFBundle release after factory crash");
+                return;
+            }
+
             let cf_ref = self.cf_bundle_ref;
             let result = sandbox_call("module_bundle_exit", || {
                 call_bundle_exit(&self._library, cf_ref);
@@ -379,7 +410,21 @@ impl Drop for Vst3Module {
                     );
                 }
                 _ => {
-                    cf_bundle::release(self.cf_bundle_ref);
+                    // Wrap CFBundle release in a sandbox as defense-in-depth.
+                    // CFRelease triggers library unload, which runs C++ static
+                    // destructors. A buggy plugin may crash during teardown even
+                    // when prior steps succeeded.
+                    let cf_ref = self.cf_bundle_ref;
+                    let release_result = sandbox_call("module_cfbundle_release", move || {
+                        cf_bundle::release(cf_ref);
+                    });
+                    if let SandboxResult::Crashed(crash) = &release_result {
+                        warn!(
+                            signal = %crash.signal_name,
+                            "Plugin crashed during CFBundle release \
+                             (library unload) — library leaked"
+                        );
+                    }
                 }
             }
         }
@@ -504,5 +549,65 @@ mod tests {
             "IPluginFactory3 IID mismatch"
         );
         let _ = expected;
+    }
+
+    #[test]
+    fn test_module_drop_checks_instance_crash_flag() {
+        // Verify that the LAST_DROP_CRASHED flag is readable from module context
+        use crate::vst3::instance::LAST_DROP_CRASHED;
+
+        // Default should be false
+        let val = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(!val, "LAST_DROP_CRASHED should default to false");
+
+        // Simulate instance crash
+        LAST_DROP_CRASHED.with(|c| c.set(true));
+
+        // Read-and-reset (like Vst3Module::drop does)
+        let crashed = LAST_DROP_CRASHED.with(|c| {
+            let v = c.get();
+            c.set(false);
+            v
+        });
+        assert!(
+            crashed,
+            "Flag should be true after simulated instance crash"
+        );
+
+        // Should be reset now
+        let after = LAST_DROP_CRASHED.with(|c| c.get());
+        assert!(!after, "Flag should be reset after read-and-reset");
+    }
+
+    #[test]
+    fn test_module_drop_skips_unload_after_instance_crash() {
+        // Verify the full crash → flag → skip pattern works end-to-end
+        use crate::vst3::instance::LAST_DROP_CRASHED;
+        use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+
+        // Simulate what happens: instance drop catches crash
+        let result: SandboxResult<()> = sandbox_call("sim_instance_crash", || unsafe {
+            libc::raise(libc::SIGBUS);
+        });
+        assert!(result.is_crashed());
+
+        // Instance sets the flag
+        LAST_DROP_CRASHED.with(|c| c.set(true));
+
+        // Module reads the flag (as it would in its drop impl)
+        let should_skip = LAST_DROP_CRASHED.with(|c| {
+            let v = c.get();
+            c.set(false);
+            v
+        });
+        assert!(
+            should_skip,
+            "Module should skip library unload after instance crash"
+        );
+
+        // Verify host can continue normally after skipping unload
+        let normal = sandbox_call("post_skip_normal", || 42);
+        assert!(normal.is_ok());
+        assert_eq!(normal.unwrap(), 42);
     }
 }
