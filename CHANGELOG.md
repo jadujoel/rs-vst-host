@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.2] - 2026-02-26
+
+### Fixed
+- **SIGABRT (exit 134) on second plugin activation after crash-recovered deactivation** (`vst3/instance.rs`, `gui/backend.rs`): When a plugin crashed during COM cleanup (e.g. FabFilter Pro-Q 4 SIGBUS during `instance_drop`), the sandbox caught it via `siglongjmp`, but this recovery could leave the process malloc heap in an inconsistent state. The library was correctly leaked (not unloaded), but re-activating the same plugin called `dlopen` (returning the already-mapped corrupted library), then `bundleEntry`, triggering malloc freelist corruption detection → SIGABRT. Fixed with two complementary changes:
+  1. **Tainted path tracking**: `HostBackend` now maintains a `tainted_paths: HashSet<PathBuf>` set. After deactivation, a `DEACTIVATION_CRASHED` thread-local flag is checked — if set, the plugin's bundle path is added to the tainted set. `activate_plugin()` checks this set and returns a user-friendly error ("Restart the host to use this plugin again") instead of attempting to load the corrupted library.
+  2. **Granular COM cleanup**: `Vst3Instance::Drop` now splits the COM cleanup into 5 individual `sandbox_call` invocations (disconnect IConnectionPoint, terminate+release controller, terminate component, release COM refs, release factory) instead of one monolithic call. If any step crashes, subsequent steps are skipped gracefully with per-step warnings. This reduces the crash surface area and provides better diagnostics.
+
+### Added
+- `DEACTIVATION_CRASHED` thread-local flag in `vst3/instance.rs` for communicating crash status from `Vst3Instance::drop` to `HostBackend::deactivate_plugin`.
+- `tainted_paths` field on `HostBackend` for tracking plugins that cannot be safely reloaded.
+- `plugin_path` field on `ActiveState` for tainted-path recording after deactivation.
+- GUI status messages for tainted plugins: deactivation shows "crashed during deactivation" warning, re-activation shows "restart the host" error.
+- 8 new unit tests (407 → 415 total): tainted paths initially empty, tainted path blocks activation, non-tainted path not blocked, `DEACTIVATION_CRASHED` flag get/set, flag independence from `LAST_DROP_CRASHED`, deactivation without crash does not taint.
+
 ## [0.13.1] - 2026-02-26
 
 ### Fixed

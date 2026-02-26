@@ -12,7 +12,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Audio devices** — Enumerate and select audio output devices
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
-- **Plugin crash sandbox** — Signal-handler-based crash isolation: if a plugin crashes (SIGBUS/SIGSEGV/SIGABRT), the host recovers gracefully and continues running
+- **Plugin crash sandbox** — Signal-handler-based crash isolation: if a plugin crashes (SIGBUS/SIGSEGV/SIGABRT), the host recovers gracefully and continues running. Crashed plugins are tainted and blocked from re-activation to prevent heap corruption on reload
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 

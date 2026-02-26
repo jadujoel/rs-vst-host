@@ -10,8 +10,11 @@ use crate::gui::editor::EditorWindow;
 use crate::midi::device::{MidiDevice, MidiPortInfo};
 use crate::vst3::com::K_SPEAKER_STEREO;
 use crate::vst3::component_handler::HostComponentHandler;
+use crate::vst3::instance::DEACTIVATION_CRASHED;
 use crate::vst3::module::Vst3Module;
 use crate::vst3::params::ParameterRegistry;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 
@@ -73,6 +76,17 @@ pub struct HostBackend {
     pub editor_windows: Vec<EditorWindow>,
     /// Current audio engine status.
     pub audio_status: AudioStatus,
+    /// Plugin bundle paths that crashed during deactivation.
+    ///
+    /// When a plugin crashes during COM cleanup, `siglongjmp` recovery can
+    /// leave the process heap in an inconsistent state. The library is
+    /// intentionally leaked (not unloaded) so C++ static destructors don't
+    /// run on corrupted state. Re-loading the same library via `dlopen`
+    /// returns the already-mapped (corrupted) code, and `bundleEntry` on
+    /// that state triggers malloc corruption detection → SIGABRT.
+    ///
+    /// Plugins in this set cannot be re-activated until the host is restarted.
+    pub tainted_paths: HashSet<PathBuf>,
 }
 
 /// Runtime state for an active (instantiated and processing) plugin.
@@ -96,6 +110,8 @@ pub struct HostBackend {
 struct ActiveState {
     /// Which rack slot index is active.
     slot_index: usize,
+    /// Path to the .vst3 bundle (for tainted-path tracking).
+    plugin_path: PathBuf,
     /// The audio engine processing this plugin.
     engine: Arc<Mutex<AudioEngine>>,
     /// The cpal audio stream (must stay alive for audio output).
@@ -167,6 +183,7 @@ impl HostBackend {
             active: None,
             editor_windows: Vec::new(),
             audio_status: AudioStatus::default(),
+            tainted_paths: HashSet::new(),
         }
     }
 
@@ -190,6 +207,17 @@ impl HostBackend {
         cid: &[u8; 16],
         name: &str,
     ) -> Result<Vec<ParamSnapshot>, String> {
+        // Refuse to load plugins that crashed during a prior deactivation.
+        // The library is still mapped in memory with corrupted internal state;
+        // reloading it would trigger malloc corruption → SIGABRT.
+        if self.tainted_paths.contains(path) {
+            return Err(format!(
+                "Plugin '{}' crashed during a prior deactivation and cannot be reloaded. \
+                 Restart the host to use this plugin again.",
+                name
+            ));
+        }
+
         // Deactivate current plugin if any
         self.deactivate_plugin();
 
@@ -318,6 +346,7 @@ impl HostBackend {
 
         self.active = Some(ActiveState {
             slot_index,
+            plugin_path: path.to_path_buf(),
             engine,
             _stream: Some(stream),
             _module: module,
@@ -347,6 +376,13 @@ impl HostBackend {
         self.close_all_editors();
 
         if let Some(mut active) = self.active.take() {
+            // Capture the path before dropping (for tainted-path tracking).
+            let plugin_path = active.plugin_path.clone();
+
+            // Clear the deactivation-crashed flag *before* drop so we only
+            // detect crashes that happen during this specific deactivation.
+            DEACTIVATION_CRASHED.with(|c| c.set(false));
+
             // 1. Shut down the engine while holding the lock. This sets
             //    the is_shutdown flag so the audio callback will output
             //    silence if it races between our unlock and stream drop.
@@ -363,6 +399,20 @@ impl HostBackend {
             // 3. Now `active` is dropped (via the custom Drop impl),
             //    which releases params, midi, engine Arc, and finally
             //    the Vst3Module (unloading the library).
+            drop(active);
+
+            // 4. Check whether the plugin crashed during COM cleanup.
+            //    If so, the library was leaked and the process heap may
+            //    be corrupted. Record the path so we refuse to reload it.
+            let crashed = DEACTIVATION_CRASHED.with(|c| c.get());
+            if crashed {
+                warn!(
+                    path = %plugin_path.display(),
+                    "Plugin crashed during deactivation — marking as tainted (restart required to reuse)"
+                );
+                self.tainted_paths.insert(plugin_path);
+            }
+
             debug!("Plugin deactivated in GUI");
         }
 
@@ -813,5 +863,75 @@ mod tests {
             std::mem::size_of::<Option<cpal::Stream>>() > 0,
             "Option<Stream> should be a real type"
         );
+    }
+
+    #[test]
+    fn test_backend_tainted_paths_initially_empty() {
+        let backend = HostBackend::new();
+        assert!(backend.tainted_paths.is_empty());
+    }
+
+    #[test]
+    fn test_backend_tainted_path_blocks_activation() {
+        let mut backend = HostBackend::new();
+        let path = std::path::PathBuf::from("/fake/path.vst3");
+        backend.tainted_paths.insert(path.clone());
+        let result = backend.activate_plugin(0, &path, &[0u8; 16], "FakePlugin");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("crashed during a prior deactivation"),
+            "Error should mention crash: {}",
+            err
+        );
+        assert!(
+            err.contains("Restart the host"),
+            "Error should recommend restart: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_backend_tainted_path_does_not_block_different_plugin() {
+        let mut backend = HostBackend::new();
+        let tainted = std::path::PathBuf::from("/fake/tainted.vst3");
+        let clean = std::path::PathBuf::from("/fake/clean.vst3");
+        backend.tainted_paths.insert(tainted);
+        // Trying to activate a different (non-tainted) path should not
+        // be blocked by the tainted set. It will fail later (no such file),
+        // but the tainted-path guard should not fire.
+        let result = backend.activate_plugin(0, &clean, &[0u8; 16], "CleanPlugin");
+        // The error should be about loading the module, NOT about tainting.
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            !err.contains("crashed during a prior deactivation"),
+            "Should not mention crash for a clean path: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_deactivation_crashed_flag_is_thread_local() {
+        // Verify that the DEACTIVATION_CRASHED flag can be set and read
+        // on the current thread without affecting other tests.
+        DEACTIVATION_CRASHED.with(|c| {
+            let original = c.get();
+            c.set(true);
+            assert!(c.get());
+            c.set(false);
+            assert!(!c.get());
+            c.set(original); // restore
+        });
+    }
+
+    #[test]
+    fn test_deactivate_without_crash_does_not_taint() {
+        let mut backend = HostBackend::new();
+        // Ensure DEACTIVATION_CRASHED is false before deactivation.
+        DEACTIVATION_CRASHED.with(|c| c.set(false));
+        // Deactivate with no active plugin — should not taint anything.
+        backend.deactivate_plugin();
+        assert!(backend.tainted_paths.is_empty());
     }
 }

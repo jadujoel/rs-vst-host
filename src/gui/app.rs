@@ -325,12 +325,30 @@ impl HostApp {
     /// Deactivate the currently active plugin.
     pub fn deactivate_active(&mut self) {
         // Cache current params to the active slot before deactivating
-        if let Some(active_idx) = self.backend.active_slot_index() {
+        let active_name = if let Some(active_idx) = self.backend.active_slot_index() {
             if let Some(slot) = self.rack.get_mut(active_idx) {
                 slot.param_cache = self.param_snapshots.clone();
             }
-        }
+            self.rack.get(active_idx).map(|s| s.name.clone())
+        } else {
+            None
+        };
+
+        let tainted_before = self.backend.tainted_paths.len();
         self.backend.deactivate_plugin();
+        let tainted_after = self.backend.tainted_paths.len();
+
+        // Check if the plugin crashed during deactivation and is now tainted
+        if tainted_after > tainted_before {
+            if let Some(name) = &active_name {
+                self.status_message = format!(
+                    "⚠ '{}' crashed during deactivation — restart the host to reuse this plugin.",
+                    name
+                );
+                return;
+            }
+        }
+
         // param_snapshots retained for display; refresh_params will load from cache
         self.status_message = "Plugin deactivated.".into();
     }
@@ -531,7 +549,9 @@ impl eframe::App for HostApp {
 
         // Detect plugin crashes and deactivate safely
         if self.backend.is_crashed() {
-            let active_name = self.backend.active_slot_index()
+            let active_name = self
+                .backend
+                .active_slot_index()
                 .and_then(|idx| self.rack.get(idx))
                 .map(|s| s.name.clone())
                 .unwrap_or_else(|| "Unknown".into());

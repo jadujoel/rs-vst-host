@@ -26,6 +26,14 @@ use tracing::{debug, error, info, warn};
 // C++ static destructors from running on corrupted plugin state.
 thread_local! {
     pub(crate) static LAST_DROP_CRASHED: Cell<bool> = const { Cell::new(false) };
+
+    /// Set to `true` when a Vst3Instance crashes during COM cleanup in its
+    /// Drop impl. The GUI backend checks this after `ActiveState` is fully
+    /// dropped to record the plugin path as "tainted", preventing re-load
+    /// in the same session (reloading a crashed-and-leaked library causes
+    /// heap corruption because `siglongjmp` recovery may leave the process
+    /// malloc state inconsistent).
+    pub(crate) static DEACTIVATION_CRASHED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// A fully initialized VST3 plugin instance ready for audio processing.
@@ -927,8 +935,11 @@ impl Drop for Vst3Instance {
         // Ensure processing is stopped and component is deactivated (sandboxed)
         self.shutdown();
 
+        // Track whether *any* COM cleanup step crashed during this drop.
+        let mut any_crash = false;
+
         if !self.crashed {
-            // Extract all raw pointers (Copy types) so the closure doesn't
+            // Extract all raw pointers (Copy types) so closures don't
             // borrow self — required for sandbox_call.
             let component = self.component;
             let processor = self.processor;
@@ -937,12 +948,11 @@ impl Drop for Vst3Instance {
             let factory = self.factory;
             let factory_vtbl = self.factory_vtbl;
 
-            // Wrap ALL plugin-facing COM cleanup in a single sandbox.
-            // If any COM call crashes, we catch the signal and skip the
-            // rest of the cleanup (intentionally leaking COM objects).
-            let result = sandbox_call("instance_drop", move || unsafe {
-                // 1. Disconnect IConnectionPoint between component and controller
-                if owns_separate_controller && !cached_controller.is_null() {
+            // ── Step 1: Disconnect IConnectionPoint ──────────────────
+            // Separate sandbox so that a crash here does not prevent
+            // the remaining terminate/release calls.
+            if owns_separate_controller && !cached_controller.is_null() {
+                let result = sandbox_call("disconnect_connection_points", move || unsafe {
                     let comp_vtbl = &*(*component).vtbl;
                     let ctrl_vtbl = &*(*cached_controller).vtbl;
 
@@ -983,60 +993,88 @@ impl Drop for Vst3Instance {
                             (vtbl.release)(ctrl_cp);
                         }
                     }
-                }
+                });
 
-                // 2. Release the cached controller
-                if owns_separate_controller && !cached_controller.is_null() {
-                    let ctrl_vtbl = &*(*cached_controller).vtbl;
-                    (ctrl_vtbl.terminate)(cached_controller as *mut c_void);
-                    (ctrl_vtbl.release)(cached_controller as *mut c_void);
-                } else if !cached_controller.is_null() {
-                    let ctrl_vtbl = &*(*cached_controller).vtbl;
-                    (ctrl_vtbl.release)(cached_controller as *mut c_void);
-                }
-
-                // 3. Terminate the component
-                let comp_vtbl = &*(*component).vtbl;
-                (comp_vtbl.terminate)(component as *mut c_void);
-
-                // 4. Release COM references
-                let proc_vtbl = &*(*processor).vtbl;
-                (proc_vtbl.release)(processor as *mut c_void);
-                (comp_vtbl.release)(component as *mut c_void);
-
-                // 5. Release factory reference (balances AddRef in create())
-                if !factory_vtbl.is_null() {
-                    let fvtbl = &*factory_vtbl;
-                    (fvtbl.base.release)(factory);
-                }
-            });
-
-            match &result {
-                SandboxResult::Crashed(crash) => {
-                    // Signal to Vst3Module::drop (which runs next on this thread)
-                    // that the plugin's internal state is corrupt. The module must
-                    // NOT unload the library, because C++ static destructors would
-                    // run on corrupted state and crash the host (SIGABRT).
-                    LAST_DROP_CRASHED.with(|c| c.set(true));
-                    warn!(
-                        plugin = %self.name,
-                        signal = %crash.signal_name,
-                        "Plugin crashed during COM cleanup — resources leaked (host is safe)"
-                    );
-                }
-                SandboxResult::Panicked(msg) => {
-                    LAST_DROP_CRASHED.with(|c| c.set(true));
-                    warn!(
-                        plugin = %self.name,
-                        panic = %msg,
-                        "Plugin panicked during COM cleanup"
-                    );
-                }
-                SandboxResult::Ok(()) => {
-                    debug!(plugin = %self.name, "COM references released");
+                if result.is_crashed() || result.is_panicked() {
+                    any_crash = true;
+                    warn!(plugin = %self.name, "Crash during IConnectionPoint disconnect — continuing cleanup");
                 }
             }
+
+            // ── Step 2: Terminate + release controller ───────────────
+            if !cached_controller.is_null() && !any_crash {
+                let result = sandbox_call("release_controller", move || unsafe {
+                    let ctrl_vtbl = &*(*cached_controller).vtbl;
+                    if owns_separate_controller {
+                        (ctrl_vtbl.terminate)(cached_controller as *mut c_void);
+                    }
+                    (ctrl_vtbl.release)(cached_controller as *mut c_void);
+                });
+
+                if result.is_crashed() || result.is_panicked() {
+                    any_crash = true;
+                    warn!(plugin = %self.name, "Crash during controller release — continuing cleanup");
+                }
+            }
+
+            // ── Step 3: Terminate component ──────────────────────────
+            if !any_crash {
+                let result = sandbox_call("terminate_component", move || unsafe {
+                    let comp_vtbl = &*(*component).vtbl;
+                    (comp_vtbl.terminate)(component as *mut c_void);
+                });
+
+                if result.is_crashed() || result.is_panicked() {
+                    any_crash = true;
+                    warn!(plugin = %self.name, "Crash during component terminate — continuing cleanup");
+                }
+            }
+
+            // ── Step 4: Release COM references ───────────────────────
+            if !any_crash {
+                let result = sandbox_call("release_com_refs", move || unsafe {
+                    let proc_vtbl = &*(*processor).vtbl;
+                    (proc_vtbl.release)(processor as *mut c_void);
+
+                    let comp_vtbl = &*(*component).vtbl;
+                    (comp_vtbl.release)(component as *mut c_void);
+                });
+
+                if result.is_crashed() || result.is_panicked() {
+                    any_crash = true;
+                    warn!(plugin = %self.name, "Crash during COM release — references leaked");
+                }
+            }
+
+            // ── Step 5: Release factory reference ────────────────────
+            if !any_crash && !factory_vtbl.is_null() {
+                let result = sandbox_call("release_factory", move || unsafe {
+                    let fvtbl = &*factory_vtbl;
+                    (fvtbl.base.release)(factory);
+                });
+
+                if result.is_crashed() || result.is_panicked() {
+                    any_crash = true;
+                    warn!(plugin = %self.name, "Crash during factory release — reference leaked");
+                }
+            }
+
+            // ── Propagate crash status ───────────────────────────────
+            if any_crash {
+                LAST_DROP_CRASHED.with(|c| c.set(true));
+                DEACTIVATION_CRASHED.with(|c| c.set(true));
+                warn!(
+                    plugin = %self.name,
+                    "Plugin crashed during COM cleanup — resources leaked (host is safe)"
+                );
+            } else {
+                debug!(plugin = %self.name, "COM references released");
+            }
         } else {
+            // Plugin was already marked crashed (e.g. crash during processing).
+            // Also set DEACTIVATION_CRASHED so the backend tracks it.
+            LAST_DROP_CRASHED.with(|c| c.set(true));
+            DEACTIVATION_CRASHED.with(|c| c.set(true));
             warn!(
                 plugin = %self.name,
                 "Skipping COM cleanup for crashed plugin — resources leaked intentionally"
@@ -1223,5 +1261,56 @@ mod tests {
             !crashed,
             "LAST_DROP_CRASHED should remain false after successful cleanup"
         );
+    }
+
+    #[test]
+    fn test_deactivation_crashed_flag_default_false() {
+        DEACTIVATION_CRASHED.with(|c| {
+            let original = c.get();
+            c.set(false);
+            assert!(!c.get(), "DEACTIVATION_CRASHED should be false by default");
+            c.set(original);
+        });
+    }
+
+    #[test]
+    fn test_deactivation_crashed_flag_can_be_set_and_read() {
+        DEACTIVATION_CRASHED.with(|c| {
+            let original = c.get();
+            c.set(true);
+            assert!(
+                c.get(),
+                "DEACTIVATION_CRASHED should be true after set(true)"
+            );
+            c.set(false);
+            assert!(
+                !c.get(),
+                "DEACTIVATION_CRASHED should be false after set(false)"
+            );
+            c.set(original);
+        });
+    }
+
+    #[test]
+    fn test_deactivation_crashed_independent_of_last_drop_crashed() {
+        // Verify that DEACTIVATION_CRASHED and LAST_DROP_CRASHED are independent flags.
+        LAST_DROP_CRASHED.with(|c| c.set(false));
+        DEACTIVATION_CRASHED.with(|c| c.set(false));
+
+        LAST_DROP_CRASHED.with(|c| c.set(true));
+        assert!(
+            !DEACTIVATION_CRASHED.with(|c| c.get()),
+            "DEACTIVATION_CRASHED should not be affected by LAST_DROP_CRASHED"
+        );
+
+        LAST_DROP_CRASHED.with(|c| c.set(false));
+        DEACTIVATION_CRASHED.with(|c| c.set(true));
+        assert!(
+            !LAST_DROP_CRASHED.with(|c| c.get()),
+            "LAST_DROP_CRASHED should not be affected by DEACTIVATION_CRASHED"
+        );
+
+        // Clean up
+        DEACTIVATION_CRASHED.with(|c| c.set(false));
     }
 }

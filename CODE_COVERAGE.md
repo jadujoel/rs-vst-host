@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.13.1 — crash-safe library unload).
+Last updated: 2026-02-26 (v0.13.2 — tainted-path tracking for crash-safe plugin restart).
 
 ## Summary
 
-- **Total tests:** 407
+- **Total tests:** 415
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (407 tests, 0 warnings)
+- **Last test run:** 2026-02-26 (415 tests, 0 warnings)
 
 ## Test Coverage by Module
 
@@ -26,7 +26,7 @@ Last updated: 2026-02-26 (v0.13.1 — crash-safe library unload).
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
 | `src/gui/app.rs` | 56 | ✅ Full | TransportState default, HostApp default, safe mode, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
-| `src/gui/backend.rs` | 27 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type; activation requires real .vst3 plugins |
+| `src/gui/backend.rs` | 33 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked), DEACTIVATION_CRASHED flag, deactivation without crash does not taint; activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
 | `src/vst3/sandbox.rs` | 21 | ✅ Full | SandboxResult methods (is_ok, is_crashed, is_panicked, ok, unwrap), PluginCrash Display and Error, signal name lookup, panic message extraction (str, String, other), normal/unit/side-effect calls, panic recovery, nested calls, nested inner panic, signal recovery (SIGBUS, SIGSEGV, SIGABRT via raise()), crash-then-normal recovery cycle, handler refcount cleanup |
 | `src/vst3/plug_frame.rs` | 10 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view |
@@ -36,7 +36,7 @@ Last updated: 2026-02-26 (v0.13.1 — crash-safe library unload).
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
 | `src/gui/session.rs` | 9 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
-| `src/vst3/instance.rs` | 12 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success); create_editor_view/has_editor require real COM objects |
+| `src/vst3/instance.rs` | 15 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED); create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/audio/engine.rs` | 6 | ⚠️ Partial | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled); AudioEngine requires live Vst3Instance |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
