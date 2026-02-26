@@ -309,6 +309,8 @@ To launch in safe mode (no plugin editor windows):
 rs-vst-host gui --safe-mode
 ```
 
+Translucent panels are tuned for higher text contrast, keeping labels readable against light glass cards.
+
 ### Plugin Browser
 
 The left sidebar shows all cached plugins. Use the **Scan Plugins** button to discover VST3 plugins, then filter the list by typing in the search box. Matches on plugin name, vendor, category, and subcategory. Click the **＋** button on any plugin to add it to the rack. The scan progress shows module count, class count, and any errors encountered.

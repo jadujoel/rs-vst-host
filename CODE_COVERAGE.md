@@ -1,6 +1,6 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.11.0 — Plugin editor windows, transport sync, audio status, param search, safe mode).
+Last updated: 2026-02-26 (v0.11.1 — UI contrast fixes for glass panels).
 
 ## Summary
 
@@ -8,6 +8,7 @@ Last updated: 2026-02-26 (v0.11.0 — Plugin editor windows, transport sync, aud
 - **All passing:** ✅
 - **Build warnings:** 0
 - **Test stability:** Verified (multiple consecutive clean runs)
+- **Last test run:** 2026-02-26 (347 tests, 0 warnings)
 
 ## Test Coverage by Module
 

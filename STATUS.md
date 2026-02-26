@@ -15,6 +15,8 @@
 **GUI Integration**: Full backend bridge connecting GUI to audio engine — plugin activation/deactivation from rack, parameter view panel with sliders, audio/MIDI device selection, session save/load, test tone toggle.
 **GUI Editor Windows**: IPlugView/IPlugFrame COM interfaces, native macOS NSWindow hosting for plugin editors, editor lifecycle management, transport sync, audio status display, parameter search filter, safe mode, keyboard shortcuts.
 **Rust 2024 compliance**: Fixed `unsafe_op_in_unsafe_fn` warnings in `plug_frame.rs` and `editor.rs` by wrapping unsafe operations in explicit `unsafe {}` blocks.
+**UI readability**: Adjusted glass panel alpha handling for higher text contrast on light cards and controls.
+**Validation**: `cargo test` (347 tests) passes after the theme update.
 
 ### Completed
 

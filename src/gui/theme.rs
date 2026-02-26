@@ -16,20 +16,20 @@ use egui::{
 pub const BG_BASE: Color32 = Color32::from_rgb(14, 17, 28);
 
 /// Panel fill (translucent white).
-pub const PANEL_FILL: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 18);
+pub const PANEL_FILL: Color32 = Color32::from_rgba_premultiplied(18, 18, 18, 18);
 
 /// Active / hovered panel fill (slightly brighter).
 #[allow(dead_code)]
-pub const PANEL_FILL_HOVER: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 30);
+pub const PANEL_FILL_HOVER: Color32 = Color32::from_rgba_premultiplied(30, 30, 30, 30);
 
 /// Card/widget fill.
-pub const WIDGET_FILL: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 12);
+pub const WIDGET_FILL: Color32 = Color32::from_rgba_premultiplied(12, 12, 12, 12);
 
 /// Card/widget fill hovered.
-pub const WIDGET_FILL_HOVER: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 24);
+pub const WIDGET_FILL_HOVER: Color32 = Color32::from_rgba_premultiplied(24, 24, 24, 24);
 
 /// Card/widget fill active.
-pub const WIDGET_FILL_ACTIVE: Color32 = Color32::from_rgba_premultiplied(100, 160, 255, 40);
+pub const WIDGET_FILL_ACTIVE: Color32 = Color32::from_rgba_premultiplied(16, 25, 40, 40);
 
 /// Accent colour — electric blue for highlights and active elements.
 pub const ACCENT: Color32 = Color32::from_rgb(80, 160, 255);
@@ -47,10 +47,10 @@ pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(160, 165, 180);
 pub const TEXT_DISABLED: Color32 = Color32::from_rgb(90, 95, 110);
 
 /// Glass border — very subtle light edge.
-pub const GLASS_BORDER: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 30);
+pub const GLASS_BORDER: Color32 = Color32::from_rgba_premultiplied(30, 30, 30, 30);
 
 /// Separator line colour.
-pub const SEPARATOR: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 15);
+pub const SEPARATOR: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
 
 /// Error / destructive accent.
 #[allow(dead_code)]
@@ -135,7 +135,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.widgets.active.corner_radius = BUTTON_CORNER_RADIUS;
 
     // Selection colours
-    visuals.selection.bg_fill = Color32::from_rgba_premultiplied(80, 160, 255, 60);
+    visuals.selection.bg_fill = Color32::from_rgba_premultiplied(19, 38, 60, 60);
     visuals.selection.stroke = Stroke::new(1.0, ACCENT);
 
     // Separator

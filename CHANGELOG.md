@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1] - 2026-02-26
+
+### Fixed
+- **GUI text contrast**: Switched translucent theme colors to unmultiplied alpha so glass panels render at the intended opacity, improving readability on light cards and controls.
+
 ## [0.11.0] - 2026-02-26
 
 ### Added

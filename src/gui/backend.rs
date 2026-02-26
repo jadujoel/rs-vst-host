@@ -147,8 +147,7 @@ impl HostBackend {
         self.deactivate_plugin();
 
         // 1. Load module
-        let module = Vst3Module::load(path)
-            .map_err(|e| format!("Failed to load module: {}", e))?;
+        let module = Vst3Module::load(path).map_err(|e| format!("Failed to load module: {}", e))?;
 
         // 2. Create instance
         let mut instance = module
@@ -169,8 +168,7 @@ impl HostBackend {
             .get_output_device(self.selected_audio_device.as_deref())
             .ok_or_else(|| "No audio output device available".to_string())?;
 
-        let default_config =
-            AudioDevice::default_config(&device).map_err(|e| e.to_string())?;
+        let default_config = AudioDevice::default_config(&device).map_err(|e| e.to_string())?;
 
         let config = AudioConfig {
             sample_rate: default_config.sample_rate,
@@ -394,8 +392,8 @@ impl HostBackend {
         };
 
         // Create the editor window
-        let window = EditorWindow::open(view, plugin_name)
-            .ok_or("Failed to create editor window")?;
+        let window =
+            EditorWindow::open(view, plugin_name).ok_or("Failed to create editor window")?;
 
         self.editor_windows.push(window);
         Ok(())
@@ -652,19 +650,19 @@ mod tests {
 
     #[test]
     fn test_backend_set_tempo_no_active() {
-        let mut backend = HostBackend::new();
+        let backend = HostBackend::new();
         backend.set_tempo(145.0); // Should not panic
     }
 
     #[test]
     fn test_backend_set_playing_no_active() {
-        let mut backend = HostBackend::new();
+        let backend = HostBackend::new();
         backend.set_playing(true); // Should not panic
     }
 
     #[test]
     fn test_backend_set_time_signature_no_active() {
-        let mut backend = HostBackend::new();
+        let backend = HostBackend::new();
         backend.set_time_signature(3, 8); // Should not panic
     }
 
