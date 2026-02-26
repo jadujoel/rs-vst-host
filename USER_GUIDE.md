@@ -282,6 +282,7 @@ rs-vst-host gui
 | Option | Description |
 |--------|-------------|
 | `--safe-mode` | Disable plugin editor windows (parameter-only mode) |
+| `--malloc-debug` | Enable heap integrity checking and print malloc debug instructions |
 
 This opens a window with the **Liquid Glass** themed interface containing:
 - **Plugin Browser** (left sidebar) — scan for plugins, search/filter, add to rack
@@ -643,6 +644,48 @@ Some COM objects owned by the crashed plugin are intentionally leaked to avoid f
 **After a crash**, the plugin's path is marked as *tainted*. If you try to start the same plugin again, the host will refuse with a message like "⚠ crashed during deactivation — restart the host to reuse this plugin". This prevents heap corruption that could otherwise occur when `dlopen` returns an already-mapped library with corrupted internal state. To use the plugin again, quit and relaunch the host.
 
 The deactivation cleanup itself is split into multiple isolated sandbox calls (disconnect, terminate controller, terminate component, release COM refs, release factory) so that a crash in one step does not prevent the remaining steps from being attempted.
+
+### Heap corruption diagnostics
+
+If you suspect heap corruption after a plugin crash (e.g. the host eventually exits with SIGABRT), use the `--malloc-debug` flag:
+
+```sh
+rs-vst-host gui --malloc-debug
+```
+
+This will:
+1. Print instructions for enabling macOS malloc guard environment variables
+2. Enable periodic heap integrity checking in the GUI (~every 60 frames)
+3. Show a **red warning banner** at the top of the window if corruption is detected
+
+For maximum diagnostic detail, set the recommended environment variables before launching:
+
+```sh
+export MallocGuardEdges=1
+export MallocScribble=1
+export MallocCheckHeapStart=1
+export MallocCheckHeapEach=100
+rs-vst-host gui --malloc-debug
+```
+
+#### Feature-gated profiling
+
+The project includes optional diagnostic features behind Cargo feature flags:
+
+```sh
+# Heap profiler (dhat) — outputs allocation statistics on exit
+cargo run --features debug-alloc -- gui --malloc-debug
+
+# Chrome trace export — produces a trace file viewable in chrome://tracing
+cargo run --features debug-trace -- gui
+
+# Both features together
+cargo run --features debug-tools -- gui --malloc-debug
+```
+
+#### Backtrace in crash output
+
+When a plugin crashes, the host captures a backtrace from the signal handler. The crash report in the log output includes symbolicated frames and a heap corruption indicator, helping identify the exact crash location.
 
 ### Audio glitches or dropouts
 

@@ -13,6 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Plugin crash sandbox** — Signal-handler-based crash isolation: if a plugin crashes (SIGBUS/SIGSEGV/SIGABRT), the host recovers gracefully and continues running. Crashed plugins are tainted and blocked from re-activation to prevent heap corruption on reload
+- **Debug & profiling** — Optional feature-gated diagnostics: heap integrity checks (`malloc_zone_check`), backtrace capture in signal handler, dhat heap profiler, Chrome trace export, `--malloc-debug` CLI flag
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 
@@ -58,7 +59,7 @@ cargo run -- gui
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
 | `midi-ports` | List available MIDI input ports |
-| `gui [--safe-mode]` | Launch the graphical user interface |
+| `gui [--safe-mode] [--malloc-debug]` | Launch the graphical user interface |
 
 ### `run` Options
 
@@ -75,8 +76,9 @@ cargo run -- gui
 
 ```
 src/
-├── main.rs          # Entry point, CLI dispatch
+├── main.rs          # Entry point, CLI dispatch, tracing init
 ├── error.rs         # Error types (HostError, Vst3Error, AudioError, MidiError)
+├── diagnostics.rs   # Heap integrity checks, malloc env detection, dhat profiler (feature-gated)
 ├── app/
 │   ├── cli.rs       # CLI argument definitions (clap derive)
 │   ├── commands.rs  # Command implementations
@@ -159,7 +161,10 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 | `tracing` | Structured logging |
 | `dirs` 6 | Platform-specific directories |
 | `libc` 0.2 | Low-level signal handling for plugin sandbox |
+| `backtrace` 0.3 | Backtrace capture for crash diagnostics |
 | `eframe` / `egui` 0.31 | Graphical user interface |
+| `dhat` 0.3 | Heap profiler (optional, `debug-alloc` feature) |
+| `tracing-chrome` 0.7 | Chrome trace export (optional, `debug-trace` feature) |
 
 ## Testing
 
@@ -167,9 +172,54 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-407 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload), and concurrency.
+437 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), and concurrency. 438 tests with `--features debug-tools`.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
+
+## Debugging
+
+The project includes optional diagnostic features for investigating heap corruption and performance issues, gated behind Cargo feature flags (zero-cost when disabled).
+
+### Feature Flags
+
+| Flag | Description |
+|------|-------------|
+| `debug-alloc` | Enable `dhat` heap profiler as global allocator |
+| `debug-trace` | Enable Chrome trace export via `tracing-chrome` |
+| `debug-tools` | Enable both `debug-alloc` and `debug-trace` |
+
+```sh
+# Build with all debug features
+cargo build --features debug-tools
+
+# Run with heap profiler
+cargo run --features debug-alloc -- gui
+
+# Run with Chrome trace export
+cargo run --features debug-trace -- gui
+# → produces a trace file viewable in chrome://tracing
+```
+
+### Heap Integrity Checks
+
+On macOS, the host calls `malloc_zone_check(NULL)` at key points to detect heap corruption:
+- After sandbox crash recovery (in the signal handler recovery path)
+- During `Vst3Instance::Drop` after a crash
+- Periodically in the GUI update loop (when `--malloc-debug` is active)
+
+### `--malloc-debug` Flag
+
+Launch the GUI with `--malloc-debug` to enable enhanced heap diagnostics:
+
+```sh
+cargo run -- gui --malloc-debug
+```
+
+This prints instructions for setting macOS malloc environment variables (`MallocGuardEdges`, `MallocScribble`, `MallocCheckHeapStart`, etc.) and enables periodic heap integrity checking in the GUI. If corruption is detected, a red warning banner appears at the top of the window.
+
+### Backtrace Capture
+
+When a plugin crashes inside the sandbox, the signal handler captures a backtrace (up to 64 frames) using the signal-safe `backtrace()` function before performing `siglongjmp`. The frames are symbolicated after recovery and included in the `PluginCrash` diagnostic output.
 
 ## Documentation
 
@@ -178,6 +228,7 @@ See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analys
 - [STATUS.md](STATUS.md) — Current project status and progress
 - [CHANGELOG.md](CHANGELOG.md) — Version history
 - [CODE_COVERAGE.md](CODE_COVERAGE.md) — Test coverage analysis by module
+- [DEBUGGING.md](DEBUGGING.md) — Debug and profiling infrastructure plan
 - [PRD.md](PRD.md) — Product requirements for the GUI application
 - [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
 

@@ -17,6 +17,9 @@ All notable changes to this project will be documented in this file.
   9. **Heap corruption GUI warning** (`app.rs`): Red banner at top of window when `malloc_zone_check` detects corruption. `HostBackend` propagates heap corruption status from `DEACTIVATION_HEAP_CORRUPTED` thread-local.
 - 22 new unit tests (415 → 437 total): diagnostics module (7), sandbox backtrace/heap (7), CLI malloc-debug (2), GUI app heap checks (4), backend heap corruption (3). 438 tests with `--features debug-tools`.
 
+### Validated
+- **Full diagnostic profiling session**: Ran GUI with `--features debug-tools`, `--malloc-debug`, and macOS malloc debug env vars (`MallocGuardEdges=1 MallocScribble=1 MallocErrorAbort=1`). Chrome trace captured 78s of execution (4.8 MB). dhat heap profile written on exit. Observed: 1 SIGABRT in `release_controller` (FabFilter Pro-Q 4), heap integrity check passed post-crash, plugin correctly tainted, re-activation blocked. Host stable throughout.
+
 ## [0.13.2] - 2026-02-26
 
 ### Fixed

@@ -3,3 +3,5 @@
 report.txt
 log.txt
 log.ansi
+*trace-*.json
+dhat-heap.json
