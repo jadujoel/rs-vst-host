@@ -388,6 +388,7 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 
 - [PRD.md](PRD.md) — Product requirements for the GUI application
 - [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
+- [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) — Guide to Miri-based dynamic analysis of unsafe code
 
 ---
 
@@ -640,6 +641,8 @@ The host includes a crash sandbox that protects against buggy plugins. If a plug
 - In the **CLI**: The host logs a warning and continues running.
 
 Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The plugin's dynamic library is also kept loaded in memory to prevent C++ static destructors from running on corrupted state. Host-owned objects (`HostApplication`, `HostComponentHandler`) that the leaked plugin COM objects may still reference are also intentionally leaked to prevent use-after-free. The operating system reclaims all memory when the process exits.
+
+> **Note (v0.17.0)**: Plugin-facing COM objects are now allocated on the **system** malloc heap (via `libc::malloc`, bypassing mimalloc). This means even if a plugin incorrectly calls `free()` on a host object instead of using COM `Release()`, the pointer is recognised by macOS system malloc and the process does not abort. Additionally, host object destruction is sandboxed — if a deferred plugin callback fires during cleanup, the crash is caught rather than terminating the host.
 
 **After a crash**, the plugin's path is marked as *tainted*. If you try to start the same plugin again, the host will refuse with a message like "⚠ crashed during deactivation — restart the host to reuse this plugin". This prevents heap corruption that could otherwise occur when `dlopen` returns an already-mapped library with corrupted internal state. To use the plugin again, quit and relaunch the host.
 

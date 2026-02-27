@@ -382,10 +382,18 @@ impl Drop for Vst3Module {
             );
         }
 
-        // Destroy host context (safe — our own code)
-        unsafe {
-            crate::vst3::host_context::HostApplication::destroy(self.host_context);
-        }
+        // Destroy host context (safe — our own code, but sandboxed for
+        // defense-in-depth in case a plugin callback fires during this)
+        let host_ctx = self.host_context;
+        let _ = crate::vst3::sandbox::sandbox_call("module_destroy_host_context", move || unsafe {
+            crate::vst3::host_context::HostApplication::destroy(host_ctx);
+        });
+
+        // Defensive delay before library unload: allow deferred plugin work
+        // (background threads, dispatch queues, C++ static cleanup) to settle.
+        // This is a pragmatic workaround for plugins that dispatch cleanup
+        // work asynchronously. The proper fix is process isolation (v0.16.0).
+        std::thread::sleep(std::time::Duration::from_millis(50));
 
         // Platform-specific module exit (sandboxed — plugin code)
         #[cfg(target_os = "macos")]

@@ -184,11 +184,21 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 
 ## Testing
 
+Run the full test suite (unit tests + clippy + Miri):
+
 ```sh
-cargo test
+bash test.bash
 ```
 
-498 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), and concurrency. 499 tests with `--features debug-tools`.
+Or run just the standard unit tests:
+
+```sh
+cargo test --lib
+```
+
+533 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), and concurrency. 534 tests with `--features debug-tools`.
+
+109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. See [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) for the full guide.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
@@ -199,6 +209,8 @@ The project includes optional diagnostic features for investigating heap corrupt
 ### Heap Isolation (mimalloc)
 
 By default, all Rust allocations use **mimalloc** instead of the system allocator. Since VST3 plugins are loaded C++ code that uses system malloc directly, this isolates the host's heap from plugin-induced corruption. If a buggy plugin corrupts the system malloc heap, our Rust data structures remain intact.
+
+Plugin-facing COM objects (`HostApplication`, `HostComponentHandler`, `HostPlugFrame`) are allocated on the **system** malloc heap via `libc::malloc` (see `host_alloc.rs`). This ensures that even if a plugin incorrectly calls `free()` on a host object instead of using COM `Release()`, the pointer is recognised by macOS system malloc and the process does not abort.
 
 The `debug-alloc` feature overrides mimalloc with `dhat` for heap profiling.
 
@@ -250,6 +262,7 @@ When a plugin crashes inside the sandbox, the signal handler captures a backtrac
 - [STATUS.md](STATUS.md) — Current project status and progress
 - [CHANGELOG.md](CHANGELOG.md) — Version history
 - [CODE_COVERAGE.md](CODE_COVERAGE.md) — Test coverage analysis by module
+- [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) — Guide to Miri-based dynamic analysis of unsafe code
 - [DEBUGGING.md](DEBUGGING.md) — Debug and profiling infrastructure plan
 - [PRD.md](PRD.md) — Product requirements for the GUI application
 - [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing

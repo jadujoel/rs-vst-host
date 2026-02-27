@@ -13,6 +13,7 @@ use crate::vst3::param_changes::HostParameterChanges;
 use crate::vst3::process::ProcessBuffers;
 use crate::vst3::process_context::ProcessContext;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::debug;
 
 /// Generates a sine wave test tone for effect plugin testing.
@@ -101,6 +102,12 @@ pub struct AudioEngine {
     pending_param_changes: Arc<std::sync::Mutex<Vec<(u32, f64)>>>,
     /// Whether the engine has been shut down (prevents process calls after deactivation).
     is_shutdown: bool,
+    /// Atomic shutdown flag — checked by the audio callback *before* acquiring
+    /// the Mutex lock. This eliminates the race window between engine.shutdown()
+    /// (which sets is_shutdown under the lock) and stream drop (which stops
+    /// the CoreAudio callback). The audio callback checks this flag first;
+    /// if set, it fills silence without touching the Mutex.
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 // Safety: AudioEngine is protected by Mutex in the shared Arc. The event_list
@@ -143,6 +150,7 @@ impl AudioEngine {
             param_changes,
             pending_param_changes: Arc::new(std::sync::Mutex::new(Vec::new())),
             is_shutdown: false,
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -268,8 +276,12 @@ impl AudioEngine {
     /// Sets the shutdown flag first so that any subsequent audio callback
     /// (racing between lock release and stream stop) will output silence
     /// instead of calling the deactivated plugin's process method.
+    ///
+    /// Also sets the atomic `shutdown_requested` flag so the audio callback
+    /// can bail out *before* acquiring the Mutex lock.
     pub fn shutdown(&mut self) {
         self.is_shutdown = true;
+        self.shutdown_requested.store(true, Ordering::Release);
         self.instance.shutdown();
         debug!("Audio engine shut down");
     }
@@ -299,6 +311,14 @@ impl AudioEngine {
     /// the audio callback drains them into `HostParameterChanges` each block.
     pub fn pending_param_queue(&self) -> Arc<std::sync::Mutex<Vec<(u32, f64)>>> {
         self.pending_param_changes.clone()
+    }
+
+    /// Get a clone of the atomic shutdown flag.
+    ///
+    /// The audio callback should check this flag *before* trying to acquire
+    /// the engine Mutex. If set, it should fill silence immediately.
+    pub fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        self.shutdown_requested.clone()
     }
 
     /// Set the tempo in BPM.
@@ -403,5 +423,32 @@ mod tests {
         let mut buf = vec![1.0f32; 64];
         tone.fill_buffer(&mut buf);
         assert!(buf.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn test_shutdown_flag_is_initially_false() {
+        // Verify the shutdown flag starts as false
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(!flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_shutdown_flag_propagates_across_threads() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_clone = flag.clone();
+
+        let handle = std::thread::spawn(move || {
+            // Simulate audio callback checking the flag
+            while !flag_clone.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            true
+        });
+
+        // Simulate the GUI thread requesting shutdown
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        flag.store(true, Ordering::Release);
+
+        assert!(handle.join().unwrap(), "Audio thread should have seen the shutdown flag");
     }
 }

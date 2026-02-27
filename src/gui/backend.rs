@@ -368,14 +368,25 @@ impl HostBackend {
 
         // 10. Capture state handles
         let param_queue = engine.pending_param_queue();
+        let shutdown_flag = engine.shutdown_flag();
         let engine = Arc::new(Mutex::new(engine));
 
         // 11. Build audio stream
+        //     The callback checks the atomic shutdown_flag BEFORE trying to
+        //     acquire the Mutex. This eliminates the race window between
+        //     engine.shutdown() and stream drop.
         let engine_cb = engine.clone();
         let stream = AudioDevice::build_output_stream(
             &device,
             &config,
             move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+                // Fast-path: if shutdown has been requested, fill silence
+                // without touching the Mutex. This prevents the audio callback
+                // from holding the lock during stream teardown.
+                if shutdown_flag.load(std::sync::atomic::Ordering::Acquire) {
+                    data.fill(0.0);
+                    return;
+                }
                 if let Ok(mut eng) = engine_cb.try_lock() {
                     eng.process(data);
                 } else {
@@ -587,18 +598,22 @@ impl HostBackend {
             DEACTIVATION_CRASHED.with(|c| c.set(false));
             DEACTIVATION_HEAP_CORRUPTED.with(|c| c.set(false));
 
-            // 1. Shut down the engine while holding the lock. This sets
-            //    the is_shutdown flag so the audio callback will output
-            //    silence if it races between our unlock and stream drop.
+            // 1. Stop the audio stream FIRST — no more callbacks after this.
+            //    On macOS, AudioOutputUnitStop drains any in-flight callback.
+            //    This drops the callback closure’s Arc<Mutex<AudioEngine>>
+            //    clone, but the engine stays alive through `active.engine`.
+            active._stream.take();
+
+            // 2. Brief sleep to allow any in-flight CoreAudio callback to
+            //    fully return after stream stop. Defense-in-depth —
+            //    AudioOutputUnitStop should handle this, but some drivers
+            //    have sloppy drain semantics.
+            std::thread::sleep(std::time::Duration::from_millis(10));
+
+            // 3. Now shut down the engine — no audio thread can access it.
             if let Ok(mut eng) = active.engine.lock() {
                 eng.shutdown();
             }
-
-            // 2. Drop the stream explicitly BEFORE dropping the rest.
-            //    This stops CoreAudio's render callback and drops the
-            //    callback closure's Arc clone, potentially destroying
-            //    the AudioEngine (and thus the Vst3Instance + COM refs).
-            active._stream.take();
 
             // 3. Now `active` is dropped (via the custom Drop impl),
             //    which releases params, midi, engine Arc, and finally

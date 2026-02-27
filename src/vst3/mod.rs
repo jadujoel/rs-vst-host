@@ -4,6 +4,7 @@ pub mod cf_bundle;
 pub mod com;
 pub mod component_handler;
 pub mod event_list;
+pub mod host_alloc;
 pub mod host_context;
 pub mod instance;
 pub mod module;

@@ -4,6 +4,7 @@
 //! We implement the bare minimum: host name query and stub `createInstance`.
 
 use crate::vst3::com::{FUNKNOWN_IID, IHOST_APPLICATION_IID, K_NOT_IMPLEMENTED, K_RESULT_OK};
+use crate::vst3::host_alloc;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -56,16 +57,22 @@ pub struct HostApplication {
 }
 
 impl HostApplication {
-    /// Create a new host application instance on the heap.
+    /// Create a new host application instance on the **system** malloc heap.
     ///
     /// Returns a raw pointer suitable for passing to VST3 plugin `initialize()`.
     /// The caller is responsible for eventually calling `destroy()`.
+    ///
+    /// Uses the system allocator (bypassing mimalloc) so that if a plugin
+    /// incorrectly calls `free()` / `operator delete` on this pointer
+    /// (instead of COM `Release()`), the pointer is recognised by macOS
+    /// system malloc and the process does not abort.
     pub fn new() -> *mut Self {
-        let obj = Box::new(Self {
-            vtbl: &HOST_APP_VTBL,
-            ref_count: AtomicU32::new(1),
-        });
-        Box::into_raw(obj)
+        unsafe {
+            host_alloc::system_alloc(Self {
+                vtbl: &HOST_APP_VTBL,
+                ref_count: AtomicU32::new(1),
+            })
+        }
     }
 
     /// Destroy a host application instance previously created with `new()`.
@@ -74,9 +81,7 @@ impl HostApplication {
     /// The pointer must have been returned by `HostApplication::new()` and
     /// must not be used after this call.
     pub unsafe fn destroy(ptr: *mut Self) {
-        if !ptr.is_null() {
-            unsafe { drop(Box::from_raw(ptr)) };
-        }
+        unsafe { host_alloc::system_free(ptr) };
     }
 
     /// Get a raw pointer suitable for passing as FUnknown* to plugins.
@@ -204,11 +209,7 @@ mod tests {
         let host = HostApplication::new();
         unsafe {
             let mut obj: *mut c_void = std::ptr::null_mut();
-            let result = host_query_interface(
-                host as *mut c_void,
-                FUNKNOWN_IID.as_ptr(),
-                &mut obj,
-            );
+            let result = host_query_interface(host as *mut c_void, FUNKNOWN_IID.as_ptr(), &mut obj);
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(obj, host as *mut c_void);
 
@@ -258,11 +259,7 @@ mod tests {
             let mut obj: *mut c_void = std::ptr::null_mut();
             // Use a random IID that shouldn't be supported
             let random_iid: [u8; 16] = [0xFF; 16];
-            let result = host_query_interface(
-                host as *mut c_void,
-                random_iid.as_ptr(),
-                &mut obj,
-            );
+            let result = host_query_interface(host as *mut c_void, random_iid.as_ptr(), &mut obj);
             assert_eq!(result, K_NOT_IMPLEMENTED);
             assert!(obj.is_null());
 
@@ -318,11 +315,7 @@ mod tests {
         unsafe {
             // Null iid
             let mut obj: *mut c_void = std::ptr::null_mut();
-            let result = host_query_interface(
-                host as *mut c_void,
-                std::ptr::null(),
-                &mut obj,
-            );
+            let result = host_query_interface(host as *mut c_void, std::ptr::null(), &mut obj);
             assert_eq!(result, K_NOT_IMPLEMENTED);
 
             // Null obj
@@ -335,5 +328,15 @@ mod tests {
 
             HostApplication::destroy(host);
         }
+    }
+
+    /// Verify HostApplication is allocated on the system malloc heap.
+    /// On macOS with mimalloc as global allocator, this confirms the
+    /// host_alloc::system_alloc path is being used.
+    #[test]
+    fn test_host_application_on_system_heap() {
+        let host = HostApplication::new();
+        assert!(host_alloc::is_system_malloc_ptr(host));
+        unsafe { HostApplication::destroy(host) };
     }
 }

@@ -1,14 +1,15 @@
 # Code Coverage Report
 
-Last updated: 2026-02-27 (v0.16.0 — process-per-plugin sandboxing).
+Last updated: 2026-02-27 (v0.17.0 — memory safety hardening).
 
 ## Summary
 
-- **Total tests:** 498 (499 with `--features debug-tools`)
+- **Total tests:** 533 (534 with `--features debug-tools`)
 - **All passing:** ✅
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-27 (498 tests, 0 errors)
+- **Last test run:** 2026-02-27 (533 tests, 0 errors)
+- **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Stacked Borrows
 
 ## Test Coverage by Module
 
@@ -23,8 +24,8 @@ Last updated: 2026-02-27 (v0.16.0 — process-per-plugin sandboxing).
 | `src/vst3/event_list.rs` | 14 | ✅ Full | COM vtable, add/get/clear, overflow (MAX_EVENTS_PER_BLOCK), null pointers, QI |
 | `src/app/cli.rs` | 16 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, required/optional args, invalid input rejection |
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
-| `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
-| `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
+| `src/vst3/host_context.rs` | 13 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety, system heap verification |\n| `src/vst3/host_alloc.rs` | 8 | ✅ Full | system_alloc/system_free lifecycle, null safety, system malloc zone verification (macOS), drop semantics, alignment, stress test (100 allocs), Box-is-not-system-zone (mimalloc validation) |
+| `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
 | `src/gui/app.rs` | 60 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
 | `src/gui/backend.rs` | 41 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none; activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
@@ -34,8 +35,9 @@ Last updated: 2026-02-27 (v0.16.0 — process-per-plugin sandboxing).
 | `src/ipc/proxy.rs` | 6 | ⚠️ Partial | TransportState default, read_output_interleaved (no shm), process silence (shutdown), pending_param_queue, dummy process construction; spawn() requires child process + real plugins |
 | `src/vst3/sandbox.rs` | 28 | ✅ Full | SandboxResult methods (is_ok, is_crashed, is_panicked, ok, unwrap), PluginCrash Display and Error (incl. backtrace/heap_corrupted fields), signal name lookup, panic message extraction (str, String, other), normal/unit/side-effect calls, panic recovery, nested calls, nested inner panic, signal recovery (SIGBUS, SIGSEGV, SIGABRT via raise()), crash-then-normal recovery cycle, handler refcount cleanup, backtrace capture/symbolication, heap integrity check, crash display with frames |
 | `src/diagnostics.rs` | 9 | ✅ Full | heap_check returns bool, check_malloc_env detection, recommended_env_vars non-empty, print_malloc_debug_instructions output, init_profiler/shutdown_profiler (feature-gated), malloc env not set by default, active_allocator_name, global allocator smoke test |
-| `src/vst3/plug_frame.rs` | 12 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view, release-does-not-self-destruct regression, editor close lifecycle regression |
+| `src/vst3/plug_frame.rs` | 13 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view, release-does-not-self-destruct regression, editor close lifecycle regression, system heap verification |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
+| `src/miri_tests.rs` | 21 | ✅ Full | Miri-targeted: COM vtable lifecycle, event byte roundtrip, ProcessBuffers pointer chain, MIDI→ProcessData integration, `Send` safety, lifecycle stress |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
@@ -43,14 +45,14 @@ Last updated: 2026-02-27 (v0.16.0 — process-per-plugin sandboxing).
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
 | `src/vst3/instance.rs` | 21 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED), DEACTIVATION_HEAP_CORRUPTED flag, host object leak on crash (prevents use-after-free), host object destroy on clean shutdown, crash flags set together on COM crash; create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
-| `src/audio/engine.rs` | 6 | ⚠️ Partial | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled); AudioEngine requires live Vst3Instance |
+| `src/audio/engine.rs` | 8 | ⚠️ Partial | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); AudioEngine requires live Vst3Instance |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 
 ## Coverage Analysis
 
-### Fully Tested (✅) — 22 modules
+### Fully Tested (✅) — 23 modules
 All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
 ### Partially Tested (⚠️) — 12 modules
@@ -72,6 +74,16 @@ Based on module-level analysis:
 - **Pure logic modules:** ~95% line coverage (all testable paths exercised)
 - **Hardware-dependent modules:** ~40-60% (utility functions tested, I/O paths require integration testing)
 - **Overall estimated:** ~80-85% of testable code
+
+## v0.17.1 Test Additions (Miri Dynamic Analysis)
+
+21 new tests added (512 → 533 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| Miri tests | 21 | COM vtable lifecycle (event list, param changes), event byte roundtrip (NoteOn/NoteOff), uninitialized memory check, extreme values, capacity stress (512 events), ProcessBuffers pointer chain, prepare stability, interleave roundtrip, zero/asymmetric channels, ProcessContext in ProcessData, MIDI→ProcessData integration, full mock process call, `Send` across threads, COM lifecycle stress (50 cycles), event clone, null destroy safety |
+
+**Miri coverage:** 109 tests (from 7 modules) pass under `MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --lib`. See `DYNAMIC_ANALYSIS.md` for details.
 
 ## Phase 6 Test Additions (v0.5.0)
 

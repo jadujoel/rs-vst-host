@@ -5,6 +5,7 @@
 //! GUI can apply it on the next frame.
 
 use crate::vst3::com::{FUNKNOWN_IID, IPLUG_FRAME_IID, IPlugFrameVtbl, ViewRect};
+use crate::vst3::host_alloc;
 use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -45,16 +46,21 @@ static HOST_PLUG_FRAME_VTBL: IPlugFrameVtbl = IPlugFrameVtbl {
 };
 
 impl HostPlugFrame {
-    /// Create a new HostPlugFrame on the heap.
+    /// Create a new HostPlugFrame on the **system** malloc heap.
     ///
     /// Returns a raw pointer. The caller must eventually call `destroy()`.
+    ///
+    /// Uses the system allocator (bypassing mimalloc) so that if a plugin
+    /// incorrectly calls `free()` on this COM object, the pointer is
+    /// recognised by macOS system malloc.
     pub fn new() -> *mut Self {
-        let frame = Box::new(HostPlugFrame {
-            vtbl: &HOST_PLUG_FRAME_VTBL,
-            ref_count: AtomicU32::new(1),
-            pending_resize: Mutex::new(None),
-        });
-        Box::into_raw(frame)
+        unsafe {
+            host_alloc::system_alloc(HostPlugFrame {
+                vtbl: &HOST_PLUG_FRAME_VTBL,
+                ref_count: AtomicU32::new(1),
+                pending_resize: Mutex::new(None),
+            })
+        }
     }
 
     /// Get the COM pointer suitable for passing to `IPlugView::setFrame()`.
@@ -82,11 +88,7 @@ impl HostPlugFrame {
 
     /// Destroy a previously created HostPlugFrame.
     pub unsafe fn destroy(frame: *mut Self) {
-        unsafe {
-            if !frame.is_null() {
-                drop(Box::from_raw(frame));
-            }
-        }
+        unsafe { host_alloc::system_free(frame) };
     }
 }
 
@@ -410,5 +412,13 @@ mod tests {
             // Host safely destroys the frame
             HostPlugFrame::destroy(frame);
         }
+    }
+
+    /// Verify HostPlugFrame is allocated on the system malloc heap.
+    #[test]
+    fn test_plug_frame_on_system_heap() {
+        let frame = HostPlugFrame::new();
+        assert!(crate::vst3::host_alloc::is_system_malloc_ptr(frame));
+        unsafe { HostPlugFrame::destroy(frame) };
     }
 }

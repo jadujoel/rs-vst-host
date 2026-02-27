@@ -299,6 +299,7 @@ pub fn run(
 
     // Capture state for interactive mode before wrapping engine
     let param_queue = engine.pending_param_queue();
+    let shutdown_flag = engine.shutdown_flag();
     let component_handler = instance_component_handler;
 
     let engine = Arc::new(Mutex::new(engine));
@@ -317,6 +318,11 @@ pub fn run(
         &device,
         &config,
         move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+            // Check atomic shutdown flag before acquiring the Mutex
+            if shutdown_flag.load(Ordering::Acquire) {
+                data.fill(0.0);
+                return;
+            }
             if let Ok(mut eng) = engine_cb.try_lock() {
                 eng.process(data);
             } else {

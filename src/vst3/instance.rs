@@ -1162,14 +1162,27 @@ impl Drop for Vst3Instance {
                  leaked COM objects may still reference them"
             );
         } else {
-            unsafe {
-                if !self.controller_host_context.is_null() {
-                    HostApplication::destroy(self.controller_host_context);
-                }
-                HostApplication::destroy(self.host_context);
-                if !self.component_handler.is_null() {
-                    HostComponentHandler::destroy(self.component_handler);
-                }
+            // Wrap host object destruction in sandbox calls as defense-in-depth.
+            // If a plugin has deferred callbacks or background threads that
+            // reference these objects, destroying them could trigger a
+            // use-after-free in plugin code. The sandbox catches the crash.
+            let controller_host_ctx = self.controller_host_context;
+            if !controller_host_ctx.is_null() {
+                let _ = sandbox_call("destroy_controller_host_context", move || unsafe {
+                    HostApplication::destroy(controller_host_ctx);
+                });
+            }
+
+            let host_ctx = self.host_context;
+            let _ = sandbox_call("destroy_host_context", move || unsafe {
+                HostApplication::destroy(host_ctx);
+            });
+
+            let handler = self.component_handler;
+            if !handler.is_null() {
+                let _ = sandbox_call("destroy_component_handler", move || unsafe {
+                    HostComponentHandler::destroy(handler);
+                });
             }
         }
 
