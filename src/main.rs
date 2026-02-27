@@ -4,8 +4,9 @@ pub mod diagnostics;
 mod error;
 mod gui;
 mod host;
+pub mod ipc;
 mod midi;
-mod vst3;
+pub mod vst3;
 
 use app::cli::{Cli, Command};
 use clap::Parser;
@@ -75,6 +76,9 @@ fn main() -> anyhow::Result<()> {
                 diagnostics::print_malloc_debug_instructions();
             }
             gui::launch(safe_mode, malloc_debug)?;
+        }
+        Command::Worker { socket } => {
+            ipc::worker::run_worker(&socket).map_err(|e| anyhow::anyhow!(e))?;
         }
     }
 

@@ -64,6 +64,13 @@ pub enum Command {
         #[arg(long)]
         malloc_debug: bool,
     },
+    /// Internal: run as a plugin worker process (used by process-per-plugin sandboxing).
+    #[command(hide = true)]
+    Worker {
+        /// Path to the Unix domain socket for IPC with the host.
+        #[arg(long)]
+        socket: String,
+    },
 }
 
 #[cfg(test)]

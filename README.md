@@ -13,6 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **MIDI devices** — Enumerate and select MIDI input ports
 - **Test tone** — Built-in 440 Hz sine wave generator for testing effect plugins
 - **Plugin crash sandbox** — Signal-handler-based crash isolation: if a plugin crashes (SIGBUS/SIGSEGV/SIGABRT), the host recovers gracefully and continues running. Crashed plugins are tainted and blocked from re-activation to prevent heap corruption on reload
+- **Process-per-plugin sandboxing** — Optional process isolation mode where each plugin runs in its own child process with POSIX shared memory for audio and Unix sockets for control IPC. A crashed plugin only kills its child process — the host is completely unaffected (like Bitwig Studio)
 - **Debug & profiling** — Optional feature-gated diagnostics: heap integrity checks (`malloc_zone_check`), backtrace capture in signal handler, dhat heap profiler, Chrome trace export, `--malloc-debug` CLI flag
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
@@ -88,12 +89,17 @@ src/
 │   └── engine.rs    # Audio processing engine, test tone generator
 ├── gui/
 │   ├── app.rs       # HostApp eframe::App — plugin browser, rack, transport, parameter view, editor buttons
-│   ├── backend.rs   # Host backend — bridges GUI with audio engine, MIDI, and plugin editors
+│   ├── backend.rs   # Host backend — bridges GUI with audio engine, MIDI, and plugin editors (supports in-process and sandboxed modes)
 │   ├── editor.rs    # Native OS window management for VST3 plugin editor views (macOS NSWindow)
 │   ├── session.rs   # Session save/load — serialize/restore host state as JSON
 │   └── theme.rs     # Liquid Glass theme — colours, corner radii, shadows, styling
 ├── host/
 │   └── mod.rs       # Host-side abstractions
+├── ipc/
+│   ├── messages.rs  # IPC protocol — serializable host↔worker message types, wire encoding
+│   ├── shm.rs       # POSIX shared memory for zero-copy audio buffer exchange
+│   ├── worker.rs    # Child process entry point — loads and runs a single VST3 plugin
+│   └── proxy.rs     # Host-side proxy — spawns child process, manages IPC communication
 ├── midi/
 │   ├── device.rs    # MIDI device enumeration and input via midir
 │   └── translate.rs # MIDI to VST3 event translation
@@ -122,6 +128,8 @@ This project uses **manual COM FFI** rather than the `vst3-sys` crate. All VST3 
 
 ### Audio Pipeline
 
+**In-process mode** (default):
+
 1. `cpal` opens an output stream on the selected device
 2. The audio callback locks the shared `AudioEngine`
 3. Input buffers are filled (test tone or silence)
@@ -129,6 +137,14 @@ This project uses **manual COM FFI** rather than the `vst3-sys` crate. All VST3 
 5. Interleaved samples are deinterleaved into per-channel VST3 buffers
 6. The VST3 plugin's `process()` is called with audio buffers and event list
 7. Output is interleaved back for `cpal`
+
+**Sandboxed mode** (`process_isolation = true`):
+
+1. `cpal` opens an output stream on the selected device
+2. The audio callback locks the shared `PluginProcess` proxy
+3. The proxy sends a `Process` message over the Unix socket (with MIDI events, parameter changes, transport state)
+4. The child process receives the message, calls the VST3 plugin's `process()`, writes output to shared memory
+5. The proxy reads output from shared memory and interleaves it back for `cpal`
 
 ## Plugin Search Paths
 
@@ -172,7 +188,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 cargo test
 ```
 
-441 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), and concurrency. 442 tests with `--features debug-tools`.
+498 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), and concurrency. 499 tests with `--features debug-tools`.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 

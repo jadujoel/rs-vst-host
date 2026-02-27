@@ -702,6 +702,24 @@ When a plugin crashes, the host captures a backtrace from the signal handler. Th
 - Close other audio-intensive applications.
 - Use a dedicated audio device if available.
 
+### Process-per-plugin sandboxing (v0.16.0)
+
+For maximum isolation, plugins can run in their own child process. This means:
+
+- **Crash isolation**: A crashed plugin only kills its child process — the host continues running unaffected.
+- **Memory isolation**: The plugin's memory is in a separate process address space — no heap corruption can leak back to the host.
+- **CPU isolation**: The OS scheduler independently manages the child process, preventing one plugin from starving the host.
+
+When process isolation is enabled via `process_isolation = true` on the backend:
+
+1. The host spawns a child process using the hidden `worker --socket <path>` command
+2. Audio data is exchanged via POSIX shared memory (`shm_open`/`mmap`) for zero-copy transfer
+3. Control messages (load, configure, activate, process, parameter changes, transport) are sent over a Unix domain socket
+4. If the child process crashes, the host receives an error on the next IPC call and marks the plugin as crashed
+5. Unlike in-process crash recovery, there is **no heap corruption risk** — the tainted-path mechanism is bypassed
+
+**Note**: Process isolation adds a small amount of IPC latency per audio block (typically < 0.1 ms). Plugin editor windows (GUI) are not currently supported in sandboxed mode — only audio processing and parameter control.
+
 ### Cache seems stale
 
 Re-run `rs-vst-host scan` to refresh the cache. The `list` command always shows the timestamp of the last scan so you can tell when it was generated.

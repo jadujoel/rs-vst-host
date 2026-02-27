@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0] - 2026-02-27
+
+### Added
+- **Process-per-plugin sandboxing** (`ipc/` module): Each plugin can now run in its own child process with full crash and memory isolation. This is the gold standard approach used by DAWs like Bitwig Studio. Audio buffers are exchanged via POSIX shared memory (`shm_open`/`mmap`) for zero-copy transfer, and control messages are sent over Unix domain sockets with a JSON + length-prefix wire protocol.
+  - `ipc/messages.rs`: IPC protocol definitions with 12 host message types and 15 worker response types, including `Process`, `LoadPlugin`, `Configure`, `Activate`, `SetParameter`, `QueryParameters`, etc. Wire protocol uses 4-byte LE length prefix with 16 MB max message size.
+  - `ipc/shm.rs`: POSIX shared memory management — `ShmAudioBuffer` with 64-byte header (ready flag, sample count, channel counts), per-channel audio buffers for input and output, memory-fence signaling.
+  - `ipc/worker.rs`: Child process entry point — loads VST3 plugin via `Vst3Module`/`Vst3Instance`, handles full plugin lifecycle (load → configure → activate → process → deactivate → shutdown), sandbox-wrapped `process()` calls with crash reporting.
+  - `ipc/proxy.rs`: Host-side proxy — `PluginProcess::spawn()` creates Unix socket, spawns child via `worker --socket <path>`, handshake with LoadPlugin → Configure → Activate, process() sends audio via shared memory. Includes graceful shutdown with SIGKILL timeout.
+- **`process_isolation` flag on `HostBackend`**: When set to `true`, `activate_plugin()` spawns the plugin in a child process instead of loading it in-process. All backend methods (`set_parameter`, `set_tempo`, `is_crashed`, etc.) transparently handle both modes.
+- **Hidden `worker` CLI subcommand**: Internal-only subcommand used by child processes — `worker --socket <path>`. Hidden from `--help`.
+- **Backend sandboxed state** (`gui/backend.rs`): `SandboxedState` struct manages the `PluginProcess` proxy, audio stream, parameter queue, and MIDI connection for process-isolated plugins.
+- 53 new unit tests (445 → 498 total): 18 in `ipc/messages.rs` (serialization roundtrip, encode/decode, oversized message), 12 in `ipc/shm.rs` (create/open, channels, read/write, header, cleanup), 12 in `ipc/worker.rs` (state management, all message handlers without real plugins), 6 in `ipc/proxy.rs` (transport state, read output, process silence, dummy process), 5 in `gui/backend.rs` (process_isolation flag, sandboxed state, tainted path bypass).
+
 ## [0.15.0] - 2026-02-26
 
 ### Added

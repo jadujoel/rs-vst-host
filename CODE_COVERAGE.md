@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-26 (v0.15.0 — mimalloc heap isolation).
+Last updated: 2026-02-27 (v0.16.0 — process-per-plugin sandboxing).
 
 ## Summary
 
-- **Total tests:** 445 (446 with `--features debug-tools`)
+- **Total tests:** 498 (499 with `--features debug-tools`)
 - **All passing:** ✅
-- **Build warnings:** 0
+- **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-26 (445 tests, 0 warnings; 446 with debug-tools)
+- **Last test run:** 2026-02-27 (498 tests, 0 errors)
 
 ## Test Coverage by Module
 
@@ -26,8 +26,12 @@ Last updated: 2026-02-26 (v0.15.0 — mimalloc heap isolation).
 | `src/vst3/host_context.rs` | 12 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety |
 | `src/vst3/component_handler.rs` | 12 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy |
 | `src/gui/app.rs` | 60 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
-| `src/gui/backend.rs` | 36 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag (default false, set on deactivation crash, propagated from thread-local); activation requires real .vst3 plugins |
+| `src/gui/backend.rs` | 41 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none; activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
+| `src/ipc/messages.rs` | 18 | ✅ Full | Serialization roundtrip (all HostMessage/WorkerResponse variants), encode/decode wire protocol, length-prefix framing, oversized message rejection (16 MB limit), empty stream handling, MidiEvent/ParamChange/TransportState serde |
+| `src/ipc/shm.rs` | 12 | ✅ Full | Create/open shared memory, input/output channel access, read/write audio data, header layout, sample count, ready flag, channel count validation, POSIX cleanup (`shm_unlink`) |
+| `src/ipc/worker.rs` | 12 | ⚠️ Partial | WorkerState creation, all message handlers (load/configure/activate/deactivate/process/set_parameter/query_parameters/get_state/set_state/has_editor/shutdown/ping) tested without real plugins; full integration requires actual VST3 bundles |
+| `src/ipc/proxy.rs` | 6 | ⚠️ Partial | TransportState default, read_output_interleaved (no shm), process silence (shutdown), pending_param_queue, dummy process construction; spawn() requires child process + real plugins |
 | `src/vst3/sandbox.rs` | 28 | ✅ Full | SandboxResult methods (is_ok, is_crashed, is_panicked, ok, unwrap), PluginCrash Display and Error (incl. backtrace/heap_corrupted fields), signal name lookup, panic message extraction (str, String, other), normal/unit/side-effect calls, panic recovery, nested calls, nested inner panic, signal recovery (SIGBUS, SIGSEGV, SIGABRT via raise()), crash-then-normal recovery cycle, handler refcount cleanup, backtrace capture/symbolication, heap integrity check, crash display with frames |
 | `src/diagnostics.rs` | 9 | ✅ Full | heap_check returns bool, check_malloc_env detection, recommended_env_vars non-empty, print_malloc_debug_instructions output, init_profiler/shutdown_profiler (feature-gated), malloc env not set by default, active_allocator_name, global allocator smoke test |
 | `src/vst3/plug_frame.rs` | 12 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view, release-does-not-self-destruct regression, editor close lifecycle regression |
@@ -46,18 +50,19 @@ Last updated: 2026-02-26 (v0.15.0 — mimalloc heap isolation).
 
 ## Coverage Analysis
 
-### Fully Tested (✅) — 20 modules
+### Fully Tested (✅) — 22 modules
 All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
-### Partially Tested (⚠️) — 10 modules
+### Partially Tested (⚠️) — 12 modules
 These modules have tests for pure-logic components but cannot be fully unit-tested because they depend on:
-- **Live VST3 plugins** (`instance.rs`, `module.rs`, `params.rs from_controller`)
+- **Live VST3 plugins** (`instance.rs`, `module.rs`, `params.rs from_controller`, `ipc/worker.rs` full integration)
 - **Audio hardware** (`audio/device.rs`, `audio/engine.rs`)
 - **MIDI hardware** (`midi/device.rs`)
 - **Interactive stdin** (`interactive.rs run_interactive`)
 - **CoreFoundation / .vst3 bundles** (`cf_bundle.rs` full path)
 - **Native GUI / ObjC runtime** (`gui/editor.rs` open/close/poll)
 - **Plugin editor views / IPlugView** (`gui/backend.rs` full activation)
+- **Child process spawning** (`ipc/proxy.rs` spawn, requires running host binary)
 
 ### Not Testable in CI (❌) — 1 module
 - `app/commands.rs` — Heavy I/O orchestration requiring both plugins and hardware
