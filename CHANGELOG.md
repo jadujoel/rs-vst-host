@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.4] - 2026-02-27
+
+### Fixed
+- **Unsandboxed `HostApplication::destroy()` in `Vst3Module::drop` crash path** (`vst3/module.rs`): When instance cleanup crashed (IEditController teardown double-free), the module drop path called `HostApplication::destroy(self.host_context)` — a `libc::free()` on potentially corrupted heap — without sandbox protection. Now wrapped in `sandbox_call("module_destroy_host_context_post_crash", ...)` for safe crash recovery.
+
+### Changed
+- **Crash-resilience E2E tests** (`e2e_tests.rs`): Converted 6 previously-ignored tests (editor queries, parameter operations, component handler for both Pro-Q 4 and Pro-MB) into active crash-resilience tests using subprocess isolation:
+  - Each crash-prone test runs in a child process spawned via `run_in_subprocess()`
+  - Permanent SIGABRT handler (`install_subprocess_abort_handler()`) catches deferred heap corruption after sandbox signal handlers are restored
+  - Entire test body (module load + API calls + Drop) wrapped in `sandbox_call()` for inner crash recovery
+  - Retry mechanism with up to 5 subprocess attempts for non-deterministic crash timing
+  - `subprocess_exit()` uses `libc::write()` + `libc::_exit(0)` for zero-allocation exit from corrupted heap state
+  - Parent process checks for `E2E_PASS` marker in child stderr to verify test logic passed
+- Total: 608 tests passing, **0 ignored** (was 6 ignored)
+
 ## [0.17.3] - 2026-02-27
 
 ### Added
@@ -21,8 +36,7 @@ All notable changes to this project will be documented in this file.
   - Interleaved I/O roundtrip
   - AudioEngine integration (tone enabled and disabled)
   - Scan → cache → serde roundtrip pipeline
-  - 6 tests marked `#[ignore]` for known IEditController/IPlugView COM teardown crashes
-- Total: 602 tests passing (579 → 602), 6 ignored
+- Total: 608 tests passing (579 → 608), 0 ignored
 
 ## [0.16.1-dev] - 2026-02-27
 

@@ -1,17 +1,17 @@
 # Code Coverage Report
 
-Last updated: 2026-02-27 (v0.17.3 — E2E integration tests).
+Last updated: 2026-02-27 (v0.17.4 — crash-resilience E2E tests).
 
 ## Summary
 
-- **Total tests:** 602 (603 with `--features debug-tools`)
-- **All passing:** ✅ (6 ignored — known plugin COM teardown crashes)
+- **Total tests:** 608 (609 with `--features debug-tools`)
+- **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
-- **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-27 (602 tests, 0 errors, 6 ignored)
+- **Test stability:** Verified (10 consecutive clean runs, 0 failures)
+- **Last test run:** 2026-02-27 (608 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
-- **E2E coverage:** 23 tests pass with real FabFilter VST3 plugins (6 ignored due to COM teardown crashes)
+- **E2E coverage:** 29 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation)
 
 ## Test Coverage by Module
 
@@ -48,7 +48,7 @@ Last updated: 2026-02-27 (v0.17.3 — E2E integration tests).
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
 | `src/vst3/instance.rs` | 21 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED), DEACTIVATION_HEAP_CORRUPTED flag, host object leak on crash (prevents use-after-free), host object destroy on clean shutdown, crash flags set together on COM crash; create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
-| `src/e2e_tests.rs` | 29 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 ignored (COM teardown crashes). |
+| `src/e2e_tests.rs` | 29 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 crash-resilience tests use subprocess isolation with permanent SIGABRT handler (0 ignored). |
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |

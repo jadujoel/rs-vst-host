@@ -361,10 +361,14 @@ impl Drop for Vst3Module {
                 "Instance COM cleanup crashed — skipping library unload \
                  (factory, bundleExit, CFBundle intentionally leaked)"
             );
-            // Still clean up our OWN Rust-side resources (never crash)
-            unsafe {
-                crate::vst3::host_context::HostApplication::destroy(self.host_context);
-            }
+            // Sandbox the host_context destroy: heap may be corrupted from
+            // siglongjmp during the instance's double-free recovery, so
+            // libc::free() could trigger SIGABRT. The sandbox catches it
+            // and we leak the host_context instead (< 100 bytes, negligible).
+            let host_ctx = self.host_context;
+            let _ = sandbox_call("module_destroy_host_context_post_crash", move || unsafe {
+                crate::vst3::host_context::HostApplication::destroy(host_ctx);
+            });
             return;
         }
 
