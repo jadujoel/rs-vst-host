@@ -5,3 +5,5 @@ log.txt
 log.ansi
 *trace-*.json
 dhat-heap.json
+vsts
+*.DS_Store

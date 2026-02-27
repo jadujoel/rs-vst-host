@@ -80,6 +80,7 @@ src/
 ├── main.rs          # Entry point, CLI dispatch, tracing init
 ├── error.rs         # Error types (HostError, Vst3Error, AudioError, MidiError)
 ├── diagnostics.rs   # Heap integrity checks, malloc env detection, dhat profiler (feature-gated)
+├── e2e_tests.rs     # End-to-end integration tests using real VST3 plugins
 ├── app/
 │   ├── cli.rs       # CLI argument definitions (clap derive)
 │   ├── commands.rs  # Command implementations
@@ -196,7 +197,13 @@ Or run just the standard unit tests:
 cargo test --lib
 ```
 
-579 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 580 tests with `--features debug-tools`.
+Run E2E integration tests against real VST3 plugins (requires plugins in `vsts/`):
+
+```sh
+cargo test --lib e2e_tests -- --test-threads=1
+```
+
+602 tests (579 unit + 23 E2E integration) covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 603 tests with `--features debug-tools`. 23 of these are E2E integration tests that exercise real FabFilter VST3 plugins (Pro-MB and Pro-Q 4) covering the full pipeline: discovery, loading, metadata, instance creation, multi-block processing, parameter operations, AudioEngine integration, and scan-cache roundtrip.
 
 109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. 564 pass under [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) for native memory error detection. See [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) for the full guide.
 

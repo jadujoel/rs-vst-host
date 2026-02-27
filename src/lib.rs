@@ -11,6 +11,8 @@ pub mod app;
 mod asan_tests;
 pub mod audio;
 pub mod diagnostics;
+#[cfg(test)]
+mod e2e_tests;
 pub mod error;
 pub mod gui;
 pub mod host;

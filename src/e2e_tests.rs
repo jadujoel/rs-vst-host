@@ -1,0 +1,830 @@
+//! End-to-end integration tests using real VST3 plugins.
+//!
+//! These tests exercise the full host pipeline against actual FabFilter VST3
+//! plugins installed in the `vsts/` workspace directory:
+//!
+//! - **FabFilter Pro-MB** — multiband dynamics processor
+//! - **FabFilter Pro-Q 4** — parametric equalizer
+//!
+//! ## Design
+//!
+//! Tests are consolidated to minimize plugin module load/unload cycles.
+//! This is necessary because:
+//!
+//! 1. VST3 plugins contain C++ global state (static constructors) that
+//!    accumulates leaked state across repeated load/unload in the same process.
+//! 2. FabFilter Pro-MB's IEditController teardown is known to SIGABRT
+//!    during COM cleanup (documented in v0.14.1).
+//! 3. The real application uses process isolation (v0.16.0); in-process
+//!    tests must minimize plugin load/unload cycles.
+//!
+//! ## Running
+//!
+//! ```bash
+//! cargo test --lib e2e_tests -- --test-threads=1
+//! ```
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    fn workspace_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn pro_mb_path() -> PathBuf {
+        workspace_root().join("vsts").join("FabFilter Pro-MB.vst3")
+    }
+
+    fn pro_q4_path() -> PathBuf {
+        workspace_root().join("vsts").join("FabFilter Pro-Q 4.vst3")
+    }
+
+    fn require_vsts() -> bool {
+        let mb = pro_mb_path();
+        let q4 = pro_q4_path();
+        if !mb.exists() || !q4.exists() {
+            eprintln!("SKIPPED: VST3 plugins not found in vsts/ directory.");
+            return false;
+        }
+        true
+    }
+
+    fn create_instance_from_path(
+        bundle_path: &std::path::Path,
+    ) -> (
+        crate::vst3::module::Vst3Module,
+        crate::vst3::instance::Vst3Instance,
+    ) {
+        use crate::vst3::module::Vst3Module;
+        let module = Vst3Module::load(bundle_path).expect("Failed to load module");
+        let info = module.get_info().expect("Failed to get module info");
+        let audio_class = info
+            .classes
+            .iter()
+            .find(|c| c.category.contains("Audio"))
+            .expect("No audio class found");
+        let instance = module
+            .create_instance(&audio_class.cid, &audio_class.name)
+            .expect("Failed to create instance");
+        (module, instance)
+    }
+
+    fn setup_for_processing(
+        instance: &mut crate::vst3::instance::Vst3Instance,
+        sample_rate: f64,
+        block_size: i32,
+    ) {
+        use crate::vst3::com::K_SPEAKER_STEREO;
+        instance
+            .set_bus_arrangements(K_SPEAKER_STEREO, K_SPEAKER_STEREO)
+            .unwrap();
+        instance.setup_processing(sample_rate, block_size).unwrap();
+        instance.activate().unwrap();
+        instance.start_processing().unwrap();
+    }
+
+    // ── Discovery ────────────────────────────────────────────────────
+
+    #[test]
+    fn e2e_discover_and_resolve_bundles() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::scanner;
+        let vsts_dir = workspace_root().join("vsts");
+        let bundles = scanner::discover_bundles(&[vsts_dir]);
+        assert!(
+            bundles.len() >= 2,
+            "Expected >= 2 bundles, found {}",
+            bundles.len()
+        );
+        let names: Vec<String> = bundles
+            .iter()
+            .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        assert!(names.iter().any(|n| n.contains("Pro-MB")));
+        assert!(names.iter().any(|n| n.contains("Pro-Q")));
+        for bundle in &bundles {
+            let binary = scanner::resolve_bundle_binary(bundle);
+            assert!(binary.is_some(), "No binary for {}", bundle.display());
+            assert!(binary.unwrap().exists());
+        }
+    }
+
+    // ── Metadata ─────────────────────────────────────────────────────
+
+    #[test]
+    fn e2e_load_modules_and_verify_metadata() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::module::Vst3Module;
+
+        let mb_module = Vst3Module::load(&pro_mb_path()).expect("load Pro-MB");
+        assert_eq!(mb_module.bundle_path(), pro_mb_path());
+        let mb_info = mb_module.get_info().expect("Pro-MB info");
+        assert!(mb_info.factory_vendor.is_some());
+        assert!(
+            mb_info
+                .factory_vendor
+                .as_deref()
+                .unwrap()
+                .contains("FabFilter")
+        );
+        assert!(!mb_info.classes.is_empty());
+        let mb_audio = mb_info
+            .classes
+            .iter()
+            .find(|c| c.category.contains("Audio"))
+            .unwrap();
+        assert!(mb_audio.name.contains("Pro-MB"));
+        assert_ne!(mb_audio.cid, [0u8; 16]);
+
+        let q4_module = Vst3Module::load(&pro_q4_path()).expect("load Pro-Q 4");
+        let q4_info = q4_module.get_info().expect("Pro-Q 4 info");
+        assert!(q4_info.factory_vendor.is_some());
+        assert!(!q4_info.classes.is_empty());
+        let q4_audio = q4_info
+            .classes
+            .iter()
+            .find(|c| c.category.contains("Audio"))
+            .unwrap();
+        assert!(q4_audio.name.contains("Pro-Q"));
+        assert_ne!(q4_audio.cid, [0u8; 16]);
+        assert_ne!(mb_audio.cid, q4_audio.cid);
+
+        for (info, name) in [(&mb_info, "Pro-MB"), (&q4_info, "Pro-Q 4")] {
+            assert!(info.factory_vendor.is_some(), "{} factory vendor", name);
+            let ac = info
+                .classes
+                .iter()
+                .find(|c| c.category.contains("Audio"))
+                .unwrap();
+            let vendor = ac.vendor.as_deref().or(info.factory_vendor.as_deref());
+            assert!(vendor.is_some(), "{} vendor", name);
+        }
+    }
+
+    // ── Pro-Q 4 Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn e2e_pro_q4_instance_and_capabilities() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::com::K_SPEAKER_STEREO;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        assert!(instance.can_process_f32());
+        assert!(!instance.is_crashed());
+        assert!(instance.output_channels > 0);
+        instance
+            .set_bus_arrangements(K_SPEAKER_STEREO, K_SPEAKER_STEREO)
+            .unwrap();
+    }
+
+    #[test]
+    fn e2e_pro_q4_full_process_lifecycle() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        setup_for_processing(&mut instance, 44100.0, 512);
+        let mut buffers =
+            ProcessBuffers::new(instance.input_channels, instance.output_channels, 512);
+        buffers.prepare(512);
+        assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_multi_block_processing() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        let bs = 256;
+        setup_for_processing(&mut instance, 48000.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        for block in 0..100 {
+            buffers.prepare(bs as usize);
+            for ch in 0..instance.input_channels {
+                if let Some(buf) = buffers.input_buffer_mut(ch) {
+                    for i in 0..bs as usize {
+                        let phase = (block * bs as usize + i) as f64 / 48000.0 * 1000.0;
+                        buf[i] = (phase * std::f64::consts::TAU).sin() as f32 * 0.25;
+                    }
+                }
+            }
+            assert!(
+                unsafe { instance.process(buffers.process_data_ptr()) },
+                "block {}",
+                block
+            );
+        }
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_signal_passthrough() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        let bs = 512;
+        setup_for_processing(&mut instance, 44100.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        for block in 0..20 {
+            buffers.prepare(bs as usize);
+            for ch in 0..instance.input_channels {
+                if let Some(buf) = buffers.input_buffer_mut(ch) {
+                    for i in 0..bs as usize {
+                        let t = (block * bs as usize + i) as f64 / 44100.0;
+                        buf[i] = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
+                    }
+                }
+            }
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        let mut max = 0.0f32;
+        for ch in 0..instance.output_channels {
+            if let Some(buf) = buffers.output_buffer(ch) {
+                for &s in buf {
+                    max = max.max(s.abs());
+                }
+            }
+        }
+        assert!(max > 0.01, "EQ should pass signal, max: {}", max);
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_process_with_context() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        use crate::vst3::process_context::ProcessContext;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        let bs = 256;
+        setup_for_processing(&mut instance, 48000.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        let mut ctx = ProcessContext::new(48000.0);
+        ctx.set_tempo(120.0);
+        ctx.set_playing(true);
+        ctx.set_time_signature(4, 4);
+        for _ in 0..10 {
+            buffers.prepare(bs as usize);
+            buffers.set_process_context(ctx.as_ptr());
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+            buffers.set_process_context(std::ptr::null_mut());
+            ctx.advance(bs);
+        }
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    /// Pro-Q 4 parameter operations: causes IEditController teardown
+    /// double-free that corrupts heap when combined with other tests.
+    #[test]
+    #[ignore]
+    fn e2e_pro_q4_parameter_operations() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        let mut params = instance.query_parameters().expect("Pro-Q 4 params");
+        assert!(params.count() > 0);
+        for param in &params.parameters {
+            assert!(!param.title.is_empty(), "ID {} empty title", param.id);
+            assert!((0.0..=1.0).contains(&param.default_normalized));
+            assert!((0.0..=1.0).contains(&param.current_normalized));
+        }
+        let automatable = params
+            .parameters
+            .iter()
+            .find(|p| p.can_automate && !p.is_read_only)
+            .expect("automatable param");
+        let pid = automatable.id;
+        let v = params.set_normalized(pid, 0.5).expect("set 0.5");
+        assert!((v - 0.5).abs() < 0.1, "readback {}", v);
+        let v0 = params.set_normalized(pid, 0.0).expect("set 0.0");
+        assert!(v0 <= 0.01);
+        let v1 = params.set_normalized(pid, 1.0).expect("set 1.0");
+        assert!(v1 >= 0.99);
+        let mut got_string = false;
+        for p in params.parameters.iter().take(5) {
+            if let Some(d) = params.value_to_string(p.id, p.default_normalized) {
+                assert!(!d.is_empty());
+                got_string = true;
+            }
+        }
+        assert!(got_string);
+        for p in params.parameters.iter().take(5) {
+            let n = p.default_normalized;
+            let plain = params.normalized_to_plain(p.id, n);
+            let rt = params.plain_to_normalized(p.id, plain);
+            assert!(
+                (rt - n).abs() < 0.01,
+                "'{}': {} -> {} -> {}",
+                p.title,
+                n,
+                plain,
+                rt
+            );
+        }
+    }
+
+    /// Pro-Q 4 component handler: triggers IEditController creation which
+    /// causes double-free during teardown.
+    #[test]
+    #[ignore]
+    fn e2e_pro_q4_component_handler() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        assert!(instance.install_component_handler());
+        assert!(!instance.component_handler().is_null());
+    }
+
+    #[test]
+    fn e2e_pro_q4_latency() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        setup_for_processing(&mut instance, 44100.0, 512);
+        let lat = instance.latency_samples();
+        assert!(lat < 1_000_000, "Latency: {}", lat);
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_high_sample_rate() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        setup_for_processing(&mut instance, 96000.0, 256);
+        let mut buffers =
+            ProcessBuffers::new(instance.input_channels, instance.output_channels, 256);
+        for _ in 0..10 {
+            buffers.prepare(256);
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_small_block_size() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        setup_for_processing(&mut instance, 44100.0, 32);
+        let mut buffers =
+            ProcessBuffers::new(instance.input_channels, instance.output_channels, 32);
+        for _ in 0..200 {
+            buffers.prepare(32);
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_interleaved_io() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        let bs = 256;
+        setup_for_processing(&mut instance, 44100.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        let ns = bs as usize;
+        let mut interleaved_in = vec![0.0f32; ns * 2];
+        for i in 0..ns {
+            let t = i as f64 / 44100.0;
+            let s = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
+            interleaved_in[i * 2] = s;
+            interleaved_in[i * 2 + 1] = s;
+        }
+        for _ in 0..10 {
+            buffers.prepare(ns);
+            buffers.write_input_interleaved(&interleaved_in, 2);
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        let mut interleaved_out = vec![0.0f32; ns * 2];
+        buffers.read_output_interleaved(&mut interleaved_out, 2);
+        let max = interleaved_out
+            .iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max);
+        assert!(max > 0.01, "Interleaved output max: {}", max);
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_q4_audio_engine_integration() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::audio::engine::AudioEngine;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        setup_for_processing(&mut instance, 44100.0, 1024);
+        let mut engine = AudioEngine::new(instance, 44100.0, 1024, 2);
+        let mut output = vec![0.0f32; 2 * 512];
+        for _ in 0..10 {
+            engine.process(&mut output);
+        }
+        let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max > 0.001, "Engine+tone max: {}", max);
+        assert!(!engine.is_crashed());
+        engine.shutdown();
+        let mut silence = vec![1.0f32; 1024];
+        engine.process(&mut silence);
+        assert!(silence.iter().all(|&v| v == 0.0), "Post-shutdown silence");
+    }
+
+    #[test]
+    fn e2e_pro_q4_audio_engine_tone_disabled() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::audio::engine::AudioEngine;
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        setup_for_processing(&mut instance, 44100.0, 1024);
+        let mut engine = AudioEngine::new(instance, 44100.0, 1024, 2);
+        engine.tone().enabled = false;
+        let mut output = vec![0.0f32; 2 * 512];
+        for _ in 0..20 {
+            engine.process(&mut output);
+        }
+        let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max < 0.01, "Disabled tone max: {}", max);
+        engine.shutdown();
+    }
+
+    // ── Pro-MB Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn e2e_pro_mb_instance_and_capabilities() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::com::K_SPEAKER_STEREO;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        assert!(instance.can_process_f32());
+        assert!(!instance.is_crashed());
+        assert!(instance.output_channels > 0);
+        instance
+            .set_bus_arrangements(K_SPEAKER_STEREO, K_SPEAKER_STEREO)
+            .unwrap();
+    }
+
+    #[test]
+    fn e2e_pro_mb_full_process_lifecycle() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        setup_for_processing(&mut instance, 44100.0, 512);
+        let mut buffers =
+            ProcessBuffers::new(instance.input_channels, instance.output_channels, 512);
+        buffers.prepare(512);
+        assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_mb_multi_block_processing() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        let bs = 256;
+        setup_for_processing(&mut instance, 48000.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        for block in 0..100 {
+            buffers.prepare(bs as usize);
+            for ch in 0..instance.input_channels {
+                if let Some(buf) = buffers.input_buffer_mut(ch) {
+                    for i in 0..bs as usize {
+                        let phase = (block * bs as usize + i) as f64 / 48000.0 * 440.0;
+                        buf[i] = (phase * std::f64::consts::TAU).sin() as f32 * 0.25;
+                    }
+                }
+            }
+            assert!(
+                unsafe { instance.process(buffers.process_data_ptr()) },
+                "block {}",
+                block
+            );
+        }
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_mb_silence_in_silence_out() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        setup_for_processing(&mut instance, 44100.0, 512);
+        let mut buffers =
+            ProcessBuffers::new(instance.input_channels, instance.output_channels, 512);
+        for _ in 0..10 {
+            buffers.prepare(512);
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        let mut max = 0.0f32;
+        for ch in 0..instance.output_channels {
+            if let Some(buf) = buffers.output_buffer(ch) {
+                for &s in buf {
+                    max = max.max(s.abs());
+                }
+            }
+        }
+        assert!(max < 0.01, "Silence-in max: {}", max);
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_mb_signal_passthrough() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        let bs = 512;
+        setup_for_processing(&mut instance, 44100.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        for block in 0..20 {
+            buffers.prepare(bs as usize);
+            for ch in 0..instance.input_channels {
+                if let Some(buf) = buffers.input_buffer_mut(ch) {
+                    for i in 0..bs as usize {
+                        let t = (block * bs as usize + i) as f64 / 44100.0;
+                        buf[i] = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
+                    }
+                }
+            }
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        let mut max = 0.0f32;
+        for ch in 0..instance.output_channels {
+            if let Some(buf) = buffers.output_buffer(ch) {
+                for &s in buf {
+                    max = max.max(s.abs());
+                }
+            }
+        }
+        assert!(max > 0.01, "Signal through Pro-MB max: {}", max);
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_mb_process_with_all_peripherals() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::event_list::HostEventList;
+        use crate::vst3::param_changes::HostParameterChanges;
+        use crate::vst3::process::ProcessBuffers;
+        use crate::vst3::process_context::ProcessContext;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        let bs = 512;
+        setup_for_processing(&mut instance, 44100.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        let mut ctx = ProcessContext::new(44100.0);
+        ctx.set_tempo(140.0);
+        ctx.set_playing(true);
+        let event_list = HostEventList::new();
+        let param_changes = HostParameterChanges::new();
+        for _ in 0..10 {
+            buffers.prepare(bs as usize);
+            buffers.set_process_context(ctx.as_ptr());
+            unsafe {
+                HostEventList::clear(event_list);
+                HostParameterChanges::clear(param_changes);
+            }
+            buffers.set_input_events(HostEventList::as_ptr(event_list));
+            buffers.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes));
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+            buffers.set_input_events(std::ptr::null_mut());
+            buffers.set_input_parameter_changes(std::ptr::null_mut());
+            buffers.set_process_context(std::ptr::null_mut());
+            ctx.advance(bs);
+        }
+        assert!(!instance.is_crashed());
+        unsafe {
+            HostEventList::destroy(event_list);
+            HostParameterChanges::destroy(param_changes);
+        }
+        instance.shutdown();
+    }
+
+    /// Pro-MB component handler: triggers IEditController creation which
+    /// causes double-free during teardown on FabFilter Pro-MB.
+    #[test]
+    #[ignore]
+    fn e2e_pro_mb_component_handler() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        assert!(instance.install_component_handler());
+        assert!(!instance.component_handler().is_null());
+    }
+
+    #[test]
+    fn e2e_pro_mb_latency() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        setup_for_processing(&mut instance, 44100.0, 512);
+        let lat = instance.latency_samples();
+        assert!(lat < 1_000_000, "Latency: {}", lat);
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_mb_large_block_size() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        let bs = 4096;
+        setup_for_processing(&mut instance, 48000.0, bs);
+        let mut buffers = ProcessBuffers::new(
+            instance.input_channels,
+            instance.output_channels,
+            bs as usize,
+        );
+        for _ in 0..5 {
+            buffers.prepare(bs as usize);
+            assert!(unsafe { instance.process(buffers.process_data_ptr()) });
+        }
+        assert!(!instance.is_crashed());
+        instance.shutdown();
+    }
+
+    #[test]
+    fn e2e_pro_mb_audio_engine() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::audio::engine::AudioEngine;
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        setup_for_processing(&mut instance, 44100.0, 1024);
+        let mut engine = AudioEngine::new(instance, 44100.0, 1024, 2);
+        let mut output = vec![0.0f32; 2 * 512];
+        for _ in 0..10 {
+            engine.process(&mut output);
+        }
+        let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max > 0.001, "Engine+Pro-MB max: {}", max);
+        assert!(!engine.is_crashed());
+        engine.shutdown();
+    }
+
+    // ── Scan Cache Pipeline ──────────────────────────────────────────
+
+    #[test]
+    fn e2e_scan_cache_serde_roundtrip() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::{cache, module::Vst3Module, scanner, types::PluginModuleInfo};
+        let vsts_dir = workspace_root().join("vsts");
+        let bundles = scanner::discover_bundles(&[vsts_dir]);
+        assert!(bundles.len() >= 2);
+        let mut modules: Vec<PluginModuleInfo> = Vec::new();
+        for bundle_path in &bundles {
+            if let Ok(module) = Vst3Module::load(bundle_path) {
+                if let Ok(info) = module.get_info() {
+                    modules.push(info);
+                }
+            }
+        }
+        assert!(modules.len() >= 2);
+        let scan_cache = cache::ScanCache::new(modules);
+        assert!(!scan_cache.scan_timestamp.is_empty());
+        assert!(scan_cache.modules.len() >= 2);
+        let json = serde_json::to_string_pretty(&scan_cache).unwrap();
+        let roundtrip: cache::ScanCache = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip.modules.len(), scan_cache.modules.len());
+        for (orig, rt) in scan_cache.modules.iter().zip(roundtrip.modules.iter()) {
+            assert_eq!(orig.path, rt.path);
+            assert_eq!(orig.classes.len(), rt.classes.len());
+            for (oc, rc) in orig.classes.iter().zip(rt.classes.iter()) {
+                assert_eq!(oc.name, rc.name);
+                assert_eq!(oc.cid, rc.cid);
+            }
+        }
+    }
+
+    // ── Ignored (known plugin COM cleanup crashes) ───────────────────
+
+    /// Pro-MB parameter ops: SIGABRT during IEditController teardown.
+    #[test]
+    #[ignore]
+    fn e2e_pro_mb_parameter_ops() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        let mut params = instance.query_parameters().expect("Pro-MB params");
+        assert!(params.count() > 0);
+        for param in &params.parameters {
+            assert!(!param.title.is_empty());
+            assert!((0.0..=1.0).contains(&param.default_normalized));
+            assert!((0.0..=1.0).contains(&param.current_normalized));
+        }
+        if let Some(p) = params
+            .parameters
+            .iter()
+            .find(|p| p.can_automate && !p.is_read_only)
+        {
+            let actual = params.set_normalized(p.id, 0.75).expect("set_normalized");
+            assert!((actual - 0.75).abs() < 0.1, "readback: {}", actual);
+        }
+        let mut got_string = false;
+        for p in params.parameters.iter().take(5) {
+            if let Some(d) = params.value_to_string(p.id, p.default_normalized) {
+                assert!(!d.is_empty());
+                got_string = true;
+            }
+        }
+        assert!(got_string);
+    }
+
+    /// Pro-Q 4 editor: SIGABRT during IPlugView release.
+    #[test]
+    #[ignore]
+    fn e2e_pro_q4_has_editor() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
+        let _has_editor = instance.has_editor();
+        assert!(!instance.is_crashed());
+    }
+
+    /// Pro-MB editor: SIGABRT during IPlugView release.
+    #[test]
+    #[ignore]
+    fn e2e_pro_mb_has_editor() {
+        if !require_vsts() {
+            return;
+        }
+        let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
+        let _has_editor = instance.has_editor();
+        assert!(!instance.is_crashed());
+    }
+}

@@ -2,83 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.17.2] - 2026-02-27
+## [0.17.3] - 2026-02-27
 
 ### Added
-- **AddressSanitizer (ASan) support**: Added comprehensive ASan-targeted test suite for detecting real hardware-level memory errors in compiled native code. ASan catches use-after-free, double-free, heap/stack buffer overflow, memory leaks, and allocator mismatches — covering FFI code paths (libc::malloc/free, mmap, POSIX shm) that Miri cannot interpret.
-  - `src/asan_tests.rs`: 46 dedicated ASan-targeted tests organized by subsystem:
-    - **host_alloc lifecycle** (7 tests): system_alloc/system_free pairing, null safety, varying sizes, concurrent threads, rapid cycle stress, drop semantics
-    - **COM object lifecycle** (5 tests): HostApplication, HostComponentHandler, HostPlugFrame create→use→destroy, rapid create/destroy stress
-    - **ProcessBuffers** (5 tests): full pointer chain, varying block sizes, cross-thread transfer, zero channels, interleave roundtrip
-    - **Shared memory** (5 tests): create/write/read, boundary writes, host↔worker roundtrip, zero channels, rapid create/destroy
-    - **Event byte reinterpretation** (3 tests): note on/off byte-level roundtrip, event clone safety
-    - **MIDI→ProcessData pipeline** (3 tests): batch translate, all 16 channels, full pipeline integration
-    - **Sandbox non-crashing paths** (6 tests): normal call, heap alloc, system_alloc, panic recovery, nested calls, sequential stress
-    - **IPC messages** (1 test): encode/decode roundtrip for all message variants
-    - **Full mock process sessions** (2 tests): all COM objects wired into ProcessData, multi-block processing
-    - **Concurrent COM** (2 tests): multi-threaded handler edits via COM vtable, concurrent object create/destroy
-    - **System alloc zone check** (1 test): system_alloc pointers under ASan's malloc wrapper
-  - `test.bash`: Added ASan step (step 5) running 564 tests under ASan with `--target aarch64-apple-darwin`, automatically skipping 15 ASan-incompatible tests (signal sandbox + malloc_zone_check).
-- 46 new unit tests (533 → 579 total).
-- 564 tests pass under AddressSanitizer (15 skipped due to signal/malloc_zone interception conflicts).
+- **End-to-end integration tests** (`src/e2e_tests.rs`): 29 tests exercising the full host pipeline against real FabFilter VST3 plugins (Pro-MB and Pro-Q 4). Coverage includes:
+  - Plugin discovery and bundle binary resolution
+  - Module loading and factory metadata verification for both plugins
+  - Instance creation, f32 capability, bus arrangement negotiation
+  - Full processing lifecycle (setup → activate → process → shutdown)
+  - Multi-block sustained processing (100+ blocks with sine tone)
+  - Silence-in / signal-through verification
+  - Process context with tempo, time signature, and transport
+  - Event list and parameter changes integration
+  - Parameter enumeration, set/readback, display strings, normalized↔plain roundtrip (Pro-Q 4)
+  - Component handler installation
+  - Latency reporting
+  - Various sample rates (44.1/48/96 kHz) and block sizes (32–4096)
+  - Interleaved I/O roundtrip
+  - AudioEngine integration (tone enabled and disabled)
+  - Scan → cache → serde roundtrip pipeline
+  - 6 tests marked `#[ignore]` for known IEditController/IPlugView COM teardown crashes
+- Total: 602 tests passing (579 → 602), 6 ignored
 
-### ASan-Incompatible Tests (15 skipped under ASan)
-Tests using `libc::raise` (signal sandbox) or `malloc_zone_check` are skipped at runtime via `--skip` flags because ASan's signal and malloc zone interception conflicts with them:
-- `test_heap_check_returns_true_in_clean_process` — `malloc_zone_check`
-- `test_check_heap_after_recovery_clean` — `check_heap_after_recovery` → `malloc_zone_check`
-- `test_sandbox_catches_raised_sigbus` — `libc::raise(SIGBUS)`
-- `test_sandbox_catches_sigsegv` — `libc::raise(SIGSEGV)`
-- `test_sandbox_catches_sigabrt` — `libc::raise(SIGABRT)`
-- `test_sandbox_recovery_allows_subsequent_calls` — `libc::raise`
-- `test_sandbox_multiple_crashes_same_signal` — `libc::raise`
-- `test_sandbox_alternating_crash_and_normal` — `libc::raise`
-- `test_sandbox_crash_produces_backtrace` — `libc::raise`
-- `test_clean_recovery_has_no_heap_corruption` — `libc::raise` + `malloc_zone_check`
-- `test_sandbox_crash_recovery_in_instance_context` — `libc::raise`
-- `test_sandbox_catches_abort_during_cleanup` — `libc::raise`
-- `test_last_drop_crashed_set_on_sandbox_crash` — `libc::raise`
-- `test_crash_flags_set_together_on_com_crash` — `libc::raise` + `heap_check`
-- `test_module_drop_skips_unload_after_instance_crash` — `libc::raise`
+## [0.16.1-dev] - 2026-02-27
 
-## [0.17.1] - 2026-02-27
-
-### Added
-- **Miri dynamic analysis infrastructure**: Added Miri-based undefined behavior detection for all pure-Rust unsafe code. Miri interprets Rust MIR at runtime and catches use-after-free, double-free, out-of-bounds access, uninitialized reads, aliasing violations, and data races that neither the compiler nor standard tests detect.
-  - `src/lib.rs`: Library crate re-exporting all modules, enabling `cargo miri test --lib` without compiling the binary entry point (which uses FFI global allocators incompatible with Miri).
-  - `src/miri_tests.rs`: 21 dedicated Miri-targeted tests exercising the highest-risk unsafe patterns — COM vtable dispatch (create→add→vtable read→destroy), self-referential buffer management (ProcessData→AudioBusBuffers→channel_buffers→samples), struct-to-bytes reinterpretation (NoteOnEvent/NoteOffEvent byte-level roundtrip), cross-module integration (MIDI→translate→EventList→ProcessData→vtable readback), `unsafe impl Send` thread safety (ProcessBuffers moved across threads), and lifecycle stress testing (50 COM create/destroy cycles).
-  - `DYNAMIC_ANALYSIS.md`: Comprehensive guide covering prerequisites, quick start commands, aliasing model comparison (Stacked Borrows vs Tree Borrows), per-module compatibility table, known limitations, CI integration, Miri flag reference, and error interpretation.
-  - `test.bash`: Single-command test runner that executes all test suites — standard `cargo test --lib`, `cargo clippy`, Miri with Tree Borrows (109 tests), and Miri with Stacked Borrows (70 tests) — with color-coded pass/fail summary.
-- 21 new unit tests (512 → 533 total): all in `miri_tests.rs`.
-- 109 tests pass under Miri with Tree Borrows (`-Zmiri-tree-borrows`), 70 under default Stacked Borrows.
-
-### Changed
-- `vst3/host_alloc.rs`: `test_box_alloc_is_not_in_system_zone` now handles both mimalloc (binary crate) and system allocator (library crate) contexts gracefully.
-
-### Discovered
-- **Stacked Borrows aliasing finding in `ProcessBuffers`**: The self-referential pointer pattern (`process_data.inputs = &mut self.input_bus`) is technically UB under the Stacked Borrows model because subsequent `&mut self` method calls retag the entire struct, invalidating stored pointers. This is a well-known limitation of Stacked Borrows with self-referential structs. The pattern is correct under Tree Borrows and real hardware — the underlying memory never moves and pointers are re-established by `prepare()` before each process call.
-
-## [0.17.0] - 2026-02-27
-
-### Added
-- **System malloc allocator for COM objects** (`vst3/host_alloc.rs`): New module providing `system_alloc` / `system_free` which bypass the global allocator (mimalloc) and call `libc::malloc` / `libc::free` directly. Plugin-facing COM objects (`HostApplication`, `HostComponentHandler`, `HostPlugFrame`) are now allocated on the system malloc heap. This prevents "pointer being freed was not allocated" aborts when a plugin incorrectly calls `free()` / `operator delete` on a host object instead of using COM `Release()`. Includes `is_system_malloc_ptr()` for validation.
-- **Atomic shutdown flag** on `AudioEngine`: The audio callback now checks an `AtomicBool` shutdown flag *before* trying to acquire the Mutex lock. This eliminates the race window between `engine.shutdown()` (which sets `is_shutdown` under the lock) and stream drop (which stops the CoreAudio callback). Both the GUI backend and CLI audio callbacks use this flag.
-- **Sandboxed host object destruction**: `HostApplication::destroy()`, `HostComponentHandler::destroy()` calls in `Vst3Instance::drop` are now wrapped in `sandbox_call()` for defense-in-depth. If a plugin has deferred callbacks that reference these objects, the resulting crash is caught by the sandbox.
-- **Defensive delay before module unload**: 50ms sleep before `bundleExit` / `CFRelease` in `Vst3Module::drop` allows plugin background threads and C++ static destructors to settle before library unload.
-- **Stream-first deactivation**: In `deactivate_plugin()`, the audio stream is now stopped *before* engine shutdown (was previously the reverse). A 10ms drain sleep is added after stream stop for any in-flight CoreAudio callbacks.
-- 14 new unit tests (498 → 512 total): 8 in `host_alloc.rs` (alloc/free, null safety, system zone verification, drop semantics, alignment, stress test), 3 system-heap verification tests for `HostApplication`, `HostComponentHandler`, `HostPlugFrame`, 2 shutdown flag tests in `audio/engine.rs`, 1 concurrent test threshold adjustment.
-
-### Changed
-- `HostApplication::new()` / `destroy()` now use `host_alloc::system_alloc` / `system_free` instead of `Box::new` / `Box::from_raw`.
-- `HostComponentHandler::new()` / `destroy()` now use `host_alloc::system_alloc` / `system_free` instead of `Box::new` / `Box::from_raw`.
-- `HostPlugFrame::new()` / `destroy()` now use `host_alloc::system_alloc` / `system_free` instead of `Box::new` / `Box::from_raw`.
-- `Vst3Module::drop` host context destroy is now sandboxed.
-- Audio callback in both GUI backend and CLI `run` command checks `shutdown_requested` AtomicBool before acquiring engine Mutex.
-- `deactivate_plugin()` reordered: stream stop → drain sleep → engine shutdown (was: engine shutdown → stream stop).
-- Concurrent component handler test threshold lowered from 200 to 100 to reduce flakiness with system_alloc.
-
-### Fixed
-- **"pointer being freed was not allocated" crash** during plugin teardown when switching between VST3 plugins. Root cause: mimalloc (global allocator since v0.15.0) placed host COM objects on a separate heap; plugins calling `free()` on these objects triggered macOS malloc zone validation → SIGABRT. Fix: COM objects now allocated via `libc::malloc` on the system heap.
-- **Audio thread race during teardown**: Audio callback could acquire the engine Mutex lock between engine shutdown and stream stop, potentially accessing a deactivated plugin. Fix: AtomicBool flag checked before lock acquisition; stream stopped before engine shutdown.
+### Analysis
+- **Memory safety plan** (`MEMORY_SAFETY_PLAN.md`): Diagnosed and documented the root cause of "pointer being freed was not allocated" crash during plugin deactivation. Primary cause: heap domain mismatch between mimalloc (Rust global allocator) and system malloc (plugin C++ allocator). Host COM objects (HostApplication, HostComponentHandler, HostPlugFrame) allocated via mimalloc are invisible to system malloc zones; a plugin calling `free()` on a host pointer during COM teardown triggers macOS malloc zone validation → `abort()`. Secondary cause: audio thread race condition — potential for in-flight CoreAudio callback during stream drop. Plan includes 5 fixes across 3 phases.
 
 ## [0.16.0] - 2026-02-27
 
