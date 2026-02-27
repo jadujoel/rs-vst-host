@@ -7,6 +7,8 @@
 // setup and other FFI that Miri cannot interpret).
 
 pub mod app;
+#[cfg(test)]
+mod asan_tests;
 pub mod audio;
 pub mod diagnostics;
 pub mod error;

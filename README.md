@@ -184,7 +184,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 
 ## Testing
 
-Run the full test suite (unit tests + clippy + Miri):
+Run the full test suite (unit tests + clippy + Miri + ASan):
 
 ```sh
 bash test.bash
@@ -196,9 +196,9 @@ Or run just the standard unit tests:
 cargo test --lib
 ```
 
-533 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), and concurrency. 534 tests with `--features debug-tools`.
+579 unit tests covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 580 tests with `--features debug-tools`.
 
-109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. See [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) for the full guide.
+109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. 564 pass under [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) for native memory error detection. See [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) for the full guide.
 
 See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
 

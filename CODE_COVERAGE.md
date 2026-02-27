@@ -1,15 +1,16 @@
 # Code Coverage Report
 
-Last updated: 2026-02-27 (v0.17.0 — memory safety hardening).
+Last updated: 2026-02-27 (v0.17.2 — AddressSanitizer support).
 
 ## Summary
 
-- **Total tests:** 533 (534 with `--features debug-tools`)
+- **Total tests:** 579 (580 with `--features debug-tools`)
 - **All passing:** ✅
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified (multiple consecutive clean runs)
-- **Last test run:** 2026-02-27 (533 tests, 0 errors)
-- **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Stacked Borrows
+- **Last test run:** 2026-02-27 (579 tests, 0 errors)
+- **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
+- **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
 
 ## Test Coverage by Module
 
@@ -38,6 +39,7 @@ Last updated: 2026-02-27 (v0.17.0 — memory safety hardening).
 | `src/vst3/plug_frame.rs` | 13 | ✅ Full | HostPlugFrame creation, as_ptr, pending resize, QI for IPlugFrame/FUnknown/unknown IID, ref counting add/release, destroy, resize_view, release-does-not-self-destruct regression, editor close lifecycle regression, system heap verification |
 | `src/vst3/types.rs` | 10 | ✅ Full | Serde roundtrip, optional fields, CID serialization, Debug, Clone |
 | `src/miri_tests.rs` | 21 | ✅ Full | Miri-targeted: COM vtable lifecycle, event byte roundtrip, ProcessBuffers pointer chain, MIDI→ProcessData integration, `Send` safety, lifecycle stress |
+| `src/asan_tests.rs` | 46 | ✅ Full | ASan-targeted: host_alloc lifecycle, COM object lifecycle, ProcessBuffers, shared memory, event bytes, MIDI→ProcessData, sandbox non-crash, IPC messages, concurrent COM, full mock process |
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
@@ -74,6 +76,29 @@ Based on module-level analysis:
 - **Pure logic modules:** ~95% line coverage (all testable paths exercised)
 - **Hardware-dependent modules:** ~40-60% (utility functions tested, I/O paths require integration testing)
 - **Overall estimated:** ~80-85% of testable code
+
+## v0.17.2 Test Additions (AddressSanitizer)
+
+46 new tests added (533 → 579 total):
+
+| Area | New Tests | Description |
+|------|----------|-------------|
+| ASan host_alloc | 7 | system_alloc/system_free lifecycle, null safety, varying sizes, concurrent threads, rapid cycle stress, drop semantics |
+| ASan COM objects | 5 | HostApplication, HostComponentHandler, HostPlugFrame create→use→destroy, rapid create/destroy |
+| ASan ProcessBuffers | 5 | Full pointer chain, varying block sizes, cross-thread transfer, zero channels, interleave roundtrip |
+| ASan shared memory | 5 | Create/write/read, boundary writes, host↔worker roundtrip, zero channels, rapid create/destroy |
+| ASan events | 3 | Note on/off byte-level roundtrip, event clone safety |
+| ASan MIDI pipeline | 3 | Batch translate, all 16 channels, full MIDI→ProcessData pipeline |
+| ASan sandbox | 6 | Normal call, heap alloc, system_alloc, panic recovery, nested calls, sequential stress |
+| ASan IPC | 1 | Encode/decode roundtrip for all message variants |
+| ASan full process | 2 | All COM objects wired into ProcessData, multi-block session |
+| ASan concurrency | 2 | Multi-threaded handler edits (COM vtable), concurrent object create/destroy |
+| ASan zone check | 1 | system_alloc pointer validation under ASan |
+
+All 46 tests also pass under AddressSanitizer when run with:
+```bash
+RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --target aarch64-apple-darwin --lib -- asan_tests
+```
 
 ## v0.17.1 Test Additions (Miri Dynamic Analysis)
 

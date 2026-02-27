@@ -31,11 +31,11 @@ run_step() {
 }
 
 echo -e "${BOLD}rs-vst-host — Full Test Suite${RESET}"
-echo "Running all standard tests, Miri (Tree Borrows), and Miri (Stacked Borrows)..."
+echo "Running standard tests, Clippy, Miri (Tree Borrows + Stacked Borrows), and ASan..."
 
 # ── 1. Standard unit tests ──────────────────────────────────────────────────
 
-run_step "cargo test --lib (533 tests)" \
+run_step "cargo test --lib (579 tests)" \
     cargo test --lib
 
 # ── 2. Clippy lint check ────────────────────────────────────────────────────
@@ -61,6 +61,34 @@ run_step "Miri — Stacked Borrows (70 tests)" \
         "miri_tests::tests::miri_com" \
         "miri_tests::tests::miri_null" \
         "miri_tests::tests::miri_param"
+
+# ── 5. AddressSanitizer (all tests, skipping ASan-incompatible ones) ───────
+#
+# ASan instruments the compiled native code and catches real hardware-level
+# memory errors: use-after-free, double-free, heap/stack buffer overflow,
+# memory leaks, and allocator mismatches.
+#
+# Tests using libc::raise (signal sandbox) or malloc_zone_check are skipped
+# because ASan's signal and malloc zone interception conflicts with them.
+
+run_step "ASan — AddressSanitizer (564 tests)" \
+    env RUSTFLAGS="-Z sanitizer=address" \
+    cargo +nightly test --target aarch64-apple-darwin --lib -- \
+        --skip test_heap_check_returns_true_in_clean_process \
+        --skip test_sandbox_catches_raised_sigbus \
+        --skip test_sandbox_catches_sigsegv \
+        --skip test_sandbox_recovery_allows_subsequent_calls \
+        --skip test_sandbox_catches_sigabrt \
+        --skip test_sandbox_multiple_crashes_same_signal \
+        --skip test_sandbox_alternating_crash_and_normal \
+        --skip test_sandbox_crash_produces_backtrace \
+        --skip test_clean_recovery_has_no_heap_corruption \
+        --skip test_sandbox_crash_recovery_in_instance_context \
+        --skip test_sandbox_catches_abort_during_cleanup \
+        --skip test_last_drop_crashed_set_on_sandbox_crash \
+        --skip test_crash_flags_set_together_on_com_crash \
+        --skip test_module_drop_skips_unload_after_instance_crash \
+        --skip test_check_heap_after_recovery_clean
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 

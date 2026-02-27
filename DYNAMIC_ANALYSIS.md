@@ -1,8 +1,13 @@
-# Dynamic Analysis with Miri
+# Dynamic Analysis with Miri and AddressSanitizer
 
-This guide covers how to use [Miri](https://github.com/rust-lang/miri) for dynamic analysis of unsafe code in `rs-vst-host`. Miri is an interpreter for Rust's Mid-level Intermediate Representation (MIR) that detects undefined behavior in unsafe code at runtime.
+This guide covers how to use [Miri](https://github.com/rust-lang/miri) and [AddressSanitizer (ASan)](https://clang.llvm.org/docs/AddressSanitizer.html) for dynamic analysis of unsafe code in `rs-vst-host`. Together they provide complementary coverage:
 
-## What Miri Detects
+- **Miri** interprets Rust MIR and catches aliasing violations, uninitialized reads, and data races in pure-Rust unsafe code
+- **ASan** instruments compiled native code and catches use-after-free, double-free, buffer overflows, and allocator mismatches in FFI code paths (libc::malloc, mmap, etc.)
+
+## What Each Tool Detects
+
+### Miri
 
 Miri can find bugs that neither the compiler nor standard tests catch:
 
@@ -240,15 +245,118 @@ MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-backtrace=full" cargo +nightly miri test -
 
 ## Complementary Tools
 
-Miri is one layer in the project's safety strategy:
+Miri and ASan are two layers in the project's safety strategy:
 
 | Layer | Tool | Coverage |
 |-------|------|----------|
 | Static | `cargo clippy`, `unsafe_op_in_unsafe_fn` lint | All code |
-| Dynamic (safe Rust) | `cargo test` (533 tests) | All modules |
+| Dynamic (safe Rust) | `cargo test` (579 tests) | All modules |
 | Dynamic (unsafe Rust) | **Miri** (109 tests) | COM vtable, buffers, events |
+| Dynamic (native code) | **ASan** (564 tests) | FFI, system malloc, shm, COM objects |
 | Dynamic (FFI) | Signal handler sandbox (`vst3/sandbox.rs`) | Plugin COM calls |
 | Dynamic (crash isolation) | Process-per-plugin (`ipc/`) | Full plugin lifecycle |
 | Runtime | mimalloc heap isolation | Rust vs. plugin allocations |
 | Runtime | `MallocGuardEdges` + `MallocScribble` (macOS) | System heap corruption |
 | Profiling | dhat (`--features debug-alloc`) | Heap allocation tracking |
+
+---
+
+## AddressSanitizer (ASan)
+
+ASan instruments compiled native code at the LLVM level and catches real hardware-level memory errors at runtime with low overhead. Unlike Miri, ASan can run tests that use FFI (libc::malloc, mmap, etc.).
+
+### What ASan Detects
+
+- **Use-after-free** — accessing memory after `free()` / `system_free()`
+- **Double-free** — freeing the same allocation twice
+- **Heap buffer overflow** — reading/writing past allocation boundaries
+- **Stack buffer overflow** — out-of-bounds access on stack arrays
+- **Memory leaks** — allocated memory never freed (ASan leak detector)
+- **Allocator mismatch** — `malloc`/`Box` cross-free detection
+
+### Prerequisites
+
+```bash
+# ASan requires the nightly toolchain
+rustup toolchain install nightly
+```
+
+### Quick Start
+
+#### Run all ASan-targeted tests
+
+```bash
+RUSTFLAGS="-Z sanitizer=address" \
+  cargo +nightly test --target aarch64-apple-darwin --lib -- asan_tests
+```
+
+This runs **46 tests** specifically designed for ASan validation.
+
+#### Run the full test suite under ASan
+
+```bash
+RUSTFLAGS="-Z sanitizer=address" \
+  cargo +nightly test --target aarch64-apple-darwin --lib -- \
+    --skip test_heap_check_returns_true_in_clean_process \
+    --skip test_sandbox_catches_raised_sigbus \
+    --skip test_sandbox_catches_sigsegv \
+    --skip test_sandbox_recovery_allows_subsequent_calls \
+    --skip test_sandbox_catches_sigabrt \
+    --skip test_sandbox_multiple_crashes_same_signal \
+    --skip test_sandbox_alternating_crash_and_normal \
+    --skip test_sandbox_crash_produces_backtrace \
+    --skip test_clean_recovery_has_no_heap_corruption \
+    --skip test_sandbox_crash_recovery_in_instance_context \
+    --skip test_sandbox_catches_abort_during_cleanup \
+    --skip test_last_drop_crashed_set_on_sandbox_crash \
+    --skip test_crash_flags_set_together_on_com_crash \
+    --skip test_module_drop_skips_unload_after_instance_crash \
+    --skip test_check_heap_after_recovery_clean
+```
+
+This runs **564 tests** (579 total minus 15 ASan-incompatible).
+
+### macOS Target Requirement
+
+On macOS, ASan requires specifying `--target aarch64-apple-darwin` explicitly. Without it, ASan's interceptors fail to install and the process aborts with SIGABRT.
+
+### ASan-Targeted Tests (`asan_tests.rs`)
+
+46 tests covering the FFI-heavy code paths that Miri cannot interpret:
+
+| Category | Tests | What's Validated |
+|----------|------:|-----------------|
+| host_alloc lifecycle | 7 | system_alloc/system_free pairing, null safety, varying sizes, concurrent threads, rapid cycle stress, drop semantics |
+| COM object lifecycle | 5 | HostApplication, HostComponentHandler, HostPlugFrame create→use→destroy |
+| ProcessBuffers | 5 | Full pointer chain, varying block sizes, cross-thread transfer, zero channels, interleave roundtrip |
+| Shared memory | 5 | Create/write/read, boundary writes, host↔worker roundtrip, zero channels, rapid create/destroy |
+| Event byte access | 3 | Note on/off byte-level roundtrip, event clone safety |
+| MIDI→ProcessData | 3 | Batch translate, all 16 channels, full pipeline |
+| Sandbox (non-crash) | 6 | Normal call, heap alloc, system_alloc, panic recovery, nested, sequential stress |
+| IPC messages | 1 | Encode/decode roundtrip for all message variants |
+| Full mock process | 2 | All COM objects wired into ProcessData, multi-block session |
+| Concurrent COM | 2 | Multi-threaded handler edits (COM vtable), concurrent object create/destroy |
+| Zone check | 1 | system_alloc pointer validation under ASan's malloc wrapper |
+| **Total** | **46** | |
+
+### ASan-Incompatible Tests (15 skipped)
+
+These tests conflict with ASan's signal and malloc zone interception:
+
+| Test | Conflict |
+|------|----------|
+| `test_heap_check_returns_true_in_clean_process` | `malloc_zone_check` — ASan replaces malloc zones |
+| `test_check_heap_after_recovery_clean` | `check_heap_after_recovery` → `malloc_zone_check` |
+| `test_sandbox_catches_raised_sigbus` | `libc::raise(SIGBUS)` — ASan intercepts signals |
+| `test_sandbox_catches_sigsegv` | `libc::raise(SIGSEGV)` |
+| `test_sandbox_catches_sigabrt` | `libc::raise(SIGABRT)` |
+| `test_sandbox_recovery_allows_subsequent_calls` | `libc::raise` |
+| `test_sandbox_multiple_crashes_same_signal` | `libc::raise` |
+| `test_sandbox_alternating_crash_and_normal` | `libc::raise` |
+| `test_sandbox_crash_produces_backtrace` | `libc::raise` |
+| `test_clean_recovery_has_no_heap_corruption` | `libc::raise` + `malloc_zone_check` |
+| `test_sandbox_crash_recovery_in_instance_context` | `libc::raise` |
+| `test_sandbox_catches_abort_during_cleanup` | `libc::raise` |
+| `test_last_drop_crashed_set_on_sandbox_crash` | `libc::raise` |
+| `test_crash_flags_set_together_on_com_crash` | `libc::raise` + `heap_check` |
+| `test_module_drop_skips_unload_after_instance_crash` | `libc::raise` |

@@ -388,7 +388,7 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 
 - [PRD.md](PRD.md) — Product requirements for the GUI application
 - [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
-- [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) — Guide to Miri-based dynamic analysis of unsafe code
+- [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) — Guide to Miri and AddressSanitizer dynamic analysis of unsafe code
 
 ---
 

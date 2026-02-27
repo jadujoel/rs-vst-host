@@ -906,7 +906,11 @@ mod tests {
             heap_corrupted: true,
         };
         let s = format!("{}", crash);
-        assert!(s.contains("HEAP CORRUPTED"), "Display should mention heap corruption: {}", s);
+        assert!(
+            s.contains("HEAP CORRUPTED"),
+            "Display should mention heap corruption: {}",
+            s
+        );
     }
 
     #[test]

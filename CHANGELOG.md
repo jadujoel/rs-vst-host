@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.2] - 2026-02-27
+
+### Added
+- **AddressSanitizer (ASan) support**: Added comprehensive ASan-targeted test suite for detecting real hardware-level memory errors in compiled native code. ASan catches use-after-free, double-free, heap/stack buffer overflow, memory leaks, and allocator mismatches — covering FFI code paths (libc::malloc/free, mmap, POSIX shm) that Miri cannot interpret.
+  - `src/asan_tests.rs`: 46 dedicated ASan-targeted tests organized by subsystem:
+    - **host_alloc lifecycle** (7 tests): system_alloc/system_free pairing, null safety, varying sizes, concurrent threads, rapid cycle stress, drop semantics
+    - **COM object lifecycle** (5 tests): HostApplication, HostComponentHandler, HostPlugFrame create→use→destroy, rapid create/destroy stress
+    - **ProcessBuffers** (5 tests): full pointer chain, varying block sizes, cross-thread transfer, zero channels, interleave roundtrip
+    - **Shared memory** (5 tests): create/write/read, boundary writes, host↔worker roundtrip, zero channels, rapid create/destroy
+    - **Event byte reinterpretation** (3 tests): note on/off byte-level roundtrip, event clone safety
+    - **MIDI→ProcessData pipeline** (3 tests): batch translate, all 16 channels, full pipeline integration
+    - **Sandbox non-crashing paths** (6 tests): normal call, heap alloc, system_alloc, panic recovery, nested calls, sequential stress
+    - **IPC messages** (1 test): encode/decode roundtrip for all message variants
+    - **Full mock process sessions** (2 tests): all COM objects wired into ProcessData, multi-block processing
+    - **Concurrent COM** (2 tests): multi-threaded handler edits via COM vtable, concurrent object create/destroy
+    - **System alloc zone check** (1 test): system_alloc pointers under ASan's malloc wrapper
+  - `test.bash`: Added ASan step (step 5) running 564 tests under ASan with `--target aarch64-apple-darwin`, automatically skipping 15 ASan-incompatible tests (signal sandbox + malloc_zone_check).
+- 46 new unit tests (533 → 579 total).
+- 564 tests pass under AddressSanitizer (15 skipped due to signal/malloc_zone interception conflicts).
+
+### ASan-Incompatible Tests (15 skipped under ASan)
+Tests using `libc::raise` (signal sandbox) or `malloc_zone_check` are skipped at runtime via `--skip` flags because ASan's signal and malloc zone interception conflicts with them:
+- `test_heap_check_returns_true_in_clean_process` — `malloc_zone_check`
+- `test_check_heap_after_recovery_clean` — `check_heap_after_recovery` → `malloc_zone_check`
+- `test_sandbox_catches_raised_sigbus` — `libc::raise(SIGBUS)`
+- `test_sandbox_catches_sigsegv` — `libc::raise(SIGSEGV)`
+- `test_sandbox_catches_sigabrt` — `libc::raise(SIGABRT)`
+- `test_sandbox_recovery_allows_subsequent_calls` — `libc::raise`
+- `test_sandbox_multiple_crashes_same_signal` — `libc::raise`
+- `test_sandbox_alternating_crash_and_normal` — `libc::raise`
+- `test_sandbox_crash_produces_backtrace` — `libc::raise`
+- `test_clean_recovery_has_no_heap_corruption` — `libc::raise` + `malloc_zone_check`
+- `test_sandbox_crash_recovery_in_instance_context` — `libc::raise`
+- `test_sandbox_catches_abort_during_cleanup` — `libc::raise`
+- `test_last_drop_crashed_set_on_sandbox_crash` — `libc::raise`
+- `test_crash_flags_set_together_on_com_crash` — `libc::raise` + `heap_check`
+- `test_module_drop_skips_unload_after_instance_crash` — `libc::raise`
+
 ## [0.17.1] - 2026-02-27
 
 ### Added
