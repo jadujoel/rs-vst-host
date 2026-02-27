@@ -1065,4 +1065,680 @@ mod tests {
         let crashed = DEACTIVATION_CRASHED.with(|c| c.get()) || result.is_crashed();
         subprocess_exit(crashed);
     }
+
+    // ── Multi-Plugin Lifecycle Tests ─────────────────────────────────
+    //
+    // These tests exercise loading multiple different plugins and
+    // starting/stopping them in various (including random) orders.
+    // They verify that the host can manage multiple plugin instances
+    // simultaneously without interference.
+
+    /// Helper: a simple linear-congruential PRNG for deterministic shuffles.
+    /// Avoids pulling in the `rand` crate for test-only code.
+    struct SimpleRng {
+        state: u64,
+    }
+
+    impl SimpleRng {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            // LCG parameters from Numerical Recipes
+            self.state = self
+                .state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.state
+        }
+
+        /// Generate a random index in [0, n).
+        fn next_usize(&mut self, n: usize) -> usize {
+            (self.next_u64() % n as u64) as usize
+        }
+
+        /// Fisher-Yates shuffle.
+        fn shuffle<T>(&mut self, slice: &mut [T]) {
+            for i in (1..slice.len()).rev() {
+                let j = self.next_usize(i + 1);
+                slice.swap(i, j);
+            }
+        }
+    }
+
+    /// Represents a named plugin instance slot for multi-plugin tests.
+    struct PluginSlot {
+        name: &'static str,
+        module: Option<crate::vst3::module::Vst3Module>,
+        instance: Option<crate::vst3::instance::Vst3Instance>,
+        active: bool,
+    }
+
+    impl PluginSlot {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                module: None,
+                instance: None,
+                active: false,
+            }
+        }
+
+        fn load(&mut self, path: &std::path::Path) {
+            let (module, instance) = create_instance_from_path(path);
+            self.module = Some(module);
+            self.instance = Some(instance);
+        }
+
+        fn setup_and_start(&mut self, sample_rate: f64, block_size: i32) {
+            if let Some(ref mut inst) = self.instance {
+                setup_for_processing(inst, sample_rate, block_size);
+                self.active = true;
+            }
+        }
+
+        fn process_block(&mut self, buffers: &mut crate::vst3::process::ProcessBuffers) -> bool {
+            if let Some(ref mut inst) = self.instance {
+                if self.active {
+                    return unsafe { inst.process(buffers.process_data_ptr()) };
+                }
+            }
+            false
+        }
+
+        fn shutdown(&mut self) {
+            if let Some(ref mut inst) = self.instance {
+                inst.shutdown();
+                self.active = false;
+            }
+        }
+
+        fn is_crashed(&self) -> bool {
+            self.instance
+                .as_ref()
+                .map(|i| i.is_crashed())
+                .unwrap_or(false)
+        }
+
+        fn input_channels(&self) -> usize {
+            self.instance
+                .as_ref()
+                .map(|i| i.input_channels)
+                .unwrap_or(2)
+        }
+
+        fn output_channels(&self) -> usize {
+            self.instance
+                .as_ref()
+                .map(|i| i.output_channels)
+                .unwrap_or(2)
+        }
+    }
+
+    /// Load both plugins, set up processing on both, process audio through
+    /// both simultaneously, then shut them down in forward order (MB first).
+    #[test]
+    fn e2e_multi_plugin_load_process_shutdown_forward() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut mb = PluginSlot::new("Pro-MB");
+        let mut q4 = PluginSlot::new("Pro-Q 4");
+
+        // Load both
+        mb.load(&pro_mb_path());
+        q4.load(&pro_q4_path());
+
+        // Set up both for processing
+        mb.setup_and_start(44100.0, 512);
+        q4.setup_and_start(44100.0, 512);
+
+        let mut mb_bufs = ProcessBuffers::new(mb.input_channels(), mb.output_channels(), 512);
+        let mut q4_bufs = ProcessBuffers::new(q4.input_channels(), q4.output_channels(), 512);
+
+        // Process 50 blocks through both
+        for block in 0..50 {
+            mb_bufs.prepare(512);
+            q4_bufs.prepare(512);
+            assert!(mb.process_block(&mut mb_bufs), "MB block {}", block);
+            assert!(q4.process_block(&mut q4_bufs), "Q4 block {}", block);
+        }
+
+        assert!(!mb.is_crashed());
+        assert!(!q4.is_crashed());
+
+        // Shutdown in forward order
+        mb.shutdown();
+        q4.shutdown();
+    }
+
+    /// Load both plugins, set up processing, then shut down in reverse order
+    /// (Q4 first, then MB).
+    #[test]
+    fn e2e_multi_plugin_load_process_shutdown_reverse() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut mb = PluginSlot::new("Pro-MB");
+        let mut q4 = PluginSlot::new("Pro-Q 4");
+
+        mb.load(&pro_mb_path());
+        q4.load(&pro_q4_path());
+
+        mb.setup_and_start(48000.0, 256);
+        q4.setup_and_start(48000.0, 256);
+
+        let mut mb_bufs = ProcessBuffers::new(mb.input_channels(), mb.output_channels(), 256);
+        let mut q4_bufs = ProcessBuffers::new(q4.input_channels(), q4.output_channels(), 256);
+
+        for block in 0..50 {
+            mb_bufs.prepare(256);
+            q4_bufs.prepare(256);
+            assert!(mb.process_block(&mut mb_bufs), "MB block {}", block);
+            assert!(q4.process_block(&mut q4_bufs), "Q4 block {}", block);
+        }
+
+        assert!(!mb.is_crashed());
+        assert!(!q4.is_crashed());
+
+        // Shutdown in reverse order
+        q4.shutdown();
+        mb.shutdown();
+    }
+
+    /// Interleaved setup: load MB, start processing MB, then load Q4 and start
+    /// processing Q4, process both, shutdown in random order.
+    #[test]
+    fn e2e_multi_plugin_interleaved_setup() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        // Phase 1: Load and start Pro-MB alone
+        let mut mb = PluginSlot::new("Pro-MB");
+        mb.load(&pro_mb_path());
+        mb.setup_and_start(44100.0, 512);
+
+        let mut mb_bufs = ProcessBuffers::new(mb.input_channels(), mb.output_channels(), 512);
+
+        // Process a few blocks with only MB
+        for block in 0..20 {
+            mb_bufs.prepare(512);
+            assert!(mb.process_block(&mut mb_bufs), "MB solo block {}", block);
+        }
+
+        // Phase 2: Now load Q4 while MB is still running
+        let mut q4 = PluginSlot::new("Pro-Q 4");
+        q4.load(&pro_q4_path());
+        q4.setup_and_start(44100.0, 512);
+
+        let mut q4_bufs = ProcessBuffers::new(q4.input_channels(), q4.output_channels(), 512);
+
+        // Process both plugins together
+        for block in 0..30 {
+            mb_bufs.prepare(512);
+            q4_bufs.prepare(512);
+            assert!(mb.process_block(&mut mb_bufs), "MB joint block {}", block);
+            assert!(q4.process_block(&mut q4_bufs), "Q4 joint block {}", block);
+        }
+
+        assert!(!mb.is_crashed());
+        assert!(!q4.is_crashed());
+
+        // Shutdown Q4 first while MB is still processing
+        q4.shutdown();
+
+        // Continue processing MB alone
+        for block in 0..10 {
+            mb_bufs.prepare(512);
+            assert!(mb.process_block(&mut mb_bufs), "MB post-Q4 block {}", block);
+        }
+
+        mb.shutdown();
+    }
+
+    /// Start both plugins, stop one early while the other continues processing,
+    /// then restart the stopped one with different settings.
+    #[test]
+    fn e2e_multi_plugin_stop_and_restart() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut mb = PluginSlot::new("Pro-MB");
+        let mut q4 = PluginSlot::new("Pro-Q 4");
+
+        mb.load(&pro_mb_path());
+        q4.load(&pro_q4_path());
+
+        // Start both at 44100 / 512
+        mb.setup_and_start(44100.0, 512);
+        q4.setup_and_start(44100.0, 512);
+
+        let mut mb_bufs = ProcessBuffers::new(mb.input_channels(), mb.output_channels(), 512);
+        let mut q4_bufs = ProcessBuffers::new(q4.input_channels(), q4.output_channels(), 512);
+
+        // Process both for a while
+        for block in 0..20 {
+            mb_bufs.prepare(512);
+            q4_bufs.prepare(512);
+            assert!(mb.process_block(&mut mb_bufs), "MB initial block {}", block);
+            assert!(q4.process_block(&mut q4_bufs), "Q4 initial block {}", block);
+        }
+
+        // Stop Q4 while MB continues
+        q4.shutdown();
+        assert!(!q4.is_crashed());
+
+        for block in 0..20 {
+            mb_bufs.prepare(512);
+            assert!(mb.process_block(&mut mb_bufs), "MB solo block {}", block);
+        }
+
+        // Create a fresh Q4 instance with different sample rate
+        let mut q4_v2 = PluginSlot::new("Pro-Q 4 v2");
+        q4_v2.load(&pro_q4_path());
+        q4_v2.setup_and_start(96000.0, 256);
+
+        let mut q4_v2_bufs =
+            ProcessBuffers::new(q4_v2.input_channels(), q4_v2.output_channels(), 256);
+
+        // Process both again (different sample rates / block sizes)
+        for block in 0..20 {
+            mb_bufs.prepare(512);
+            q4_v2_bufs.prepare(256);
+            assert!(mb.process_block(&mut mb_bufs), "MB+Q4v2 block {}", block);
+            assert!(q4_v2.process_block(&mut q4_v2_bufs), "Q4v2 block {}", block);
+        }
+
+        assert!(!mb.is_crashed());
+        assert!(!q4_v2.is_crashed());
+
+        q4_v2.shutdown();
+        mb.shutdown();
+    }
+
+    /// Load the same plugin (Pro-Q 4) twice and process both instances
+    /// simultaneously — tests that the host can handle duplicate modules.
+    #[test]
+    fn e2e_multi_plugin_duplicate_plugin() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut q4a = PluginSlot::new("Pro-Q 4 A");
+        let mut q4b = PluginSlot::new("Pro-Q 4 B");
+
+        q4a.load(&pro_q4_path());
+        q4b.load(&pro_q4_path());
+
+        q4a.setup_and_start(44100.0, 512);
+        q4b.setup_and_start(48000.0, 256);
+
+        let mut bufs_a = ProcessBuffers::new(q4a.input_channels(), q4a.output_channels(), 512);
+        let mut bufs_b = ProcessBuffers::new(q4b.input_channels(), q4b.output_channels(), 256);
+
+        for block in 0..50 {
+            bufs_a.prepare(512);
+            bufs_b.prepare(256);
+            assert!(q4a.process_block(&mut bufs_a), "Q4A block {}", block);
+            assert!(q4b.process_block(&mut bufs_b), "Q4B block {}", block);
+        }
+
+        assert!(!q4a.is_crashed());
+        assert!(!q4b.is_crashed());
+
+        // Shutdown in reverse load order
+        q4b.shutdown();
+        q4a.shutdown();
+    }
+
+    /// Deterministic pseudo-random ordering of load, start, process, stop
+    /// across multiple plugins. Uses a fixed seed for reproducibility.
+    ///
+    /// The test creates 4 plugin instances (2 of each type) and randomly
+    /// interleaves their lifecycle operations.
+    #[test]
+    fn e2e_multi_plugin_random_lifecycle_seed_42() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut rng = SimpleRng::new(42);
+
+        // Define the plugin slots
+        let paths = [pro_mb_path(), pro_q4_path(), pro_mb_path(), pro_q4_path()];
+        let names = ["MB-0", "Q4-0", "MB-1", "Q4-1"];
+        let sample_rates = [44100.0, 48000.0, 96000.0, 44100.0];
+        let block_sizes: [i32; 4] = [512, 256, 128, 1024];
+
+        let mut slots: Vec<PluginSlot> = names.iter().map(|n| PluginSlot::new(n)).collect();
+
+        // Phase 1: Load all in random order
+        let mut load_order: Vec<usize> = (0..4).collect();
+        rng.shuffle(&mut load_order);
+        eprintln!("Load order: {:?}", load_order);
+        for &idx in &load_order {
+            slots[idx].load(&paths[idx]);
+        }
+
+        // Phase 2: Start processing in random order
+        let mut start_order: Vec<usize> = (0..4).collect();
+        rng.shuffle(&mut start_order);
+        eprintln!("Start order: {:?}", start_order);
+        for &idx in &start_order {
+            slots[idx].setup_and_start(sample_rates[idx], block_sizes[idx]);
+        }
+
+        // Phase 3: Process blocks, randomly choosing which plugin to process each iteration
+        let mut buffers: Vec<ProcessBuffers> = slots
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                ProcessBuffers::new(
+                    s.input_channels(),
+                    s.output_channels(),
+                    block_sizes[i] as usize,
+                )
+            })
+            .collect();
+
+        for round in 0..100 {
+            // Pick a random subset of plugins to process this round
+            let num_to_process = rng.next_usize(4) + 1; // 1..=4
+            let mut process_indices: Vec<usize> = (0..4).collect();
+            rng.shuffle(&mut process_indices);
+            process_indices.truncate(num_to_process);
+
+            for &idx in &process_indices {
+                if slots[idx].active {
+                    buffers[idx].prepare(block_sizes[idx] as usize);
+                    assert!(
+                        slots[idx].process_block(&mut buffers[idx]),
+                        "{} failed at round {}",
+                        names[idx],
+                        round
+                    );
+                }
+            }
+        }
+
+        // Phase 4: Verify none crashed
+        for (idx, slot) in slots.iter().enumerate() {
+            assert!(!slot.is_crashed(), "{} crashed", names[idx]);
+        }
+
+        // Phase 5: Shutdown in random order
+        let mut shutdown_order: Vec<usize> = (0..4).collect();
+        rng.shuffle(&mut shutdown_order);
+        eprintln!("Shutdown order: {:?}", shutdown_order);
+        for &idx in &shutdown_order {
+            slots[idx].shutdown();
+        }
+    }
+
+    /// Same as above but with a different seed to increase coverage of
+    /// ordering permutations.
+    #[test]
+    fn e2e_multi_plugin_random_lifecycle_seed_1337() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut rng = SimpleRng::new(1337);
+
+        let paths = [pro_q4_path(), pro_mb_path(), pro_q4_path(), pro_mb_path()];
+        let names = ["Q4-0", "MB-0", "Q4-1", "MB-1"];
+        let sample_rates = [48000.0, 44100.0, 44100.0, 96000.0];
+        let block_sizes: [i32; 4] = [256, 512, 1024, 128];
+
+        let mut slots: Vec<PluginSlot> = names.iter().map(|n| PluginSlot::new(n)).collect();
+
+        // Load in random order
+        let mut load_order: Vec<usize> = (0..4).collect();
+        rng.shuffle(&mut load_order);
+        eprintln!("Load order: {:?}", load_order);
+        for &idx in &load_order {
+            slots[idx].load(&paths[idx]);
+        }
+
+        // Start in random order
+        let mut start_order: Vec<usize> = (0..4).collect();
+        rng.shuffle(&mut start_order);
+        eprintln!("Start order: {:?}", start_order);
+        for &idx in &start_order {
+            slots[idx].setup_and_start(sample_rates[idx], block_sizes[idx]);
+        }
+
+        // Process with random interleaving
+        let mut buffers: Vec<ProcessBuffers> = slots
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                ProcessBuffers::new(
+                    s.input_channels(),
+                    s.output_channels(),
+                    block_sizes[i] as usize,
+                )
+            })
+            .collect();
+
+        for round in 0..100 {
+            let num_to_process = rng.next_usize(4) + 1;
+            let mut process_indices: Vec<usize> = (0..4).collect();
+            rng.shuffle(&mut process_indices);
+            process_indices.truncate(num_to_process);
+
+            for &idx in &process_indices {
+                if slots[idx].active {
+                    buffers[idx].prepare(block_sizes[idx] as usize);
+                    assert!(
+                        slots[idx].process_block(&mut buffers[idx]),
+                        "{} failed at round {}",
+                        names[idx],
+                        round
+                    );
+                }
+            }
+        }
+
+        for (idx, slot) in slots.iter().enumerate() {
+            assert!(!slot.is_crashed(), "{} crashed", names[idx]);
+        }
+
+        // Shutdown in random order
+        let mut shutdown_order: Vec<usize> = (0..4).collect();
+        rng.shuffle(&mut shutdown_order);
+        eprintln!("Shutdown order: {:?}", shutdown_order);
+        for &idx in &shutdown_order {
+            slots[idx].shutdown();
+        }
+    }
+
+    /// Random interleaving of start/stop operations: some plugins are started,
+    /// processed for a while, stopped, then restarted with different settings.
+    #[test]
+    fn e2e_multi_plugin_random_start_stop_cycles() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut rng = SimpleRng::new(999);
+        let sample_rates = [44100.0, 48000.0, 96000.0];
+        let block_sizes: [i32; 3] = [128, 256, 512];
+
+        // We'll run 5 cycles of: load → start → process → stop
+        // with random plugin selection and settings each cycle
+        for cycle in 0..5 {
+            let use_mb = rng.next_usize(2) == 0;
+            let use_q4 = rng.next_usize(2) == 0 || !use_mb; // At least one plugin
+            let sr = sample_rates[rng.next_usize(3)];
+            let bs = block_sizes[rng.next_usize(3)];
+            eprintln!(
+                "Cycle {}: mb={}, q4={}, sr={}, bs={}",
+                cycle, use_mb, use_q4, sr, bs
+            );
+
+            let mut plugins: Vec<PluginSlot> = Vec::new();
+
+            if use_mb {
+                let mut slot = PluginSlot::new("MB");
+                slot.load(&pro_mb_path());
+                plugins.push(slot);
+            }
+            if use_q4 {
+                let mut slot = PluginSlot::new("Q4");
+                slot.load(&pro_q4_path());
+                plugins.push(slot);
+            }
+
+            // Start in random order
+            let mut order: Vec<usize> = (0..plugins.len()).collect();
+            rng.shuffle(&mut order);
+            for &idx in &order {
+                plugins[idx].setup_and_start(sr, bs);
+            }
+
+            // Create buffers
+            let mut buffers: Vec<ProcessBuffers> = plugins
+                .iter()
+                .map(|s| ProcessBuffers::new(s.input_channels(), s.output_channels(), bs as usize))
+                .collect();
+
+            // Process some blocks
+            let num_blocks = 10 + rng.next_usize(40);
+            for block in 0..num_blocks {
+                for (idx, plugin) in plugins.iter_mut().enumerate() {
+                    if plugin.active {
+                        buffers[idx].prepare(bs as usize);
+                        assert!(
+                            plugin.process_block(&mut buffers[idx]),
+                            "Cycle {} plugin {} block {}",
+                            cycle,
+                            plugin.name,
+                            block
+                        );
+                    }
+                }
+            }
+
+            // Verify and shutdown in random order
+            for plugin in &plugins {
+                assert!(
+                    !plugin.is_crashed(),
+                    "Cycle {} {} crashed",
+                    cycle,
+                    plugin.name
+                );
+            }
+
+            let mut shutdown_order: Vec<usize> = (0..plugins.len()).collect();
+            rng.shuffle(&mut shutdown_order);
+            for &idx in &shutdown_order {
+                plugins[idx].shutdown();
+            }
+        }
+    }
+
+    /// Test with AudioEngine integration: both plugins run through the
+    /// AudioEngine simultaneously, then are shut down in random order.
+    #[test]
+    fn e2e_multi_plugin_audio_engine_concurrent() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::audio::engine::AudioEngine;
+
+        let (_mb_mod, mut mb_inst) = create_instance_from_path(&pro_mb_path());
+        let (_q4_mod, mut q4_inst) = create_instance_from_path(&pro_q4_path());
+
+        setup_for_processing(&mut mb_inst, 44100.0, 1024);
+        setup_for_processing(&mut q4_inst, 44100.0, 1024);
+
+        let mut mb_engine = AudioEngine::new(mb_inst, 44100.0, 1024, 2);
+        let mut q4_engine = AudioEngine::new(q4_inst, 44100.0, 1024, 2);
+
+        let mut mb_output = vec![0.0f32; 2 * 512];
+        let mut q4_output = vec![0.0f32; 2 * 512];
+
+        // Process both engines simultaneously
+        for _ in 0..20 {
+            mb_engine.process(&mut mb_output);
+            q4_engine.process(&mut q4_output);
+        }
+
+        assert!(!mb_engine.is_crashed());
+        assert!(!q4_engine.is_crashed());
+
+        // Both should produce non-silent output (test tone enabled by default)
+        let mb_max = mb_output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let q4_max = q4_output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(mb_max > 0.001, "MB engine output max: {}", mb_max);
+        assert!(q4_max > 0.001, "Q4 engine output max: {}", q4_max);
+
+        // Shutdown in reverse order
+        q4_engine.shutdown();
+        mb_engine.shutdown();
+    }
+
+    /// Stress test: rapidly add and remove plugin instances. Loads a plugin,
+    /// processes a few blocks, shuts down, and repeats with the other plugin.
+    #[test]
+    fn e2e_multi_plugin_rapid_add_remove() {
+        if !require_vsts() {
+            return;
+        }
+        use crate::vst3::process::ProcessBuffers;
+
+        let mut rng = SimpleRng::new(7777);
+        let paths = [pro_mb_path(), pro_q4_path()];
+
+        for iteration in 0..10 {
+            let path_idx = rng.next_usize(2);
+            let sr = if rng.next_usize(2) == 0 {
+                44100.0
+            } else {
+                48000.0
+            };
+            let bs: i32 = [128, 256, 512, 1024][rng.next_usize(4)];
+
+            eprintln!(
+                "Rapid iter {}: plugin={}, sr={}, bs={}",
+                iteration, path_idx, sr, bs
+            );
+
+            let mut slot = PluginSlot::new(if path_idx == 0 { "MB" } else { "Q4" });
+            slot.load(&paths[path_idx]);
+            slot.setup_and_start(sr, bs);
+
+            let mut bufs =
+                ProcessBuffers::new(slot.input_channels(), slot.output_channels(), bs as usize);
+
+            let num_blocks = 5 + rng.next_usize(15);
+            for block in 0..num_blocks {
+                bufs.prepare(bs as usize);
+                assert!(
+                    slot.process_block(&mut bufs),
+                    "Rapid iter {} block {}",
+                    iteration,
+                    block
+                );
+            }
+
+            assert!(!slot.is_crashed(), "Rapid iter {} crashed", iteration);
+            slot.shutdown();
+            // slot/module/instance dropped here — repeat with fresh state
+        }
+    }
 }

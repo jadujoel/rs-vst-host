@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.5] - 2026-02-27
+
+### Added
+- **Multi-plugin lifecycle E2E tests** (`e2e_tests.rs`): 10 new end-to-end tests that load multiple different plugins and start/stop them in random orders:
+  - `e2e_multi_plugin_load_process_shutdown_forward` — Both plugins processed, shutdown in load order
+  - `e2e_multi_plugin_load_process_shutdown_reverse` — Both plugins processed, shutdown in reverse order
+  - `e2e_multi_plugin_interleaved_setup` — Load MB first, start processing, then add Q4; shutdown Q4 while MB continues
+  - `e2e_multi_plugin_stop_and_restart` — Stop Q4, reload with different sample rate (96 kHz), continue alongside MB
+  - `e2e_multi_plugin_duplicate_plugin` — Two Pro-Q 4 instances at different sample rates/block sizes simultaneously
+  - `e2e_multi_plugin_random_lifecycle_seed_42` — 4 instances (2×MB, 2×Q4) with deterministic pseudo-random load/start/process/shutdown ordering (seed 42)
+  - `e2e_multi_plugin_random_lifecycle_seed_1337` — Same structure, different seed for broader permutation coverage
+  - `e2e_multi_plugin_random_start_stop_cycles` — 5 cycles of random plugin selection, settings, and shutdown order
+  - `e2e_multi_plugin_audio_engine_concurrent` — Both plugins run through AudioEngine simultaneously
+  - `e2e_multi_plugin_rapid_add_remove` — Stress test: 10 rapid load→process→shutdown iterations with random plugin/settings
+- Uses a built-in `SimpleRng` (linear congruential generator) for deterministic shuffles without external dependencies
+- `PluginSlot` helper struct for managing named plugin instance slots in multi-plugin tests
+- Total: 618 tests passing (608 → 618), 0 ignored
+
 ## [0.17.4] - 2026-02-27
 
 ### Fixed
