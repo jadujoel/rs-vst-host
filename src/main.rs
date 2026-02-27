@@ -71,14 +71,30 @@ fn main() -> anyhow::Result<()> {
         Command::Gui {
             safe_mode,
             malloc_debug,
+            in_process,
         } => {
             if malloc_debug {
                 diagnostics::print_malloc_debug_instructions();
             }
-            gui::launch(safe_mode, malloc_debug)?;
+            if in_process {
+                // Legacy mode: GUI runs in the same process as audio/plugins.
+                // A plugin crash can corrupt the entire process.
+                gui::launch(safe_mode, malloc_debug)?;
+            } else {
+                // Default: GUI runs in a separate child process.
+                // The supervisor manages audio/plugins and relaunches the GUI on crash.
+                gui::launch_supervised(safe_mode, malloc_debug)?;
+            }
         }
         Command::Worker { socket } => {
             ipc::worker::run_worker(&socket).map_err(|e| anyhow::anyhow!(e))?;
+        }
+        Command::GuiWorker {
+            socket,
+            safe_mode,
+            malloc_debug,
+        } => {
+            gui::gui_worker::launch_worker(&socket, safe_mode, malloc_debug)?;
         }
     }
 

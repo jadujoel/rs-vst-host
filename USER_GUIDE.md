@@ -283,6 +283,7 @@ rs-vst-host gui
 |--------|-------------|
 | `--safe-mode` | Disable plugin editor windows (parameter-only mode) |
 | `--malloc-debug` | Enable heap integrity checking and print malloc debug instructions |
+| `--in-process` | Run the GUI in the same process as audio (legacy mode; disables crash isolation) |
 
 This opens a window with the **Liquid Glass** themed interface containing:
 - **Plugin Browser** (left sidebar) — scan for plugins, search/filter, add to rack
@@ -302,6 +303,12 @@ The GUI provides a modern glassmorphism-styled interface for managing plugins. L
 
 ```sh
 rs-vst-host gui
+```
+
+By default, the GUI runs in a **separate child process** supervised by the main process. This provides crash isolation — if a plugin corrupts the GUI process's heap (e.g., during editor window teardown), the supervisor automatically relaunches the GUI while audio continues uninterrupted. To use the legacy single-process mode:
+
+```sh
+rs-vst-host gui --in-process
 ```
 
 To launch in safe mode (no plugin editor windows):

@@ -17,6 +17,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Debug & profiling** — Optional feature-gated diagnostics: heap integrity checks (`malloc_zone_check`), backtrace capture in signal handler, dhat heap profiler, Chrome trace export, `--malloc-debug` CLI flag
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
+- **GUI crash isolation** — The GUI runs in a separate child process by default, supervised by the main process. If a plugin crashes the GUI, the supervisor relaunches it automatically while audio continues uninterrupted. Use `--in-process` for legacy single-process mode
 
 ## Requirements
 
@@ -60,7 +61,7 @@ cargo run -- gui
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
 | `midi-ports` | List available MIDI input ports |
-| `gui [--safe-mode] [--malloc-debug]` | Launch the graphical user interface |
+| `gui [--safe-mode] [--malloc-debug] [--in-process]` | Launch the graphical user interface |
 
 ### `run` Options
 
@@ -92,7 +93,10 @@ src/
 │   ├── app.rs       # HostApp eframe::App — plugin browser, rack, transport, parameter view, editor buttons
 │   ├── backend.rs   # Host backend — bridges GUI with audio engine, MIDI, and plugin editors (supports in-process and sandboxed modes)
 │   ├── editor.rs    # Native OS window management for VST3 plugin editor views (macOS NSWindow)
+│   ├── gui_worker.rs # GUI child process — eframe App receiving state from supervisor via IPC
+│   ├── ipc.rs       # GUI IPC protocol — GuiAction/SupervisorUpdate message types, DecodeError
 │   ├── session.rs   # Session save/load — serialize/restore host state as JSON
+│   ├── supervisor.rs # GUI supervisor — spawns/monitors GUI child, handles crash recovery and restart
 │   └── theme.rs     # Liquid Glass theme — colours, corner radii, shadows, styling
 ├── host/
 │   └── mod.rs       # Host-side abstractions

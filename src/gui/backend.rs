@@ -25,7 +25,7 @@ use tracing::{debug, info, warn};
 ///
 /// Contains only owned data — no COM pointers — so it can be freely
 /// cloned, stored, and rendered by the UI without lifetime concerns.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct ParamSnapshot {
     /// Parameter ID.
@@ -529,7 +529,11 @@ impl HostBackend {
                     let device_channels = data.len() / (data.len().max(1));
                     // Determine frame count from buffer
                     let channels = config.channels as usize;
-                    let num_samples = if channels > 0 { data.len() / channels } else { 0 };
+                    let num_samples = if channels > 0 {
+                        data.len() / channels
+                    } else {
+                        0
+                    };
                     let _ = device_channels;
                     proc.process(data, channels, Vec::new());
                     let _ = num_samples;

@@ -9,11 +9,32 @@
 //! - Session save/load for persisting host state
 //! - Audio/MIDI device selection
 //! - Backend bridge for connecting GUI to audio engine
+//!
+//! # Process Architecture
+//!
+//! The GUI can run in two modes:
+//!
+//! 1. **In-process** (legacy): GUI and audio share a single process (`launch`).
+//!    A plugin crash can corrupt the entire process.
+//!
+//! 2. **Separate-process** (default): A supervisor process manages audio/plugins
+//!    and spawns the GUI in a child process (`launch_supervised`). If the GUI
+//!    crashes, the supervisor relaunches it. Audio continues uninterrupted.
 
 pub mod app;
 pub mod backend;
 pub mod editor;
+pub mod gui_worker;
+pub mod ipc;
 pub mod session;
+pub mod supervisor;
 pub mod theme;
 
+/// Launch the GUI in-process (legacy mode). Blocks until window is closed.
 pub use app::launch;
+
+/// Launch the GUI in a supervised child process (crash-resilient mode).
+/// The supervisor manages audio/plugins and relaunches the GUI on crash.
+pub fn launch_supervised(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()> {
+    supervisor::run_supervisor(safe_mode, malloc_debug)
+}

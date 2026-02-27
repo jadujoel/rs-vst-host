@@ -63,6 +63,13 @@ pub enum Command {
         /// if recommended vars aren't set.
         #[arg(long)]
         malloc_debug: bool,
+
+        /// Run GUI in-process instead of a separate process (legacy mode).
+        /// In-process mode shares memory with plugins, so a plugin crash
+        /// can bring down the entire host. The default (separate process)
+        /// is crash-resilient.
+        #[arg(long)]
+        in_process: bool,
     },
     /// Internal: run as a plugin worker process (used by process-per-plugin sandboxing).
     #[command(hide = true)]
@@ -70,6 +77,21 @@ pub enum Command {
         /// Path to the Unix domain socket for IPC with the host.
         #[arg(long)]
         socket: String,
+    },
+    /// Internal: run as the GUI worker process (used by GUI process separation).
+    #[command(hide = true)]
+    GuiWorker {
+        /// Path to the Unix domain socket for IPC with the supervisor.
+        #[arg(long)]
+        socket: String,
+
+        /// Launch in safe mode.
+        #[arg(long)]
+        safe_mode: bool,
+
+        /// Enable malloc debug.
+        #[arg(long)]
+        malloc_debug: bool,
     },
 }
 
@@ -216,7 +238,8 @@ mod tests {
             cli.command,
             Command::Gui {
                 safe_mode: false,
-                malloc_debug: false
+                malloc_debug: false,
+                ..
             }
         ));
     }
@@ -228,7 +251,8 @@ mod tests {
             cli.command,
             Command::Gui {
                 safe_mode: true,
-                malloc_debug: false
+                malloc_debug: false,
+                ..
             }
         ));
     }
@@ -240,7 +264,8 @@ mod tests {
             cli.command,
             Command::Gui {
                 safe_mode: false,
-                malloc_debug: true
+                malloc_debug: true,
+                ..
             }
         ));
     }
@@ -253,7 +278,8 @@ mod tests {
             cli.command,
             Command::Gui {
                 safe_mode: true,
-                malloc_debug: true
+                malloc_debug: true,
+                ..
             }
         ));
     }

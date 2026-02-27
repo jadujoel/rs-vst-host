@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-27 (v0.17.5 — multi-plugin lifecycle E2E tests).
+Last updated: 2026-02-27 (v0.18.0 — GUI process separation with supervisor/worker architecture).
 
 ## Summary
 
-- **Total tests:** 618 (619 with `--features debug-tools`)
+- **Total tests:** 652 (lib target)
 - **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
-- **Test stability:** Verified (10 consecutive clean runs, 0 failures)
-- **Last test run:** 2026-02-27 (618 tests, 0 errors, 0 ignored)
+- **Test stability:** Verified
+- **Last test run:** 2026-02-27 (652 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -50,6 +50,9 @@ Last updated: 2026-02-27 (v0.17.5 — multi-plugin lifecycle E2E tests).
 | `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/e2e_tests.rs` | 39 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 crash-resilience tests use subprocess isolation with permanent SIGABRT handler (0 ignored). 10 multi-plugin lifecycle tests: forward/reverse shutdown, interleaved setup, stop-and-restart, duplicate instances, deterministic random ordering (seeds 42/1337), random start/stop cycles, concurrent AudioEngine, rapid add/remove stress. |
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
+| `src/gui/ipc.rs` | 6 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 11 variants), encode/decode wire protocol, DecodeError timeout classification |
+| `src/gui/supervisor.rs` | 5 | ⚠️ Partial | handle_action dispatch (shutdown, set_transport, stage_parameter, refresh_devices), audio_status_state conversion; full supervisor loop requires child process |
+| `src/gui/gui_worker.rs` | 9 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |

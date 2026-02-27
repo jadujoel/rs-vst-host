@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2026-02-27
+
+### Added
+- **GUI process separation** — The GUI now runs in a separate child process by default, supervised by the main process. If a plugin crashes the GUI process, the supervisor automatically relaunches the GUI within seconds while audio continues uninterrupted. Key components:
+  - `gui/supervisor.rs` — Supervisor loop: spawns GUI child, accepts Unix socket connections, sends full state, handles GUI actions, monitors for crashes, and relaunches (up to 5 rapid restarts in 30s)
+  - `gui/gui_worker.rs` — GUI child process: connects to supervisor via Unix socket, renders the full eframe/egui interface, sends user actions back to the supervisor
+  - `gui/ipc.rs` — IPC protocol: `GuiAction` (20 variants) and `SupervisorUpdate` (11 variants) enums with `DecodeError` for proper timeout/error discrimination
+  - `gui-worker` hidden CLI subcommand for internal use by the supervisor
+  - `--in-process` flag on `gui` command for legacy single-process mode
+- `DecodeError` enum in GUI IPC with `is_timeout()` method for robust cross-platform error handling (macOS `EAGAIN` vs Linux `EWOULDBLOCK`)
+
+### Fixed
+- **GUI crash loop on startup** — The supervisor's message loop incorrectly treated macOS socket timeout errors ("Resource temporarily unavailable") as real errors, killing and restarting the GUI child 5 times before giving up. Fixed by introducing `DecodeError::Timeout` variant with proper cross-platform error string matching.
+
+### Changed
+- `ParamSnapshot` now derives `PartialEq`, `Serialize`, and `Deserialize` for IPC transport and change detection
+- Default `gui` command now uses supervised mode (separate process); use `--in-process` for legacy behavior
+
 ## [0.17.5] - 2026-02-27
 
 ### Added
