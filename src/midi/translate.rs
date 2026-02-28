@@ -152,9 +152,9 @@ mod tests {
     #[test]
     fn test_translate_batch() {
         let messages = vec![
-            make_midi(&[0x90, 60, 100]),  // Note On
-            make_midi(&[0xB0, 1, 64]),    // CC (ignored)
-            make_midi(&[0x80, 60, 0]),    // Note Off
+            make_midi(&[0x90, 60, 100]), // Note On
+            make_midi(&[0xB0, 1, 64]),   // CC (ignored)
+            make_midi(&[0x80, 60, 0]),   // Note Off
         ];
 
         let events = translate_midi_batch(&messages);
@@ -252,11 +252,7 @@ mod tests {
         // All unsupported messages
         let mut at = make_midi(&[0xD0, 100, 0]);
         at.len = 2;
-        let messages = vec![
-            make_midi(&[0xB0, 1, 64]),
-            make_midi(&[0xE0, 0, 64]),
-            at,
-        ];
+        let messages = vec![make_midi(&[0xB0, 1, 64]), make_midi(&[0xE0, 0, 64]), at];
         let events = translate_midi_batch(&messages);
         assert!(events.is_empty());
     }

@@ -1,1 +1,1 @@
-./target/release/rs-vst-host
+./target/release/rs-vst-host gui
