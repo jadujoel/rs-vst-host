@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0] - 2026-02-28
+
+### Changed — Modern UI Redesign
+
+Complete visual overhaul of the GUI for a polished, modern DAW-like aesthetic.
+
+**Theme (`theme.rs`):**
+- Replaced nearly-invisible premultiplied alpha colors with opaque, visible dark surfaces
+- Added secondary background color (`BG_SECONDARY`) for panel depth
+- Added warm secondary accent (`ACCENT_WARM`) for visual variety
+- Added `ACCENT_MUTED` for subtle accent-tinted backgrounds
+- Added `INPUT_BG`, `BADGE_BG`, `INFO` colors for new UI elements
+- Added `CARD_SHADOW` for subtle card elevation
+- Added `PILL_CORNER_RADIUS` for badge/pill elements
+- Added helper functions: `accent_button_frame()`, `bottom_bar_frame()`, `input_frame()`, `section_heading()`, `badge()`, `status_dot()`
+- Improved widget hover state with `expansion` for tactile feedback
+- Better slider rail height and interact sizing
+- Updated tests to match new opaque color values
+
+**Plugin Browser (left panel):**
+- Section header with uppercase label
+- Accent-filled scan button with white text
+- Search bar with dedicated input frame styling
+- Plugin count indicator
+- Plugin cards with visible surface, inline vendor + subcategory pills
+- Rounded accent-colored "+" add buttons
+
+**Plugin Rack (central panel):**
+- Section header with slot count
+- Pill-shaped numbered slot badges with dynamic coloring
+- Cards with distinct fill colors for active (green tint), selected (blue tint), and default states
+- Status badges ("ACTIVE", "BYPASS") as colored pills
+- Styled action buttons with semantic coloring (green play, red stop, blue editor)
+- Improved empty state with large icon and descriptive text
+
+**Parameter Panel (right panel):**
+- Uppercase section header
+- Plugin name with larger font size
+- Status dot indicators (green for active, amber for inactive)
+- Input-framed search filter
+- Read-only parameters displayed in subtle card frames
+
+**Bottom Bar:**
+- Tab buttons with accent-fill active state instead of selectable labels
+- Transport play button with colored fill (green/amber)
+- Styled tone toggle with accent tint when active
+- Green status dot for running audio engine
+- Styled device labels and refresh button
+- Session save button with accent fill, load button with widget fill
+
+**Window:**
+- Increased default size to 1280×820
+- Updated title to "rs-vst-host — VST3 Plugin Host"
+
+**Results:** 1326 tests passing (719 + 607), 0 failures, no benchmark regressions.
+
 ## [0.21.0] - 2026-02-28
 
 ### Changed — Complete vst3-rs Migration

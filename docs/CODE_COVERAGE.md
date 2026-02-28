@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.21.0 — complete vst3-rs migration).
+Last updated: 2026-02-28 (v0.22.0 — modern UI redesign).
 
 ## Summary
 
-- **Total tests:** 1310 (711 unit + 599 binary/integration)
+- **Total tests:** 1326 (719 unit + 607 binary/integration)
 - **All passing:** ✅ (0 failures)
 - **Build warnings:** 0 (clippy `-D warnings` clean)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (1310 tests passing, 0 failures, 0 ignored) — full vst3-rs migration complete
+- **Last test run:** 2026-02-28 (1326 tests passing, 0 failures, 0 ignored) — modern UI redesign complete
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -31,7 +31,7 @@ Last updated: 2026-02-28 (v0.21.0 — complete vst3-rs migration).
 | `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable (vst3-rs types), perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
 | `src/gui/app.rs` | 60 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
 | `src/gui/backend.rs` | 45 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none, sandbox-wrapped deactivation (no active/no crash, flags cleared before drop, SandboxResult crashed detection, SandboxResult ok not crashed); activation requires real .vst3 plugins |
-| `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
+| `src/gui/theme.rs` | 18 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, opaque panel fill, semantic colour distinctness, accent button frame, bottom bar frame, input frame, badge background, secondary background, warm accent, widget visibility, card shadow |
 | `src/ipc/messages.rs` | 18 | ✅ Full | Serialization roundtrip (all HostMessage/WorkerResponse variants), encode/decode wire protocol, length-prefix framing, oversized message rejection (16 MB limit), empty stream handling, MidiEvent/ParamChange/TransportState serde |
 | `src/ipc/shm.rs` | 12 | ✅ Full | Create/open shared memory, input/output channel access, read/write audio data, header layout, sample count, ready flag, channel count validation, POSIX cleanup (`shm_unlink`) |
 | `src/ipc/worker.rs` | 12 | ⚠️ Partial | WorkerState creation, all message handlers (load/configure/activate/deactivate/process/set_parameter/query_parameters/get_state/set_state/has_editor/shutdown/ping) tested without real plugins; full integration requires actual VST3 bundles |

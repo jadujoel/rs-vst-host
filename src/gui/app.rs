@@ -631,19 +631,20 @@ impl eframe::App for HostApp {
         if self.heap_corruption_detected {
             egui::TopBottomPanel::top("heap_corruption_warning")
                 .frame(egui::Frame {
-                    fill: egui::Color32::from_rgb(180, 30, 30),
-                    inner_margin: egui::Margin::symmetric(16, 8),
+                    fill: egui::Color32::from_rgb(140, 25, 25),
+                    inner_margin: egui::Margin::symmetric(16, 10),
+                    corner_radius: egui::CornerRadius::ZERO,
                     ..Default::default()
                 })
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
                             egui::RichText::new(
-                                "⚠ Heap corruption detected — save your session and restart.",
+                                "⚠  Heap corruption detected — save your session and restart.",
                             )
                             .color(egui::Color32::WHITE)
                             .strong()
-                            .size(14.0),
+                            .size(13.0),
                         );
                     });
                 });
@@ -651,11 +652,12 @@ impl eframe::App for HostApp {
 
         // — Left side panel: Plugin Browser —
         egui::SidePanel::left("plugin_browser")
-            .default_width(280.0)
+            .default_width(300.0)
             .resizable(true)
             .frame(egui::Frame {
-                fill: theme::BG_BASE,
-                inner_margin: egui::Margin::same(12),
+                fill: theme::BG_SECONDARY,
+                inner_margin: egui::Margin::symmetric(14, 14),
+                stroke: egui::Stroke::new(1.0, theme::SEPARATOR),
                 ..Default::default()
             })
             .show(ctx, |ui| {
@@ -665,11 +667,12 @@ impl eframe::App for HostApp {
         // — Right side panel: Parameter View —
         if self.selected_slot.is_some() {
             egui::SidePanel::right("param_panel")
-                .default_width(320.0)
+                .default_width(340.0)
                 .resizable(true)
                 .frame(egui::Frame {
-                    fill: theme::BG_BASE,
-                    inner_margin: egui::Margin::same(12),
+                    fill: theme::BG_SECONDARY,
+                    inner_margin: egui::Margin::symmetric(14, 14),
+                    stroke: egui::Stroke::new(1.0, theme::SEPARATOR),
                     ..Default::default()
                 })
                 .show(ctx, |ui| {
@@ -679,12 +682,7 @@ impl eframe::App for HostApp {
 
         // — Bottom panel: Transport / Devices / Session + Status —
         egui::TopBottomPanel::bottom("transport_bar")
-            .frame(egui::Frame {
-                fill: theme::PANEL_FILL,
-                inner_margin: egui::Margin::symmetric(16, 8),
-                stroke: egui::Stroke::new(1.0, theme::GLASS_BORDER),
-                ..Default::default()
-            })
+            .frame(theme::bottom_bar_frame())
             .show(ctx, |ui| {
                 self.show_bottom_bar(ui);
             });
@@ -693,7 +691,7 @@ impl eframe::App for HostApp {
         egui::CentralPanel::default()
             .frame(egui::Frame {
                 fill: theme::BG_BASE,
-                inner_margin: egui::Margin::same(16),
+                inner_margin: egui::Margin::same(20),
                 ..Default::default()
             })
             .show(ctx, |ui| {
@@ -707,49 +705,90 @@ impl eframe::App for HostApp {
 impl HostApp {
     /// Render the left-side plugin browser panel.
     pub(crate) fn show_browser(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Plugin Browser");
-        ui.add_space(8.0);
+        // Section header
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("🎛  PLUGINS")
+                    .color(theme::TEXT_SECONDARY)
+                    .size(12.0)
+                    .strong(),
+            );
+        });
+        ui.add_space(6.0);
 
-        // Scan button
-        if ui
-            .add(
-                egui::Button::new("⟳  Scan Plugins")
-                    .min_size(egui::vec2(ui.available_width(), 28.0)),
-            )
-            .clicked()
-        {
+        // Scan button — accent-filled primary action
+        let scan_btn = egui::Button::new(
+            egui::RichText::new("⟳  Scan Plugins")
+                .color(egui::Color32::WHITE)
+                .strong(),
+        )
+        .fill(theme::ACCENT_DIM)
+        .corner_radius(theme::BUTTON_CORNER_RADIUS)
+        .min_size(egui::vec2(ui.available_width(), 32.0));
+
+        if ui.add(scan_btn).clicked() {
             self.scan_plugins();
         }
 
-        ui.add_space(8.0);
+        ui.add_space(10.0);
 
-        // Search filter
-        ui.horizontal(|ui| {
-            ui.label("🔍");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.browser_filter.text)
-                    .hint_text("Filter…")
-                    .desired_width(ui.available_width()),
-            );
+        // Search filter with input frame
+        theme::input_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🔍").color(theme::TEXT_DISABLED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.browser_filter.text)
+                        .hint_text("Search plugins…")
+                        .desired_width(ui.available_width())
+                        .frame(false),
+                );
+            });
         });
 
         ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(4.0);
 
-        // Plugin list — collect owned copies to avoid borrow conflict
+        // Plugin count badge
         let classes: Vec<(PluginModuleInfo, PluginClassInfo)> = self
             .filtered_classes()
             .into_iter()
             .map(|(m, c)| (m.clone(), c.clone()))
             .collect();
 
-        if classes.is_empty() {
+        ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("No plugins found.")
-                    .color(theme::TEXT_SECONDARY)
-                    .italics(),
+                egui::RichText::new(format!("{} plugin(s)", classes.len()))
+                    .color(theme::TEXT_DISABLED)
+                    .small(),
             );
+        });
+        ui.add_space(4.0);
+
+        // Thin accent separator
+        let sep_rect = ui.available_rect_before_wrap();
+        ui.painter().line_segment(
+            [
+                egui::pos2(sep_rect.min.x, sep_rect.min.y),
+                egui::pos2(sep_rect.max.x, sep_rect.min.y),
+            ],
+            egui::Stroke::new(1.0, theme::SEPARATOR),
+        );
+        ui.add_space(6.0);
+
+        if classes.is_empty() {
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("No plugins found")
+                        .color(theme::TEXT_DISABLED)
+                        .size(14.0),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Click Scan to discover VST3 plugins")
+                        .color(theme::TEXT_DISABLED)
+                        .small(),
+                );
+            });
         } else {
             // Track pending add action outside the scroll area
             let mut add_action: Option<(PluginModuleInfo, PluginClassInfo)> = None;
@@ -766,7 +805,17 @@ impl HostApp {
 
                         let subcats = class.subcategories.as_deref().unwrap_or("");
 
-                        theme::glass_card_frame().show(ui, |ui| {
+                        // Plugin card with visible surface
+                        let card = egui::Frame {
+                            inner_margin: egui::Margin::symmetric(12, 8),
+                            outer_margin: egui::Margin::symmetric(0, 2),
+                            corner_radius: theme::BUTTON_CORNER_RADIUS,
+                            fill: theme::WIDGET_FILL,
+                            stroke: egui::Stroke::new(1.0, theme::GLASS_BORDER),
+                            ..Default::default()
+                        };
+
+                        card.show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.vertical(|ui| {
                                     ui.label(
@@ -774,31 +823,44 @@ impl HostApp {
                                             .color(theme::TEXT_PRIMARY)
                                             .strong(),
                                     );
-                                    ui.label(
-                                        egui::RichText::new(vendor)
-                                            .color(theme::TEXT_SECONDARY)
-                                            .small(),
-                                    );
-                                    if !subcats.is_empty() {
+                                    ui.horizontal(|ui| {
                                         ui.label(
-                                            egui::RichText::new(subcats)
-                                                .color(theme::TEXT_DISABLED)
+                                            egui::RichText::new(vendor)
+                                                .color(theme::TEXT_SECONDARY)
                                                 .small(),
                                         );
-                                    }
+                                        if !subcats.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new("·")
+                                                    .color(theme::TEXT_DISABLED)
+                                                    .small(),
+                                            );
+                                            // Subcategory pills
+                                            for tag in subcats.split('|').take(2) {
+                                                theme::badge(ui, tag, theme::INFO);
+                                            }
+                                        }
+                                    });
                                 });
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui.button("＋").clicked() {
+                                        let add_btn = egui::Button::new(
+                                            egui::RichText::new("+")
+                                                .color(theme::ACCENT)
+                                                .strong()
+                                                .size(16.0),
+                                        )
+                                        .fill(theme::ACCENT_MUTED)
+                                        .corner_radius(theme::PILL_CORNER_RADIUS)
+                                        .min_size(egui::vec2(28.0, 28.0));
+                                        if ui.add(add_btn).on_hover_text("Add to rack").clicked() {
                                             add_action = Some((module.clone(), class.clone()));
                                         }
                                     },
                                 );
                             });
                         });
-
-                        ui.add_space(2.0);
                     }
                 });
 
@@ -811,38 +873,55 @@ impl HostApp {
 
     /// Render the bottom bar with tabbed views: Transport, Devices, Session.
     pub(crate) fn show_bottom_bar(&mut self, ui: &mut egui::Ui) {
-        // Tab selector row
+        // Tab selector row with styled tabs
         ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.bottom_tab == BottomTab::Transport, "🎵 Transport")
-                .clicked()
-            {
-                self.bottom_tab = BottomTab::Transport;
-            }
-            if ui
-                .selectable_label(self.bottom_tab == BottomTab::Devices, "🔊 Devices")
-                .clicked()
-            {
-                self.bottom_tab = BottomTab::Devices;
-            }
-            if ui
-                .selectable_label(self.bottom_tab == BottomTab::Session, "💾 Session")
-                .clicked()
-            {
-                self.bottom_tab = BottomTab::Session;
+            for (tab, label) in [
+                (BottomTab::Transport, "Transport"),
+                (BottomTab::Devices, "Devices"),
+                (BottomTab::Session, "Session"),
+            ] {
+                let is_active = self.bottom_tab == tab;
+                let text = egui::RichText::new(label)
+                    .color(if is_active {
+                        theme::ACCENT
+                    } else {
+                        theme::TEXT_SECONDARY
+                    })
+                    .strong();
+
+                let btn = egui::Button::new(text)
+                    .fill(if is_active {
+                        theme::ACCENT_MUTED
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    })
+                    .corner_radius(theme::BUTTON_CORNER_RADIUS);
+
+                if ui.add(btn).clicked() {
+                    self.bottom_tab = tab;
+                }
             }
 
             // Status at the right edge
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(&self.status_message)
-                        .color(theme::TEXT_SECONDARY)
+                        .color(theme::TEXT_DISABLED)
                         .small(),
                 );
             });
         });
 
-        ui.separator();
+        // Thin separator
+        let sep_rect = ui.available_rect_before_wrap();
+        ui.painter().line_segment(
+            [
+                egui::pos2(sep_rect.min.x, sep_rect.min.y + 2.0),
+                egui::pos2(sep_rect.max.x, sep_rect.min.y + 2.0),
+            ],
+            egui::Stroke::new(1.0, theme::SEPARATOR),
+        );
+        ui.add_space(6.0);
 
         // Tab content
         match self.bottom_tab {
@@ -855,16 +934,32 @@ impl HostApp {
     /// Render transport controls (play/pause, tempo, time sig).
     fn show_transport_content(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // Play / Pause
-            let play_label = if self.transport.playing { "⏸" } else { "▶" };
-            if ui.button(play_label).clicked() {
+            // Play / Pause — large accent button
+            let (play_label, play_color) = if self.transport.playing {
+                ("⏸", theme::ACCENT_WARM)
+            } else {
+                ("▶", theme::SUCCESS)
+            };
+            let play_btn = egui::Button::new(
+                egui::RichText::new(play_label)
+                    .color(egui::Color32::WHITE)
+                    .size(18.0),
+            )
+            .fill(play_color)
+            .corner_radius(theme::BUTTON_CORNER_RADIUS)
+            .min_size(egui::vec2(40.0, 28.0));
+            if ui.add(play_btn).clicked() {
                 self.transport.playing = !self.transport.playing;
             }
 
-            ui.separator();
+            ui.add_space(8.0);
 
             // Tempo
-            ui.label("BPM");
+            ui.label(
+                egui::RichText::new("BPM")
+                    .color(theme::TEXT_SECONDARY)
+                    .small(),
+            );
             ui.add(
                 egui::DragValue::new(&mut self.transport.tempo)
                     .range(20.0..=300.0)
@@ -872,53 +967,66 @@ impl HostApp {
                     .fixed_decimals(1),
             );
 
-            ui.separator();
+            ui.add_space(8.0);
 
             // Time signature
-            ui.label("Time");
+            ui.label(
+                egui::RichText::new("Time")
+                    .color(theme::TEXT_SECONDARY)
+                    .small(),
+            );
             ui.add(
                 egui::DragValue::new(&mut self.transport.time_sig_num)
                     .range(1..=16)
                     .speed(0.1),
             );
-            ui.label("/");
+            ui.label(egui::RichText::new("/").color(theme::TEXT_DISABLED));
             ui.add(
                 egui::DragValue::new(&mut self.transport.time_sig_den)
                     .range(1..=16)
                     .speed(0.1),
             );
 
-            ui.separator();
+            ui.add_space(8.0);
 
-            // Test tone toggle
-            let tone_label = if self.tone_enabled {
-                "🔔 Tone On"
+            // Test tone toggle — subtle button
+            let (tone_label, tone_fill) = if self.tone_enabled {
+                ("🔔 Tone", theme::ACCENT_MUTED)
             } else {
-                "🔕 Tone Off"
+                ("🔕 Tone", egui::Color32::TRANSPARENT)
             };
-            if ui.button(tone_label).clicked() {
+            let tone_btn =
+                egui::Button::new(egui::RichText::new(tone_label).color(if self.tone_enabled {
+                    theme::ACCENT
+                } else {
+                    theme::TEXT_DISABLED
+                }))
+                .fill(tone_fill)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS);
+            if ui.add(tone_btn).clicked() {
                 self.tone_enabled = !self.tone_enabled;
                 self.backend.set_tone_enabled(self.tone_enabled);
             }
 
-            // Audio engine status (right-aligned)
+            // Audio engine status (right-aligned) with status dot
             let status = &self.backend.audio_status;
             if status.running {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let editors_open = self.backend.editor_count();
                     let editor_str = if editors_open > 0 {
-                        format!(" | {} editor(s)", editors_open)
+                        format!(" · {} editor(s)", editors_open)
                     } else {
                         String::new()
                     };
                     ui.label(
                         egui::RichText::new(format!(
-                            "{} Hz • {} frames • {}{}",
+                            "{} Hz · {} frames · {}{}",
                             status.sample_rate, status.buffer_size, status.device_name, editor_str,
                         ))
                         .color(theme::TEXT_DISABLED)
                         .small(),
                     );
+                    theme::status_dot(ui, theme::SUCCESS);
                 });
             }
         });
@@ -928,7 +1036,12 @@ impl HostApp {
     fn show_devices_content(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             // Audio output device
-            ui.label("Audio Output:");
+            ui.label(
+                egui::RichText::new("🔊 Audio")
+                    .color(theme::TEXT_SECONDARY)
+                    .small()
+                    .strong(),
+            );
             let current_audio = self
                 .backend
                 .selected_audio_device
@@ -959,10 +1072,15 @@ impl HostApp {
                     }
                 });
 
-            ui.separator();
+            ui.add_space(12.0);
 
             // MIDI input port
-            ui.label("MIDI Input:");
+            ui.label(
+                egui::RichText::new("🎹 MIDI")
+                    .color(theme::TEXT_SECONDARY)
+                    .small()
+                    .strong(),
+            );
             let current_midi = self
                 .backend
                 .selected_midi_port
@@ -993,9 +1111,13 @@ impl HostApp {
                     }
                 });
 
-            ui.separator();
+            ui.add_space(8.0);
 
-            if ui.button("⟳ Refresh").clicked() {
+            let refresh_btn =
+                egui::Button::new(egui::RichText::new("⟳ Refresh").color(theme::TEXT_SECONDARY))
+                    .fill(egui::Color32::TRANSPARENT)
+                    .corner_radius(theme::BUTTON_CORNER_RADIUS);
+            if ui.add(refresh_btn).clicked() {
                 self.backend.refresh_devices();
                 self.status_message = format!(
                     "Devices refreshed — {} audio, {} MIDI",
@@ -1009,17 +1131,36 @@ impl HostApp {
     /// Render session save/load controls.
     fn show_session_content(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Path:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.session_path)
-                    .hint_text("session.json")
-                    .desired_width(400.0),
+            ui.label(
+                egui::RichText::new("Path")
+                    .color(theme::TEXT_SECONDARY)
+                    .small()
+                    .strong(),
             );
+            theme::input_frame().show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.session_path)
+                        .hint_text("session.json")
+                        .desired_width(380.0)
+                        .frame(false),
+                );
+            });
 
-            if ui.button("💾 Save").clicked() {
+            ui.add_space(4.0);
+
+            let save_btn =
+                egui::Button::new(egui::RichText::new("💾 Save").color(egui::Color32::WHITE))
+                    .fill(theme::ACCENT_DIM)
+                    .corner_radius(theme::BUTTON_CORNER_RADIUS);
+            if ui.add(save_btn).clicked() {
                 self.save_session();
             }
-            if ui.button("📂 Load").clicked() {
+
+            let load_btn =
+                egui::Button::new(egui::RichText::new("📂 Load").color(theme::TEXT_PRIMARY))
+                    .fill(theme::WIDGET_FILL)
+                    .corner_radius(theme::BUTTON_CORNER_RADIUS);
+            if ui.add(load_btn).clicked() {
                 self.load_session();
             }
         });
@@ -1036,11 +1177,17 @@ impl HostApp {
         let Some(idx) = self.selected_slot else {
             // No slot selected — show placeholder
             ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
+                ui.add_space(60.0);
                 ui.label(
-                    egui::RichText::new("Select a plugin from the rack to view its parameters.")
-                        .color(theme::TEXT_SECONDARY)
-                        .italics(),
+                    egui::RichText::new("🎹")
+                        .color(theme::TEXT_DISABLED)
+                        .size(32.0),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Select a plugin to view parameters")
+                        .color(theme::TEXT_DISABLED)
+                        .size(13.0),
                 );
             });
             return;
@@ -1054,8 +1201,24 @@ impl HostApp {
 
         let is_active = self.backend.active_slot_index() == Some(idx);
 
-        // Header with plugin name and vendor
-        ui.heading(format!("🎛 {}", slot_name));
+        // Header section with styled layout
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("🏛  PARAMETERS")
+                    .color(theme::TEXT_SECONDARY)
+                    .size(12.0)
+                    .strong(),
+            );
+        });
+        ui.add_space(4.0);
+
+        // Plugin name and vendor
+        ui.label(
+            egui::RichText::new(&slot_name)
+                .color(theme::TEXT_PRIMARY)
+                .size(16.0)
+                .strong(),
+        );
         if !slot_vendor.is_empty() {
             ui.label(
                 egui::RichText::new(&slot_vendor)
@@ -1065,58 +1228,69 @@ impl HostApp {
         }
         ui.add_space(4.0);
 
-        // Status banner for inactive plugins
-        if !is_active {
-            if !self.param_snapshots.is_empty() {
+        // Status badge
+        if is_active {
+            ui.horizontal(|ui| {
+                theme::status_dot(ui, theme::SUCCESS);
                 ui.label(
-                    egui::RichText::new(
-                        "⚠ Plugin is inactive — changes will be applied on activation.",
-                    )
-                    .color(theme::WARNING)
-                    .small(),
+                    egui::RichText::new("Active")
+                        .color(theme::SUCCESS)
+                        .small()
+                        .strong(),
+                );
+            });
+        } else if !self.param_snapshots.is_empty() {
+            ui.horizontal(|ui| {
+                theme::status_dot(ui, theme::WARNING);
+                ui.label(
+                    egui::RichText::new("Inactive — changes applied on activation")
+                        .color(theme::WARNING)
+                        .small(),
+                );
+            });
+        } else {
+            // No cached params — show activation prompt
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    egui::RichText::new("Activate this plugin to view parameters")
+                        .color(theme::TEXT_DISABLED)
+                        .size(13.0),
                 );
                 ui.add_space(4.0);
-            } else {
-                // No cached params — show activation prompt
-                ui.vertical_centered(|ui| {
-                    ui.add_space(20.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Activate this plugin to view and edit its parameters.",
-                        )
-                        .color(theme::TEXT_SECONDARY)
-                        .italics(),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("Click ▶ in the rack to activate.")
-                            .color(theme::TEXT_DISABLED)
-                            .small(),
-                    );
-                });
-                return;
-            }
+                ui.label(
+                    egui::RichText::new("Click ▶ in the rack")
+                        .color(theme::TEXT_DISABLED)
+                        .small(),
+                );
+            });
+            return;
         }
+
+        ui.add_space(6.0);
 
         if self.param_snapshots.is_empty() {
             ui.label(
                 egui::RichText::new("No parameters exposed.")
-                    .color(theme::TEXT_SECONDARY)
-                    .italics(),
+                    .color(theme::TEXT_DISABLED)
+                    .size(13.0),
             );
             return;
         }
 
         // Parameter search filter
-        ui.horizontal(|ui| {
-            ui.label("🔍");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.param_filter)
-                    .hint_text("Filter parameters…")
-                    .desired_width(ui.available_width()),
-            );
+        theme::input_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🔍").color(theme::TEXT_DISABLED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.param_filter)
+                        .hint_text("Filter parameters…")
+                        .desired_width(ui.available_width())
+                        .frame(false),
+                );
+            });
         });
-        ui.add_space(4.0);
+        ui.add_space(6.0);
 
         let filter_lower = self.param_filter.to_lowercase();
 
@@ -1134,22 +1308,34 @@ impl HostApp {
                         continue;
                     }
                     if snap.is_read_only {
-                        // Read-only: just display the value
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&snap.title).color(theme::TEXT_PRIMARY));
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(&snap.display)
-                                            .color(theme::TEXT_SECONDARY)
-                                            .monospace(),
-                                    );
-                                },
-                            );
+                        // Read-only: display in a subtle card
+                        egui::Frame {
+                            inner_margin: egui::Margin::symmetric(8, 4),
+                            corner_radius: theme::SMALL_CORNER_RADIUS,
+                            fill: theme::WIDGET_FILL,
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&snap.title)
+                                        .color(theme::TEXT_SECONDARY)
+                                        .small(),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(&snap.display)
+                                                .color(theme::TEXT_PRIMARY)
+                                                .monospace(),
+                                        );
+                                    },
+                                );
+                            });
                         });
                     } else {
-                        // Editable: slider
+                        // Editable: slider with label and value
                         let label_color = if snap.is_bypass {
                             theme::WARNING
                         } else {
@@ -1233,21 +1419,43 @@ impl HostApp {
 
     /// Render the central plugin rack.
     pub(crate) fn show_rack(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Plugin Rack");
+        // Section header
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("🎨  RACK")
+                    .color(theme::TEXT_SECONDARY)
+                    .size(12.0)
+                    .strong(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!("{} slot(s)", self.rack.len()))
+                        .color(theme::TEXT_DISABLED)
+                        .small(),
+                );
+            });
+        });
         ui.add_space(8.0);
 
         if self.rack.is_empty() {
             ui.vertical_centered(|ui| {
-                ui.add_space(80.0);
+                ui.add_space(100.0);
                 ui.label(
-                    egui::RichText::new("No plugins loaded.")
+                    egui::RichText::new("🎶")
+                        .color(theme::TEXT_DISABLED)
+                        .size(40.0),
+                );
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new("No plugins loaded")
                         .color(theme::TEXT_SECONDARY)
                         .size(16.0),
                 );
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new("Use the browser on the left to add plugins to the rack.")
-                        .color(theme::TEXT_DISABLED),
+                    egui::RichText::new("Use the browser on the left to add plugins")
+                        .color(theme::TEXT_DISABLED)
+                        .size(13.0),
                 );
             });
             return;
@@ -1269,34 +1477,62 @@ impl HostApp {
                     let is_selected = selected_slot == Some(i);
                     let is_active = active_slot == Some(i);
 
-                    let frame = if is_active {
-                        egui::Frame {
-                            stroke: egui::Stroke::new(2.0, theme::SUCCESS),
-                            ..theme::glass_card_frame()
-                        }
+                    // Cards with distinct visual states
+                    let (card_fill, card_stroke) = if is_active {
+                        (
+                            egui::Color32::from_rgb(22, 38, 28),
+                            egui::Stroke::new(1.5, theme::SUCCESS),
+                        )
                     } else if is_selected {
-                        egui::Frame {
-                            stroke: theme::accent_stroke(),
-                            ..theme::glass_card_frame()
-                        }
+                        (
+                            theme::ACCENT_MUTED,
+                            egui::Stroke::new(1.5, theme::ACCENT_DIM),
+                        )
                     } else {
-                        theme::glass_card_frame()
+                        (
+                            theme::WIDGET_FILL,
+                            egui::Stroke::new(1.0, theme::GLASS_BORDER),
+                        )
+                    };
+
+                    let frame = egui::Frame {
+                        inner_margin: egui::Margin::symmetric(14, 10),
+                        outer_margin: egui::Margin::symmetric(0, 2),
+                        corner_radius: theme::CARD_CORNER_RADIUS,
+                        shadow: theme::CARD_SHADOW,
+                        fill: card_fill,
+                        stroke: card_stroke,
                     };
 
                     frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            // Slot number badge
-                            ui.label(
-                                egui::RichText::new(format!("{:>2}", i + 1))
-                                    .color(if is_active {
-                                        theme::SUCCESS
-                                    } else {
-                                        theme::ACCENT_DIM
-                                    })
-                                    .monospace(),
-                            );
+                            // Slot number badge — colored circle
+                            let badge_color = if is_active {
+                                theme::SUCCESS
+                            } else {
+                                theme::ACCENT_DIM
+                            };
+                            let badge_frame = egui::Frame {
+                                inner_margin: egui::Margin::symmetric(6, 2),
+                                corner_radius: theme::PILL_CORNER_RADIUS,
+                                fill: egui::Color32::from_rgb(
+                                    (badge_color.r() as u16 * 30 / 255) as u8 + 18,
+                                    (badge_color.g() as u16 * 30 / 255) as u8 + 18,
+                                    (badge_color.b() as u16 * 30 / 255) as u8 + 22,
+                                ),
+                                ..Default::default()
+                            };
+                            badge_frame.show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{}", i + 1))
+                                        .color(badge_color)
+                                        .monospace()
+                                        .strong()
+                                        .size(12.0),
+                                );
+                            });
 
-                            ui.separator();
+                            ui.add_space(6.0);
 
                             // Plugin info (clickable to select)
                             let resp = ui
@@ -1306,16 +1542,21 @@ impl HostApp {
                                             .color(theme::TEXT_PRIMARY)
                                             .strong(),
                                     );
-                                    let status_text = if is_active {
-                                        format!("{} • active", slot.vendor)
-                                    } else {
-                                        slot.vendor.clone()
-                                    };
-                                    ui.label(
-                                        egui::RichText::new(status_text)
-                                            .color(theme::TEXT_SECONDARY)
-                                            .small(),
-                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(&slot.vendor)
+                                                .color(theme::TEXT_SECONDARY)
+                                                .small(),
+                                        );
+                                        if is_active {
+                                            ui.add_space(4.0);
+                                            theme::badge(ui, "ACTIVE", theme::SUCCESS);
+                                        }
+                                        if slot.bypassed {
+                                            ui.add_space(4.0);
+                                            theme::badge(ui, "BYPASS", theme::WARNING);
+                                        }
+                                    });
                                 })
                                 .response;
 
@@ -1327,11 +1568,17 @@ impl HostApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    // Remove button
+                                    // Remove button — subtle red on hover
+                                    let remove_btn = egui::Button::new(
+                                        egui::RichText::new("✕")
+                                            .color(theme::TEXT_DISABLED)
+                                            .size(14.0),
+                                    )
+                                    .fill(egui::Color32::TRANSPARENT)
+                                    .corner_radius(theme::PILL_CORNER_RADIUS);
                                     if ui
-                                        .add(
-                                            egui::Button::new("✕").fill(egui::Color32::TRANSPARENT),
-                                        )
+                                        .add(remove_btn)
+                                        .on_hover_text("Remove from rack")
                                         .clicked()
                                     {
                                         remove_index = Some(i);
@@ -1339,51 +1586,71 @@ impl HostApp {
 
                                     // Bypass toggle
                                     let bypass_label = if slot.bypassed { "🔇" } else { "🔊" };
-                                    if ui.button(bypass_label).clicked() {
+                                    let bypass_btn = egui::Button::new(
+                                        egui::RichText::new(bypass_label).size(14.0),
+                                    )
+                                    .fill(if slot.bypassed {
+                                        theme::ACCENT_MUTED
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    })
+                                    .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                                    if ui.add(bypass_btn).on_hover_text("Toggle bypass").clicked() {
                                         slot.bypassed = !slot.bypassed;
                                     }
 
                                     // Activate / Deactivate button
                                     if is_active {
-                                        // Editor button (if plugin has an editor, and not in safe mode)
-                                        if has_editor
-                                            && !self.safe_mode
-                                            && ui
-                                                .add(
-                                                    egui::Button::new("🎹")
-                                                        .fill(egui::Color32::TRANSPARENT),
-                                                )
+                                        // Editor button
+                                        if has_editor && !self.safe_mode {
+                                            let editor_btn = egui::Button::new(
+                                                egui::RichText::new("🎹")
+                                                    .color(theme::ACCENT)
+                                                    .size(14.0),
+                                            )
+                                            .fill(egui::Color32::TRANSPARENT)
+                                            .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                                            if ui
+                                                .add(editor_btn)
                                                 .on_hover_text("Open plugin editor")
                                                 .clicked()
-                                        {
-                                            open_editor = true;
+                                            {
+                                                open_editor = true;
+                                            }
                                         }
 
+                                        let stop_btn = egui::Button::new(
+                                            egui::RichText::new("⏹").color(theme::ERROR).size(14.0),
+                                        )
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .corner_radius(theme::BUTTON_CORNER_RADIUS);
                                         if ui
-                                            .add(
-                                                egui::Button::new("⏹")
-                                                    .fill(egui::Color32::TRANSPARENT),
-                                            )
+                                            .add(stop_btn)
                                             .on_hover_text("Stop processing")
                                             .clicked()
                                         {
                                             deactivate = true;
                                         }
-                                    } else if ui
-                                        .add(
-                                            egui::Button::new("▶").fill(egui::Color32::TRANSPARENT),
+                                    } else {
+                                        let play_btn = egui::Button::new(
+                                            egui::RichText::new("▶")
+                                                .color(theme::SUCCESS)
+                                                .size(14.0),
                                         )
-                                        .on_hover_text("Activate and start processing")
-                                        .clicked()
-                                    {
-                                        activate_index = Some(i);
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                                        if ui
+                                            .add(play_btn)
+                                            .on_hover_text("Activate and start processing")
+                                            .clicked()
+                                        {
+                                            activate_index = Some(i);
+                                        }
                                     }
                                 },
                             );
                         });
                     });
-
-                    ui.add_space(4.0);
                 }
             });
 
@@ -1416,9 +1683,9 @@ impl HostApp {
 pub fn launch(safe_mode: bool, malloc_debug: bool, paths: Vec<PathBuf>) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
+            .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([1024.0, 640.0])
-            .with_title("rs-vst-host"),
+            .with_title("rs-vst-host — VST3 Plugin Host"),
         ..Default::default()
     };
 

@@ -363,7 +363,7 @@ See [Graphical Interface](#graphical-interface) for details.
 
 ## Graphical Interface
 
-The GUI provides a modern glassmorphism-styled interface for managing plugins. Launch it with:
+The GUI provides a modern dark-themed interface for managing VST3 plugins, featuring accent-colored controls, status badges, and a polished DAW-like layout. Launch it with:
 
 ```sh
 rs-vst-host gui

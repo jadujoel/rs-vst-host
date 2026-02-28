@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.22.0] - 2026-02-28 — Modern UI Redesign (no perf impact)
+
+### Summary
+
+Complete visual overhaul of the GUI theme and all panel renderers. Changes are purely cosmetic — new colors, frames, badges, buttons, and layout adjustments. No changes to any audio processing, IPC, or COM hot paths. All benchmarks pass with no regressions.
+
+**No benchmark regressions.**
+
 ## [0.21.0] - 2026-02-28 — Complete vst3-rs migration (no perf impact)
 
 ### Summary
