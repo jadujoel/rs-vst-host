@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.5] - 2026-02-28
+
+### Added
+- **Headless GUI integration tests with screenshot capture** (`src/gui_tests.rs`): New test module exercising the full `HostApp` GUI rendering pipeline through `egui::Context::run()` without opening a native window. Tests verify:
+  - Plugin browser, rack, and parameter panels render correctly in headless mode
+  - Adding a plugin to the rack and selecting it shows the editor view (parameter panel)
+  - The parameter panel becomes visible when a slot is selected and disappears on deselection
+  - Multiple frame rendering is stable without panics or accumulated errors
+  - All edge cases: empty rack, different parameter types (bypass, read-only, automatable), editor open without active plugin
+  - CPU software-rasterized PNG screenshots saved to `target/test-screenshots/` (12 screenshots across 6 tests)
+  - Custom uncompressed PNG encoder (no external image dependency) with barycentric triangle rasterization
+  - Made panel renderer methods `pub(crate)` for headless test access: `show_browser`, `show_param_panel`, `show_rack`, `show_bottom_bar`
+  - 6 new tests, 687 tests passing (581 lib + 106 binary).
+
 ## [0.19.4] - 2026-02-28
 
 ### Fixed

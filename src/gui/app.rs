@@ -593,7 +593,9 @@ impl eframe::App for HostApp {
                     if !self.heap_corruption_detected {
                         self.heap_corruption_detected = true;
                         self.backend.heap_corruption_detected = true;
-                        tracing::error!("Periodic heap check detected corruption (malloc_debug mode)");
+                        tracing::error!(
+                            "Periodic heap check detected corruption (malloc_debug mode)"
+                        );
                     }
                 }
             }
@@ -623,10 +625,12 @@ impl eframe::App for HostApp {
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new("⚠ Heap corruption detected — save your session and restart.")
-                                .color(egui::Color32::WHITE)
-                                .strong()
-                                .size(14.0),
+                            egui::RichText::new(
+                                "⚠ Heap corruption detected — save your session and restart.",
+                            )
+                            .color(egui::Color32::WHITE)
+                            .strong()
+                            .size(14.0),
                         );
                     });
                 });
@@ -689,7 +693,7 @@ impl eframe::App for HostApp {
 
 impl HostApp {
     /// Render the left-side plugin browser panel.
-    fn show_browser(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn show_browser(&mut self, ui: &mut egui::Ui) {
         ui.heading("Plugin Browser");
         ui.add_space(8.0);
 
@@ -793,7 +797,7 @@ impl HostApp {
     }
 
     /// Render the bottom bar with tabbed views: Transport, Devices, Session.
-    fn show_bottom_bar(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn show_bottom_bar(&mut self, ui: &mut egui::Ui) {
         // Tab selector row
         ui.horizontal(|ui| {
             if ui
@@ -1015,7 +1019,7 @@ impl HostApp {
     /// - **Inactive plugin with cache**: cached parameter sliders; changes are staged
     ///   and applied on the next activation.
     /// - **Inactive plugin, no cache**: placeholder prompting the user to activate.
-    fn show_param_panel(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn show_param_panel(&mut self, ui: &mut egui::Ui) {
         let Some(idx) = self.selected_slot else {
             // No slot selected — show placeholder
             ui.vertical_centered(|ui| {
@@ -1215,7 +1219,7 @@ impl HostApp {
     }
 
     /// Render the central plugin rack.
-    fn show_rack(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn show_rack(&mut self, ui: &mut egui::Ui) {
         ui.heading("Plugin Rack");
         ui.add_space(8.0);
 

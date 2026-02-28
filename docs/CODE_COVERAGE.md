@@ -1,17 +1,18 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.19.4 — Fix plugin editor windows not opening in supervised mode).
+Last updated: 2026-02-28 (v0.19.5 — Headless GUI integration tests with screenshot capture).
 
 ## Summary
 
-- **Total tests:** 681 (575 lib + 106 binary)
+- **Total tests:** 687 (581 lib + 106 binary)
 - **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (681 tests, 0 errors, 0 ignored)
+- **Last test run:** 2026-02-28 (687 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
+- **GUI integration tests:** 6 headless GUI tests with 12 PNG screenshots saved to `target/test-screenshots/`
 
 ## Test Coverage by Module
 
@@ -55,6 +56,7 @@ Last updated: 2026-02-28 (v0.19.4 — Fix plugin editor windows not opening in s
 | `src/gui/audio_worker.rs` | 17 | ✅ Full | AudioWorkerState (safe_mode, normal), audio_status_state conversion, build_full_state structure, handle_action dispatch (ping, shutdown, set_tone, add_to_rack, remove_from_rack, select_slot, stage_parameter, set_transport, add_invalid_index, refresh_devices), AudioCommand serialize roundtrip |
 | `src/gui/gui_worker.rs` | 17 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 9 | ⚠️ Partial | Platform constant, struct size, result constant, sandbox import, NSApplication init idempotency, pump_events main-thread guard, pump_platform_events no-panic; open/close/poll require real NSWindow + IPlugView |
+| `src/gui_tests.rs` | 6 | ✅ Full | Headless GUI integration: add plugin to rack with screenshot, open editor view and verify visible, full editor workflow (add→select→switch→deselect) with 9 screenshots, parameter types (automatable/bypass/read-only), multi-frame stability (10 frames), editor open without active plugin. CPU software-rasterized PNG screenshots saved to `target/test-screenshots/`. |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 

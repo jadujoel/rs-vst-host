@@ -15,6 +15,8 @@ pub mod diagnostics;
 mod e2e_tests;
 pub mod error;
 pub mod gui;
+#[cfg(test)]
+mod gui_tests;
 pub mod host;
 pub mod ipc;
 pub mod midi;

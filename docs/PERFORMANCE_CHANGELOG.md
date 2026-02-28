@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.19.5] - 2026-02-28 — Headless GUI tests (no perf impact)
+
+### Summary
+
+New `gui_tests` module with 6 headless GUI integration tests and PNG screenshot capture. No changes to any hot audio/IPC/rendering paths. Panel rendering methods changed from private to `pub(crate)` — zero runtime impact.
+
+**No benchmark regressions.**
+
 ## [0.19.4] - 2026-02-28 — Editor window fix (no perf impact)
 
 ### Summary

@@ -408,6 +408,16 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 - [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
 - [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) — Guide to Miri and AddressSanitizer dynamic analysis of unsafe code
 
+### GUI Integration Tests
+
+The GUI rendering pipeline can be tested headlessly (without opening a window) using `egui::Context::run()`:
+
+```bash
+cargo test --lib gui_tests -- --test-threads=1
+```
+
+This runs 6 tests that exercise the full egui panel layout, verify that the editor view appears when a plugin is selected, and save CPU software-rasterized PNG screenshots to `target/test-screenshots/`.
+
 ---
 
 ## Interactive Mode
