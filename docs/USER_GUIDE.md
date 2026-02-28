@@ -13,6 +13,7 @@ A minimal VST3 plugin host written in Rust. Discover, inspect, and run VST3 audi
 - [Quick Start](#quick-start)
 - [Commands](#commands)
   - [scan](#scan)
+  - [scan-paths](#scan-paths)
   - [list](#list)
   - [run](#run)
   - [devices](#devices)
@@ -96,7 +97,7 @@ rs-vst-host scan [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-p, --paths <DIR>...` | Additional directories to search for plugins (can be repeated) |
+| `-p, --paths <DIR>...` | Additional directories to search for plugins (one-time, not persisted; can be repeated) |
 
 **What it does:**
 
@@ -125,6 +126,67 @@ Found 3 VST3 bundle(s).
     - Surge XT Effects [Audio Module Class | Fx]
 
 Scan complete: 3 module(s), 4 plugin class(es) cached.
+```
+
+### scan-paths
+
+Manage persistent plugin scan paths that are automatically included every time you run `scan`. Paths are stored in a config file and persist across runs.
+
+```
+rs-vst-host scan-paths <ACTION>
+```
+
+**Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `add <DIR>` | Add a directory to the persistent scan path list |
+| `remove <DIR>` | Remove a directory from the persistent scan path list |
+| `list` | Show all persistent scan paths |
+
+**Examples:**
+
+```sh
+# Add a custom plugin directory
+rs-vst-host scan-paths add /path/to/my/plugins
+
+# Add another one
+rs-vst-host scan-paths add ~/Music/VST3
+
+# List all persistent paths
+rs-vst-host scan-paths list
+
+# Remove a path
+rs-vst-host scan-paths remove /path/to/my/plugins
+```
+
+**Example output (list):**
+
+```
+Persistent scan paths:
+
+    1. /path/to/my/plugins
+    2. /Users/you/Music/VST3
+
+Config file: /Users/you/Library/Application Support/rs-vst-host/config.json
+```
+
+Once paths are added, they are automatically included when you run `scan`:
+
+```
+$ rs-vst-host scan
+Scanning for VST3 plugins...
+
+Persistent scan paths (from config):
+  + /path/to/my/plugins
+  + /Users/you/Music/VST3
+
+Search paths:
+  /Library/Audio/Plug-Ins/VST3
+  /Users/you/Library/Audio/Plug-Ins/VST3
+  /path/to/my/plugins
+  /Users/you/Music/VST3
+...
 ```
 
 ### list
@@ -484,11 +546,38 @@ The scanner automatically checks platform-specific default directories:
 |------|-------|
 | `%ProgramFiles%\Common Files\VST3` | Standard install location |
 
-To scan additional directories, use the `--paths` flag:
+### Adding Custom Scan Paths (Persistent)
+
+To permanently add a directory so it is scanned every time:
+
+```sh
+# Add a custom directory
+rs-vst-host scan-paths add /path/to/my/plugins
+
+# View all persistent paths
+rs-vst-host scan-paths list
+
+# Remove one
+rs-vst-host scan-paths remove /path/to/my/plugins
+```
+
+Persistent paths are stored in the config file:
+
+| Platform | Config location |
+|----------|----------------|
+| macOS | `~/Library/Application Support/rs-vst-host/config.json` |
+| Linux | `~/.local/share/rs-vst-host/config.json` |
+| Windows | `C:\Users\<user>\AppData\Roaming\rs-vst-host\config.json` |
+
+### One-Time Extra Paths
+
+To scan an additional directory without saving it permanently, use `--paths`:
 
 ```sh
 rs-vst-host scan --paths /my/custom/plugins --paths /another/folder
 ```
+
+These paths are only used for that single scan invocation.
 
 ---
 

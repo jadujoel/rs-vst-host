@@ -13,9 +13,17 @@ pub struct Cli {
 pub enum Command {
     /// Scan for VST3 plugins and cache metadata.
     Scan {
-        /// Additional directories to scan for plugins.
+        /// Additional directories to scan for plugins (one-time, not persisted).
         #[arg(short, long)]
         paths: Vec<PathBuf>,
+    },
+    /// Manage persistent plugin scan paths.
+    ///
+    /// Add or remove directories that are automatically included every time
+    /// you run `scan`. Paths are stored in the config file and persist across runs.
+    ScanPaths {
+        #[command(subcommand)]
+        action: ScanPathsAction,
     },
     /// List discovered plugins from cache.
     List,
@@ -108,6 +116,23 @@ pub enum Command {
         #[arg(long)]
         malloc_debug: bool,
     },
+}
+
+/// Actions for the `scan-paths` subcommand.
+#[derive(Subcommand)]
+pub enum ScanPathsAction {
+    /// Add a directory to the persistent scan paths.
+    Add {
+        /// Directory to add to the scan path list.
+        dir: PathBuf,
+    },
+    /// Remove a directory from the persistent scan paths.
+    Remove {
+        /// Directory to remove from the scan path list.
+        dir: PathBuf,
+    },
+    /// List all persistent scan paths.
+    List,
 }
 
 #[cfg(test)]
@@ -341,5 +366,58 @@ mod tests {
             }
             _ => panic!("Expected AudioWorker command"),
         }
+    }
+
+    #[test]
+    fn test_parse_scan_paths_add() {
+        let cli =
+            Cli::try_parse_from(["rs-vst-host", "scan-paths", "add", "/custom/vst3"]).unwrap();
+        match cli.command {
+            Command::ScanPaths { action } => match action {
+                ScanPathsAction::Add { dir } => {
+                    assert_eq!(dir, PathBuf::from("/custom/vst3"));
+                }
+                _ => panic!("Expected Add action"),
+            },
+            _ => panic!("Expected ScanPaths command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scan_paths_remove() {
+        let cli =
+            Cli::try_parse_from(["rs-vst-host", "scan-paths", "remove", "/custom/vst3"]).unwrap();
+        match cli.command {
+            Command::ScanPaths { action } => match action {
+                ScanPathsAction::Remove { dir } => {
+                    assert_eq!(dir, PathBuf::from("/custom/vst3"));
+                }
+                _ => panic!("Expected Remove action"),
+            },
+            _ => panic!("Expected ScanPaths command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scan_paths_list() {
+        let cli = Cli::try_parse_from(["rs-vst-host", "scan-paths", "list"]).unwrap();
+        match cli.command {
+            Command::ScanPaths { action } => {
+                assert!(matches!(action, ScanPathsAction::List));
+            }
+            _ => panic!("Expected ScanPaths command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scan_paths_add_missing_dir_fails() {
+        let result = Cli::try_parse_from(["rs-vst-host", "scan-paths", "add"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_scan_paths_no_action_fails() {
+        let result = Cli::try_parse_from(["rs-vst-host", "scan-paths"]);
+        assert!(result.is_err());
     }
 }

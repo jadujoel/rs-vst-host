@@ -34,6 +34,12 @@ cargo build --release
 # Scan for installed VST3 plugins
 cargo run -- scan
 
+# Add a custom directory to scan permanently
+cargo run -- scan-paths add /path/to/my/plugins
+
+# List persistent scan paths
+cargo run -- scan-paths list
+
 # List discovered plugins
 cargo run -- list
 
@@ -58,6 +64,9 @@ cargo run -- gui
 | Command | Description |
 |---------|-------------|
 | `scan [--paths <DIR>...]` | Discover VST3 plugins and cache metadata |
+| `scan-paths add <DIR>` | Add a directory to the persistent scan path list |
+| `scan-paths remove <DIR>` | Remove a directory from the persistent scan path list |
+| `scan-paths list` | Show all persistent scan paths |
 | `list` | Display cached plugins |
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
@@ -86,6 +95,7 @@ src/
 ├── app/
 │   ├── cli.rs       # CLI argument definitions (clap derive)
 │   ├── commands.rs  # Command implementations
+│   ├── config.rs    # Persistent configuration (extra scan paths)
 │   └── interactive.rs # Interactive command shell for runtime parameter control
 ├── audio/
 │   ├── device.rs    # cpal audio device management
@@ -161,7 +171,41 @@ This project uses **manual COM FFI** rather than the `vst3-sys` crate. All VST3 
 | Linux | `/usr/lib/vst3`, `/usr/local/lib/vst3`, `~/.vst3` |
 | Windows | `%ProgramFiles%\Common Files\VST3` |
 
-Additional paths can be added with `scan --paths <DIR>`.
+### Adding Custom Scan Paths (Persistent)
+
+To permanently add a directory so it is scanned every time you run `scan`:
+
+```sh
+# Add a custom directory
+rs-vst-host scan-paths add /path/to/my/plugins
+
+# Add another one
+rs-vst-host scan-paths add ~/Music/VST3
+
+# View all persistent paths
+rs-vst-host scan-paths list
+
+# Remove a path you no longer need
+rs-vst-host scan-paths remove /path/to/my/plugins
+
+# Now scan — persistent paths are included automatically
+rs-vst-host scan
+```
+
+Persistent paths are stored in the config file at:
+- **macOS**: `~/Library/Application Support/rs-vst-host/config.json`
+- **Linux**: `~/.local/share/rs-vst-host/config.json`
+- **Windows**: `%APPDATA%\rs-vst-host\config.json`
+
+### One-Time Extra Paths
+
+To scan an additional directory without saving it permanently, use `--paths`:
+
+```sh
+rs-vst-host scan --paths /tmp/test-plugins
+```
+
+These paths are only used for that single scan invocation.
 
 ## Logging
 

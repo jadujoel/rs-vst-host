@@ -1,3 +1,4 @@
+use crate::app::config;
 use crate::app::interactive::{self, InteractiveState};
 use crate::audio::device::{AudioConfig, AudioDevice};
 use crate::audio::engine::AudioEngine;
@@ -13,8 +14,26 @@ use tracing::{info, warn};
 pub fn scan(extra_paths: Vec<PathBuf>) -> anyhow::Result<()> {
     println!("Scanning for VST3 plugins...\n");
 
-    // Build search paths
+    // Build search paths: defaults + persistent config + CLI one-time paths
     let mut search_paths = scanner::default_vst3_paths();
+
+    // Load persistent extra paths from config
+    match config::load() {
+        Ok(cfg) => {
+            if !cfg.extra_scan_paths.is_empty() {
+                println!("Persistent scan paths (from config):");
+                for p in &cfg.extra_scan_paths {
+                    println!("  + {}", p.display());
+                }
+                println!();
+                search_paths.extend(cfg.extra_scan_paths);
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load config, skipping persistent paths");
+        }
+    }
+
     search_paths.extend(extra_paths);
 
     println!("Search paths:");
@@ -433,6 +452,61 @@ fn load_plugin_from_path(path: &Path) -> anyhow::Result<(Vst3Module, String, [u8
     // Reload the module (we consumed info from the first load)
     let module = Vst3Module::load(path)?;
     Ok((module, name, cid))
+}
+
+/// Add a directory to the persistent scan paths.
+pub fn scan_paths_add(dir: PathBuf) -> anyhow::Result<()> {
+    let display = dir.display().to_string();
+    match config::add_scan_path(&dir)? {
+        true => {
+            println!("Added '{}' to persistent scan paths.", display);
+            println!("Run 'scan' to discover plugins in this directory.");
+        }
+        false => {
+            println!("'{}' is already in the persistent scan paths.", display);
+        }
+    }
+    Ok(())
+}
+
+/// Remove a directory from the persistent scan paths.
+pub fn scan_paths_remove(dir: PathBuf) -> anyhow::Result<()> {
+    let display = dir.display().to_string();
+    match config::remove_scan_path(&dir)? {
+        true => {
+            println!("Removed '{}' from persistent scan paths.", display);
+            println!("Run 'scan' to update the plugin cache.");
+        }
+        false => {
+            println!("'{}' was not in the persistent scan paths.", display);
+        }
+    }
+    Ok(())
+}
+
+/// List all persistent scan paths.
+pub fn scan_paths_list() -> anyhow::Result<()> {
+    let cfg = config::load()?;
+
+    if cfg.extra_scan_paths.is_empty() {
+        println!("No persistent scan paths configured.");
+        println!();
+        println!("Add one with: rs-vst-host scan-paths add <DIR>");
+        return Ok(());
+    }
+
+    println!("Persistent scan paths:\n");
+    for (i, path) in cfg.extra_scan_paths.iter().enumerate() {
+        let exists = if path.exists() { "" } else { " (not found)" };
+        println!("  {:>3}. {}{}", i + 1, path.display(), exists);
+    }
+    println!();
+
+    if let Some(config_path) = config::config_path() {
+        println!("Config file: {}", config_path.display());
+    }
+
+    Ok(())
 }
 
 use cpal::traits::DeviceTrait;

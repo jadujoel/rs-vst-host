@@ -8,7 +8,7 @@ pub mod ipc;
 mod midi;
 pub mod vst3;
 
-use app::cli::{Cli, Command};
+use app::cli::{Cli, Command, ScanPathsAction};
 use clap::Parser;
 
 // ── Global allocator ────────────────────────────────────────────────────────
@@ -48,6 +48,11 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Scan { paths } => app::commands::scan(paths)?,
+        Command::ScanPaths { action } => match action {
+            ScanPathsAction::Add { dir } => app::commands::scan_paths_add(dir)?,
+            ScanPathsAction::Remove { dir } => app::commands::scan_paths_remove(dir)?,
+            ScanPathsAction::List => app::commands::scan_paths_list()?,
+        },
         Command::List => app::commands::list()?,
         Command::Run {
             plugin,

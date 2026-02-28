@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.7] - 2026-02-28
+
+### Added
+- **Persistent scan paths** (`src/app/config.rs`): New `config` module providing persistent configuration storage. Custom VST3 scan directories are saved to `config.json` (alongside the plugin cache) and automatically included on every subsequent `scan` invocation.
+  - New CLI command: `scan-paths add <DIR>` — permanently add a directory to the scan path list
+  - New CLI command: `scan-paths remove <DIR>` — remove a directory from the persistent list
+  - New CLI command: `scan-paths list` — display all persistent scan paths and the config file location
+  - `scan` now loads persistent paths from config and merges them with defaults and any one-time `--paths` arguments
+  - Config file: `~/Library/Application Support/rs-vst-host/config.json` (macOS), `~/.local/share/rs-vst-host/config.json` (Linux), `%APPDATA%\rs-vst-host\config.json` (Windows)
+  - Duplicate path detection via filesystem canonicalization
+  - 16 new tests (11 config + 5 CLI parsing), 703 tests passing
+
 ## [0.19.6] - 2026-02-28
 
 ### Fixed
