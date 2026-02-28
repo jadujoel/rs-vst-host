@@ -736,6 +736,81 @@ impl HostBackend {
         self.build_snapshots_ref(params_ref)
     }
 
+    /// Capture the component state of the active plugin.
+    ///
+    /// Returns the binary state blob from `IComponent::getState()`, or an
+    /// empty `Vec` if no plugin is active or state capture fails.
+    pub fn get_component_state(&self) -> Vec<u8> {
+        if let Some(ref sandboxed) = self.sandboxed {
+            if let Ok(proc) = sandboxed.process.lock() {
+                return proc.get_state().unwrap_or_default();
+            }
+            return Vec::new();
+        }
+        if let Some(ref active) = self.active {
+            if let Ok(eng) = active.engine.lock() {
+                return eng.get_component_state();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Capture the controller state of the active plugin.
+    ///
+    /// Returns the binary state blob from `IEditController::getState()`, or an
+    /// empty `Vec` if no plugin is active or state capture fails.
+    pub fn get_controller_state(&mut self) -> Vec<u8> {
+        if self.sandboxed.is_some() {
+            // Sandboxed mode doesn't support separate controller state yet
+            return Vec::new();
+        }
+        if let Some(ref active) = self.active {
+            if let Ok(eng) = active.engine.lock() {
+                return eng.get_controller_state();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Restore the component state on the active plugin.
+    ///
+    /// `data` should be a blob previously obtained from [`get_component_state`].
+    pub fn set_component_state(&mut self, data: &[u8]) -> bool {
+        if data.is_empty() {
+            return false;
+        }
+        if let Some(ref sandboxed) = self.sandboxed {
+            if let Ok(mut proc) = sandboxed.process.lock() {
+                return proc.set_state(data).is_ok();
+            }
+            return false;
+        }
+        if let Some(ref active) = self.active {
+            if let Ok(mut eng) = active.engine.lock() {
+                return eng.set_component_state(data);
+            }
+        }
+        false
+    }
+
+    /// Restore the controller state on the active plugin.
+    ///
+    /// `data` should be a blob previously obtained from [`get_controller_state`].
+    pub fn set_controller_state(&mut self, data: &[u8]) -> bool {
+        if data.is_empty() {
+            return false;
+        }
+        if self.sandboxed.is_some() {
+            return false;
+        }
+        if let Some(ref active) = self.active {
+            if let Ok(mut eng) = active.engine.lock() {
+                return eng.set_controller_state(data);
+            }
+        }
+        false
+    }
+
     /// Set a parameter value on the active plugin.
     ///
     /// Pushes the change to the audio thread queue and updates the controller.

@@ -769,6 +769,209 @@ impl Vst3Instance {
         }
     }
 
+    /// Get the component's opaque state via `IComponent::getState()`.
+    ///
+    /// Returns the binary state blob that can later be restored with
+    /// [`set_component_state`]. Returns an empty `Vec` if the plugin
+    /// does not support state persistence or crashes.
+    pub fn get_component_state(&self) -> Vec<u8> {
+        use crate::vst3::ibstream::HostBStream;
+
+        if self.crashed {
+            return Vec::new();
+        }
+
+        let comp = self.component as usize;
+        let result = sandbox_call("get_component_state", move || unsafe {
+            let component = comp as *mut IComponent;
+            let comp_vtbl = &*(*component).vtbl;
+            let stream = HostBStream::new();
+            let r = (comp_vtbl.getState)(component, HostBStream::as_ptr(stream) as *mut IBStream);
+            if r == K_RESULT_OK {
+                let data = HostBStream::take_data(stream);
+                HostBStream::destroy(stream);
+                data
+            } else {
+                HostBStream::destroy(stream);
+                Vec::new()
+            }
+        });
+
+        match result {
+            SandboxResult::Ok(data) => {
+                debug!(plugin = %self.name, bytes = data.len(), "Component state captured");
+                data
+            }
+            SandboxResult::Crashed(crash) => {
+                warn!(plugin = %self.name, signal = %crash.signal_name,
+                    "Plugin crashed during getState (component)");
+                Vec::new()
+            }
+            SandboxResult::Panicked(msg) => {
+                warn!(plugin = %self.name, panic = %msg,
+                    "Plugin panicked during getState (component)");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Get the controller's opaque state via `IEditController::getState()`.
+    ///
+    /// Returns the binary state blob that can later be restored with
+    /// [`set_controller_state`]. Returns an empty `Vec` if the plugin
+    /// has no separate controller state or crashes.
+    pub fn get_controller_state(&mut self) -> Vec<u8> {
+        use crate::vst3::ibstream::HostBStream;
+
+        if self.crashed {
+            return Vec::new();
+        }
+
+        let controller = match self.get_controller() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let ctrl = controller as usize;
+        let result = sandbox_call("get_controller_state", move || unsafe {
+            let controller = ctrl as *mut IEditController;
+            let ctrl_vtbl = &*(*controller).vtbl;
+            let stream = HostBStream::new();
+            let r = (ctrl_vtbl.getState)(controller, HostBStream::as_ptr(stream) as *mut IBStream);
+            if r == K_RESULT_OK {
+                let data = HostBStream::take_data(stream);
+                HostBStream::destroy(stream);
+                data
+            } else {
+                HostBStream::destroy(stream);
+                Vec::new()
+            }
+        });
+
+        match result {
+            SandboxResult::Ok(data) => {
+                debug!(plugin = %self.name, bytes = data.len(), "Controller state captured");
+                data
+            }
+            SandboxResult::Crashed(crash) => {
+                warn!(plugin = %self.name, signal = %crash.signal_name,
+                    "Plugin crashed during getState (controller)");
+                Vec::new()
+            }
+            SandboxResult::Panicked(msg) => {
+                warn!(plugin = %self.name, panic = %msg,
+                    "Plugin panicked during getState (controller)");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Restore the component's state via `IComponent::setState()`.
+    ///
+    /// `data` should be a blob previously obtained from [`get_component_state`].
+    /// After setting component state, the controller is also notified via
+    /// `IEditController::setComponentState()` to keep both in sync.
+    pub fn set_component_state(&mut self, data: &[u8]) -> bool {
+        use crate::vst3::ibstream::HostBStream;
+
+        if self.crashed || data.is_empty() {
+            return false;
+        }
+
+        let comp = self.component as usize;
+        let data_owned = data.to_vec();
+        let result = sandbox_call("set_component_state", move || unsafe {
+            let component = comp as *mut IComponent;
+            let comp_vtbl = &*(*component).vtbl;
+            let stream = HostBStream::from_data(data_owned);
+            let r = (comp_vtbl.setState)(component, HostBStream::as_ptr(stream) as *mut IBStream);
+            HostBStream::destroy(stream);
+            r
+        });
+
+        let ok = match result {
+            SandboxResult::Ok(K_RESULT_OK) => {
+                debug!(plugin = %self.name, "Component state restored");
+                true
+            }
+            SandboxResult::Ok(r) => {
+                warn!(plugin = %self.name, result = r, "IComponent::setState returned non-OK");
+                false
+            }
+            SandboxResult::Crashed(crash) => {
+                warn!(plugin = %self.name, signal = %crash.signal_name,
+                    "Plugin crashed during setState (component)");
+                self.crashed = true;
+                false
+            }
+            SandboxResult::Panicked(msg) => {
+                warn!(plugin = %self.name, panic = %msg,
+                    "Plugin panicked during setState (component)");
+                self.crashed = true;
+                false
+            }
+        };
+
+        // Sync the component state to the controller
+        if ok {
+            if let Some(controller) = self.get_controller() {
+                self.sync_component_state_to_controller(controller);
+            }
+        }
+
+        ok
+    }
+
+    /// Restore the controller's state via `IEditController::setState()`.
+    ///
+    /// `data` should be a blob previously obtained from [`get_controller_state`].
+    pub fn set_controller_state(&mut self, data: &[u8]) -> bool {
+        use crate::vst3::ibstream::HostBStream;
+
+        if self.crashed || data.is_empty() {
+            return false;
+        }
+
+        let controller = match self.get_controller() {
+            Some(c) => c,
+            None => return false,
+        };
+
+        let ctrl = controller as usize;
+        let data_owned = data.to_vec();
+        let result = sandbox_call("set_controller_state", move || unsafe {
+            let controller = ctrl as *mut IEditController;
+            let ctrl_vtbl = &*(*controller).vtbl;
+            let stream = HostBStream::from_data(data_owned);
+            let r = (ctrl_vtbl.setState)(controller, HostBStream::as_ptr(stream) as *mut IBStream);
+            HostBStream::destroy(stream);
+            r
+        });
+
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => {
+                debug!(plugin = %self.name, "Controller state restored");
+                true
+            }
+            SandboxResult::Ok(r) => {
+                warn!(plugin = %self.name, result = r, "IEditController::setState returned non-OK");
+                false
+            }
+            SandboxResult::Crashed(crash) => {
+                warn!(plugin = %self.name, signal = %crash.signal_name,
+                    "Plugin crashed during setState (controller)");
+                self.crashed = true;
+                false
+            }
+            SandboxResult::Panicked(msg) => {
+                warn!(plugin = %self.name, panic = %msg,
+                    "Plugin panicked during setState (controller)");
+                self.crashed = true;
+                false
+            }
+        }
+    }
+
     /// Disconnect component and controller IConnectionPoint (best-effort).
     ///
     /// Note: The Drop impl inlines this logic inside a sandbox_call.

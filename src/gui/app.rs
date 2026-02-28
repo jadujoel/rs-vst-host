@@ -35,6 +35,12 @@ pub struct PluginSlot {
     pub param_cache: Vec<ParamSnapshot>,
     /// Staged parameter changes to apply on next activation (transient; not serialized).
     pub staged_changes: Vec<(u32, f64)>,
+    /// Opaque component state blob from `IComponent::getState()`.
+    /// Captured on session save and preset save; restored after plugin instantiation.
+    pub component_state: Option<Vec<u8>>,
+    /// Opaque controller state blob from `IEditController::getState()`.
+    /// Captured on session save and preset save; restored after plugin instantiation.
+    pub controller_state: Option<Vec<u8>>,
 }
 
 /// Transport state tracked by the GUI.
@@ -272,6 +278,8 @@ impl HostApp {
             bypassed: false,
             param_cache: Vec::new(),
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         };
 
         self.status_message = format!("Added '{}' to the rack.", slot.name);
@@ -1914,6 +1922,8 @@ mod tests {
             bypassed: false,
             param_cache: Vec::new(),
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         };
         assert!(!slot.bypassed);
         slot.bypassed = true;

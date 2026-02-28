@@ -10,6 +10,7 @@
 **Complete vst3-rs migration (v0.21.0)**: Replaced ALL hand-written COM FFI with standardized `vst3` crate (v0.3.0, coupler-rs/vst3-rs). Eliminated ~500 lines of manual vtable definitions. Rewrote: `com.rs` (re-export module), `module.rs` (factory types), `instance.rs` (typed COM interfaces), `process.rs` (camelCase fields), `param_changes.rs` (full rewrite), `params.rs` (typed IEditController), `host_context.rs` (IHostApplicationVtbl), `component_handler.rs` (IComponentHandlerVtbl), `ibstream.rs` (IBStreamVtbl), `plug_frame.rs` (IPlugFrameVtbl), `event_list.rs` (IEventListVtbl). Updated all consumer files and test files. Fixed PClassInfoW size bug (was 1208, now correct 696 bytes). 1310 tests passing, 0 failures, no benchmark regressions.
 **Modern UI redesign (v0.22.0)**: Complete visual overhaul — replaced invisible premultiplied alpha colors with opaque dark surfaces, added secondary background/accent colors, accent-filled action buttons, status dot indicators, badge/pill UI elements, styled input frames, improved plugin browser cards with subcategory pills, modern rack cards with dynamic coloring and status badges, styled bottom bar tabs, colored transport controls, polished parameter panel with input-framed search. Updated window size to 1280×820. 1326 tests passing, 0 failures, no benchmark regressions.
 **GUI window close fix (v0.22.1)**: Fixed bug where manually closing the GUI window caused it to reopen. Root cause: (1) GUI worker process never sent `GuiAction::Shutdown` when the window was closed — the socket just dropped, and (2) `check_gui_exit` in the supervisor immediately killed the child and treated it as a crash when `try_wait()` returned `Ok(None)` (process still cleaning up). Fix: GUI worker now detects `close_requested()` in the eframe update loop and sends `GuiAction::Shutdown` before exiting; supervisor's `check_gui_exit` now waits up to ~1s for the child to exit before declaring a crash. 727 tests passing, 0 failures, no benchmark regressions.
+**Plugin state persistence & presets (v0.23.0)**: Phase 8.1 + 8.2 implementation — full plugin state save/restore via IBStream COM interfaces, session format v2.0 with base64-encoded state blobs, preset file management. State capture/restore methods on Vst3Instance (4 new methods), AudioEngine, HostBackend, and PluginProcess proxy. IPC worker get_state/set_state stubs replaced with real implementations. Session format upgraded from v1.0 to v2.0 with backward compatibility (serde `default` + `skip_serializing_if`). New `presets.rs` module with Preset struct (base64 serde), file I/O, directory management, and filename sanitization. Audio worker handles CapturePluginState, LoadPreset, SavePreset, ListPresets actions. Plugin state automatically captured on session save and restored on plugin activation from a loaded session. 1414 tests passing (763 lib + 651 bin), 0 failures, no benchmark regressions.
 **params.rs vst3-rs migration (v0.20.6)**: Migrated `params.rs` from hand-written COM FFI to vst3-rs types — `ComPtr<IEditControllerVtbl>` → `*mut IEditController`, camelCase vtable calls, nested base chain for terminate/release in Drop.
 **Consumer files vst3-rs migration (v0.20.7)**: Migrated consumer files (`translate.rs`, `worker.rs`, `editor.rs`, `engine.rs`) to vst3-rs types — `Event::note_on/note_off` → `make_note_on_event/make_note_off_event`, `ComPtr<IPlugViewVtbl>` → `*mut IPlugView`, camelCase vtbl field names, typed pointer casts for IPC setters, `ViewRect` helper functions.
 **asan_tests.rs vst3-rs migration (v0.20.8)**: Migrated `asan_tests.rs` to vst3-rs types — `Event::note_on/note_off` → `make_note_on_event/make_note_off_event`, `event.data` → `event.__field0` union, `event_as_note_on/off()` helpers, camelCase ProcessData/AudioBusBuffers/Event fields, IEventListVtbl camelCase (`getEventCount`, `getEvent`, `base.queryInterface`), typed pointer casts for `set_input_events`/`set_input_parameter_changes`/`set_process_context`.
@@ -166,7 +167,7 @@
 - **Improved scan progress**: Shows module count, class count, and error count
 
 ### Test Results
-- 1310 tests passing (711 unit + 599 binary/integration), 0 failures
+- 1414 tests passing (763 unit + 651 binary/integration), 0 failures
 - All VST3 COM types use vst3-rs crate bindings (v0.3.0)
 - E2E tests exercise real FabFilter VST3 plugins (Pro-MB, Pro-Q 4): discovery, loading, metadata, processing, parameters, AudioEngine, scan-cache pipeline
 - Clean build with zero warnings
@@ -187,8 +188,8 @@
 ### Next Steps (Phase 8 — Beyond MVP)
 
 See [PHASE_8.md](PHASE_8.md) for the full detailed plan. Summary:
-- **8.1** Plugin state persistence (IBStream, component state save/load)
-- **8.2** Preset/program management (IUnitInfo, preset files, browser panel)
+- **8.1** ✅ Plugin state persistence (IBStream, component state save/load) — **COMPLETE v0.23.0**
+- **8.2** ✅ Preset/program management (preset files, directory management, save/load/list) — **COMPLETE v0.23.0** (GUI preset browser panel pending)
 - **8.3** Multi-plugin routing graph (serial/parallel chains, visual editor)
 - **8.4** Undo/redo system (command pattern, parameter coalescing)
 - **8.5** Drag-and-drop rack reordering

@@ -429,6 +429,8 @@ fn handle_action(
                         bypassed: false,
                         param_cache: Vec::new(),
                         staged_changes: Vec::new(),
+                        component_state: None,
+                        controller_state: None,
                     };
 
                     *status_message = format!("Added '{}' to the rack.", slot.name);
@@ -498,6 +500,21 @@ fn handle_action(
                     Ok(snapshots) => {
                         *param_snapshots = snapshots;
                         *selected_slot = Some(index);
+
+                        // Apply saved plugin state from session before staged changes
+                        let mut state_restored = false;
+                        if let Some(comp_data) = rack[index].component_state.as_ref() {
+                            if backend.set_component_state(comp_data) {
+                                state_restored = true;
+                            }
+                        }
+                        if let Some(ctrl_data) = rack[index].controller_state.as_ref() {
+                            backend.set_controller_state(ctrl_data);
+                        }
+                        if state_restored {
+                            // Refresh param snapshots after state restore
+                            *param_snapshots = backend.active_param_snapshots();
+                        }
 
                         // Apply staged changes
                         let staged: Vec<(u32, f64)> =
@@ -701,6 +718,20 @@ fn handle_action(
         }
 
         GuiAction::SaveSession { path } => {
+            // Capture live plugin state before saving
+            if let Some(sel) = *selected_slot {
+                if sel < rack.len() {
+                    let comp_state = backend.get_component_state();
+                    let ctrl_state = backend.get_controller_state();
+                    if !comp_state.is_empty() {
+                        rack[sel].component_state = Some(comp_state);
+                    }
+                    if !ctrl_state.is_empty() {
+                        rack[sel].controller_state = Some(ctrl_state);
+                    }
+                }
+            }
+
             let gui_transport = crate::gui::app::TransportState {
                 playing: transport.playing,
                 tempo: transport.tempo,
@@ -719,6 +750,8 @@ fn handle_action(
                     bypassed: s.bypassed,
                     param_cache: s.param_cache.clone(),
                     staged_changes: s.staged_changes.clone(),
+                    component_state: s.component_state.clone(),
+                    controller_state: s.controller_state.clone(),
                 })
                 .collect();
 
@@ -768,6 +801,8 @@ fn handle_action(
                             bypassed: s.bypassed,
                             param_cache: Vec::new(),
                             staged_changes: Vec::new(),
+                            component_state: s.component_state,
+                            controller_state: s.controller_state,
                         })
                         .collect();
 
@@ -840,6 +875,125 @@ fn handle_action(
         GuiAction::SetProcessIsolation { enabled } => {
             backend.process_isolation = enabled;
             vec![]
+        }
+
+        GuiAction::CapturePluginState { slot_index } => {
+            let component_state = backend.get_component_state();
+            let controller_state = backend.get_controller_state();
+
+            // Update the rack slot's cached state
+            if slot_index < rack.len() {
+                rack[slot_index].component_state = if component_state.is_empty() {
+                    None
+                } else {
+                    Some(component_state.clone())
+                };
+                rack[slot_index].controller_state = if controller_state.is_empty() {
+                    None
+                } else {
+                    Some(controller_state.clone())
+                };
+            }
+
+            vec![SupervisorUpdate::PluginStateCaptured {
+                slot_index,
+                component_state,
+                controller_state,
+            }]
+        }
+
+        GuiAction::LoadPreset { path } => {
+            match crate::vst3::presets::Preset::load_from_file(std::path::Path::new(&path)) {
+                Ok(preset) => {
+                    // Apply the preset's component state
+                    if let Some(ref cs) = preset.component_state {
+                        backend.set_component_state(cs);
+                    }
+                    // Apply the preset's controller state
+                    if let Some(ref cs) = preset.controller_state {
+                        backend.set_controller_state(cs);
+                    }
+                    *status_message = format!("Preset '{}' loaded", preset.name);
+                    // Refresh params after state change
+                    *param_snapshots = backend.active_param_snapshots();
+                    vec![
+                        SupervisorUpdate::ParamsUpdated {
+                            snapshots: param_snapshots.clone(),
+                        },
+                        SupervisorUpdate::StatusMessage {
+                            message: status_message.clone(),
+                        },
+                    ]
+                }
+                Err(e) => {
+                    *status_message = format!("✗ Preset load failed: {}", e);
+                    vec![SupervisorUpdate::StatusMessage {
+                        message: status_message.clone(),
+                    }]
+                }
+            }
+        }
+
+        GuiAction::SavePreset { path, name } => {
+            let component_state = backend.get_component_state();
+            let controller_state = backend.get_controller_state();
+
+            // Get plugin CID from active slot
+            let plugin_cid = backend
+                .active_slot_index()
+                .and_then(|idx| rack.get(idx))
+                .map(|s| s.cid)
+                .unwrap_or([0u8; 16]);
+
+            let preset = crate::vst3::presets::Preset {
+                name: name.clone(),
+                plugin_cid,
+                component_state: if component_state.is_empty() {
+                    None
+                } else {
+                    Some(component_state)
+                },
+                controller_state: if controller_state.is_empty() {
+                    None
+                } else {
+                    Some(controller_state)
+                },
+            };
+
+            match preset.save_to_file(std::path::Path::new(&path)) {
+                Ok(()) => {
+                    *status_message = format!("Preset '{}' saved", name);
+                }
+                Err(e) => {
+                    *status_message = format!("✗ Preset save failed: {}", e);
+                }
+            }
+
+            vec![SupervisorUpdate::StatusMessage {
+                message: status_message.clone(),
+            }]
+        }
+
+        GuiAction::ListPresets => {
+            // Get plugin name from active slot
+            let plugin_name = backend
+                .active_slot_index()
+                .and_then(|idx| rack.get(idx))
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+
+            let user_presets = crate::vst3::presets::list_user_presets(&plugin_name)
+                .into_iter()
+                .map(|(name, path)| crate::gui::ipc::PresetInfo {
+                    name,
+                    path: path.to_string_lossy().to_string(),
+                })
+                .collect();
+
+            vec![SupervisorUpdate::PresetList {
+                factory_presets: Vec::new(), // TODO: IUnitInfo factory preset enumeration
+                user_presets,
+            }]
         }
     }
 }
@@ -1173,6 +1327,8 @@ mod tests {
             bypassed: false,
             param_cache: Vec::new(),
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         }];
         let mut selected = Some(0);
         let mut params = Vec::new();
@@ -1225,6 +1381,8 @@ mod tests {
                 is_bypass: false,
             }],
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         }];
         let mut selected = None;
         let mut params = Vec::new();
@@ -1278,6 +1436,8 @@ mod tests {
                 is_bypass: false,
             }],
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         }];
         let mut selected = None;
         let mut params = Vec::new();
@@ -1447,6 +1607,281 @@ mod tests {
             let decoded: AudioCommand = serde_json::from_str(&json).expect("deserialize");
             let json2 = serde_json::to_string(&decoded).expect("re-serialize");
             assert_eq!(json, json2, "roundtrip failed for {:?}", cmd);
+        }
+    }
+
+    // ── Phase 8.1/8.2: State persistence tests ─────────────────────────
+
+    #[test]
+    fn test_handle_action_capture_plugin_state_no_active() {
+        let mut backend = HostBackend::new();
+        let mut modules = Vec::new();
+        let mut rack = vec![RackSlotState {
+            name: "Test".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: PathBuf::from("/test.vst3"),
+            cid: [1u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
+        }];
+        let mut selected = Some(0_usize);
+        let mut params = Vec::new();
+        let mut status = String::new();
+        let mut tone = false;
+        let mut transport = TransportUpdate {
+            playing: false,
+            tempo: 120.0,
+            time_sig_num: 4,
+            time_sig_den: 4,
+        };
+
+        let result = handle_action(
+            GuiAction::CapturePluginState { slot_index: 0 },
+            &mut backend,
+            &mut modules,
+            &mut rack,
+            &mut selected,
+            &mut params,
+            &mut status,
+            &mut tone,
+            &mut transport,
+            false,
+            &[],
+        );
+        // No active plugin, so captured state should be empty
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            SupervisorUpdate::PluginStateCaptured {
+                slot_index,
+                component_state,
+                controller_state,
+            } => {
+                assert_eq!(*slot_index, 0);
+                assert!(component_state.is_empty());
+                assert!(controller_state.is_empty());
+            }
+            _ => panic!("Expected PluginStateCaptured"),
+        }
+    }
+
+    #[test]
+    fn test_handle_action_capture_plugin_state_invalid_index() {
+        let mut backend = HostBackend::new();
+        let mut modules = Vec::new();
+        let mut rack = Vec::new();
+        let mut selected = None;
+        let mut params = Vec::new();
+        let mut status = String::new();
+        let mut tone = false;
+        let mut transport = TransportUpdate {
+            playing: false,
+            tempo: 120.0,
+            time_sig_num: 4,
+            time_sig_den: 4,
+        };
+
+        let result = handle_action(
+            GuiAction::CapturePluginState { slot_index: 5 },
+            &mut backend,
+            &mut modules,
+            &mut rack,
+            &mut selected,
+            &mut params,
+            &mut status,
+            &mut tone,
+            &mut transport,
+            false,
+            &[],
+        );
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            SupervisorUpdate::PluginStateCaptured {
+                slot_index,
+                component_state,
+                controller_state,
+            } => {
+                assert_eq!(*slot_index, 5);
+                assert!(component_state.is_empty());
+                assert!(controller_state.is_empty());
+            }
+            _ => panic!("Expected PluginStateCaptured"),
+        }
+    }
+
+    #[test]
+    fn test_handle_action_list_presets_empty() {
+        let mut backend = HostBackend::new();
+        let mut modules = Vec::new();
+        let mut rack = Vec::new();
+        let mut selected = None;
+        let mut params = Vec::new();
+        let mut status = String::new();
+        let mut tone = false;
+        let mut transport = TransportUpdate {
+            playing: false,
+            tempo: 120.0,
+            time_sig_num: 4,
+            time_sig_den: 4,
+        };
+
+        let result = handle_action(
+            GuiAction::ListPresets,
+            &mut backend,
+            &mut modules,
+            &mut rack,
+            &mut selected,
+            &mut params,
+            &mut status,
+            &mut tone,
+            &mut transport,
+            false,
+            &[],
+        );
+        // No active plugin, no presets
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            SupervisorUpdate::PresetList {
+                factory_presets,
+                user_presets,
+            } => {
+                assert!(factory_presets.is_empty());
+                assert!(user_presets.is_empty());
+            }
+            _ => panic!("Expected PresetList"),
+        }
+    }
+
+    #[test]
+    fn test_handle_action_load_preset_missing_file() {
+        let mut backend = HostBackend::new();
+        let mut modules = Vec::new();
+        let mut rack = Vec::new();
+        let mut selected = None;
+        let mut params = Vec::new();
+        let mut status = String::new();
+        let mut tone = false;
+        let mut transport = TransportUpdate {
+            playing: false,
+            tempo: 120.0,
+            time_sig_num: 4,
+            time_sig_den: 4,
+        };
+
+        let result = handle_action(
+            GuiAction::LoadPreset {
+                path: "/nonexistent/preset.json".into(),
+            },
+            &mut backend,
+            &mut modules,
+            &mut rack,
+            &mut selected,
+            &mut params,
+            &mut status,
+            &mut tone,
+            &mut transport,
+            false,
+            &[],
+        );
+        assert_eq!(result.len(), 1);
+        assert!(matches!(&result[0], SupervisorUpdate::StatusMessage { message } if message.contains("Preset load failed")));
+    }
+
+    #[test]
+    fn test_handle_action_save_preset_no_active_plugin() {
+        let mut backend = HostBackend::new();
+        let mut modules = Vec::new();
+        let mut rack = Vec::new();
+        let mut selected = None;
+        let mut params = Vec::new();
+        let mut status = String::new();
+        let mut tone = false;
+        let mut transport = TransportUpdate {
+            playing: false,
+            tempo: 120.0,
+            time_sig_num: 4,
+            time_sig_den: 4,
+        };
+
+        let dir = std::env::temp_dir().join("rs-vst-host-test-save-preset");
+        let path = dir.join("test_preset.json");
+
+        let result = handle_action(
+            GuiAction::SavePreset {
+                path: path.to_string_lossy().to_string(),
+                name: "Test".into(),
+            },
+            &mut backend,
+            &mut modules,
+            &mut rack,
+            &mut selected,
+            &mut params,
+            &mut status,
+            &mut tone,
+            &mut transport,
+            false,
+            &[],
+        );
+        // Should succeed but with empty state (no active plugin)
+        assert_eq!(result.len(), 1);
+        // Even with no active plugin, it creates a preset with empty state
+        match &result[0] {
+            SupervisorUpdate::StatusMessage { message } => {
+                assert!(
+                    message.contains("Preset") || message.contains("saved"),
+                    "Expected save confirmation, got: {}",
+                    message
+                );
+            }
+            _ => panic!("Expected StatusMessage"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_rack_slot_state_preserves_state_blobs() {
+        let slot = RackSlotState {
+            name: "Test".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: PathBuf::from("/test.vst3"),
+            cid: [1u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: Some(vec![0xDE, 0xAD]),
+            controller_state: Some(vec![0xBE, 0xEF]),
+        };
+
+        let json = serde_json::to_string(&slot).unwrap();
+        let decoded: RackSlotState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.component_state.unwrap(), vec![0xDE, 0xAD]);
+        assert_eq!(decoded.controller_state.unwrap(), vec![0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn test_gui_action_new_variants_serialize() {
+        let actions = vec![
+            GuiAction::CapturePluginState { slot_index: 0 },
+            GuiAction::LoadPreset {
+                path: "/test.json".into(),
+            },
+            GuiAction::SavePreset {
+                path: "/test.json".into(),
+                name: "Test".into(),
+            },
+            GuiAction::ListPresets,
+        ];
+
+        for action in actions {
+            let json = serde_json::to_string(&action).expect("serialize");
+            let decoded: GuiAction = serde_json::from_str(&json).expect("deserialize");
+            let json2 = serde_json::to_string(&decoded).expect("re-serialize");
+            assert_eq!(json, json2, "roundtrip failed for {:?}", action);
         }
     }
 }

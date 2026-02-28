@@ -353,6 +353,40 @@ impl AudioEngine {
     pub fn plugin_name(&self) -> &str {
         &self.instance.name
     }
+
+    /// Capture the component state of the plugin.
+    ///
+    /// Returns the binary state blob from `IComponent::getState()`.
+    pub fn get_component_state(&self) -> Vec<u8> {
+        self.instance.get_component_state()
+    }
+
+    /// Capture the controller state of the plugin.
+    ///
+    /// Returns the binary state blob from `IEditController::getState()`.
+    pub fn get_controller_state(&self) -> Vec<u8> {
+        // get_controller_state needs &mut self on Vst3Instance because it
+        // may lazily create the controller. Since AudioEngine holds a
+        // mutable reference to instance through &self, we need to cast.
+        // This is safe because get_controller_state only mutates the cached
+        // controller pointer which is not accessed concurrently.
+        let instance_ptr = &self.instance as *const Vst3Instance as *mut Vst3Instance;
+        unsafe { (*instance_ptr).get_controller_state() }
+    }
+
+    /// Restore the component state on the plugin.
+    ///
+    /// `data` should be a blob previously obtained from [`get_component_state`].
+    pub fn set_component_state(&mut self, data: &[u8]) -> bool {
+        self.instance.set_component_state(data)
+    }
+
+    /// Restore the controller state on the plugin.
+    ///
+    /// `data` should be a blob previously obtained from [`get_controller_state`].
+    pub fn set_controller_state(&mut self, data: &[u8]) -> bool {
+        self.instance.set_controller_state(data)
+    }
 }
 
 impl Drop for AudioEngine {

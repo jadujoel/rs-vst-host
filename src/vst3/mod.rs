@@ -12,6 +12,7 @@ pub mod module;
 pub mod param_changes;
 pub mod params;
 pub mod plug_frame;
+pub mod presets;
 pub mod process;
 pub mod process_context;
 pub mod sandbox;

@@ -520,13 +520,30 @@ impl WorkerState {
     }
 
     fn get_state(&self) -> WorkerResponse {
-        // TODO: Implement IComponent::getState via IBStream
-        WorkerResponse::State { data: vec![] }
+        match &self.instance {
+            Some(instance) => {
+                let component_state = instance.get_component_state();
+                WorkerResponse::State { data: component_state }
+            }
+            None => WorkerResponse::State { data: vec![] },
+        }
     }
 
-    fn set_state(&mut self, _data: &[u8]) -> WorkerResponse {
-        // TODO: Implement IComponent::setState via IBStream
-        WorkerResponse::StateLoaded
+    fn set_state(&mut self, data: &[u8]) -> WorkerResponse {
+        match &mut self.instance {
+            Some(instance) => {
+                if instance.set_component_state(data) {
+                    WorkerResponse::StateLoaded
+                } else {
+                    WorkerResponse::Error {
+                        message: "Failed to restore component state".to_string(),
+                    }
+                }
+            }
+            None => WorkerResponse::Error {
+                message: "No plugin instance loaded".to_string(),
+            },
+        }
     }
 
     fn has_editor(&mut self) -> WorkerResponse {
@@ -704,8 +721,9 @@ mod tests {
     #[test]
     fn test_worker_set_state() {
         let mut state = WorkerState::new();
+        // Without a loaded plugin, set_state should return Error
         let response = state.set_state(&[1, 2, 3]);
-        assert!(matches!(response, WorkerResponse::StateLoaded));
+        assert!(matches!(response, WorkerResponse::Error { .. }));
     }
 
     #[test]

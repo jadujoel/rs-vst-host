@@ -26,14 +26,13 @@ fn sample_rack(count: usize) -> Vec<PluginSlot> {
             name: format!("Plugin {}", i),
             vendor: format!("Vendor {}", i),
             category: "Audio Module Class".to_string(),
-            path: PathBuf::from(format!(
-                "/Library/Audio/Plug-Ins/VST3/Plugin{}.vst3",
-                i
-            )),
+            path: PathBuf::from(format!("/Library/Audio/Plug-Ins/VST3/Plugin{}.vst3", i)),
             cid: [i as u8; 16],
             bypassed: i % 3 == 0,
             param_cache: Vec::new(),
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         })
         .collect()
 }

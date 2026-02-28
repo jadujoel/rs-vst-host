@@ -457,8 +457,13 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 
 **💾 Session:**
 - **Path** — file path for saving/loading session state
-- **💾 Save** — save current transport, rack, and device settings to JSON
-- **📂 Load** — restore a previously saved session
+- **💾 Save** — save current transport, rack, device settings, and **plugin state** (component + controller state blobs) to JSON (v2.0 format)
+- **📂 Load** — restore a previously saved session, including plugin state. When a plugin is activated from a loaded session, its saved state is automatically restored.
+
+**🎛️ Presets:**
+- Presets are saved as JSON files in `~/.rs-vst-host/presets/<plugin-name>/`
+- Each preset stores the plugin's component state and controller state as base64-encoded binary blobs
+- Use `CapturePluginState`, `SavePreset`, `LoadPreset`, and `ListPresets` actions via the IPC protocol
 
 ### Keyboard Shortcuts
 

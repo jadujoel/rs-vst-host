@@ -132,6 +132,32 @@ pub enum GuiAction {
         enabled: bool,
     },
 
+    /// Request plugin state capture for the active slot.
+    ///
+    /// Audio worker will capture component + controller state and respond
+    /// with `SupervisorUpdate::PluginStateCaptured`.
+    CapturePluginState {
+        /// Rack slot index of the active plugin.
+        slot_index: usize,
+    },
+
+    /// Load a preset file onto the active plugin.
+    LoadPreset {
+        /// Absolute path to the preset file.
+        path: String,
+    },
+
+    /// Save the current plugin state as a preset file.
+    SavePreset {
+        /// Absolute path to save the preset to.
+        path: String,
+        /// Preset display name.
+        name: String,
+    },
+
+    /// List available presets for the active plugin.
+    ListPresets,
+
     /// GUI is shutting down normally (window closed).
     Shutdown,
 
@@ -236,6 +262,24 @@ pub enum SupervisorUpdate {
         has_editor: bool,
     },
 
+    /// Plugin state captured (response to `CapturePluginState`).
+    PluginStateCaptured {
+        /// Rack slot index.
+        slot_index: usize,
+        /// Component state blob (binary).
+        component_state: Vec<u8>,
+        /// Controller state blob (binary).
+        controller_state: Vec<u8>,
+    },
+
+    /// Preset list for the active plugin.
+    PresetList {
+        /// Factory preset names (from IUnitInfo).
+        factory_presets: Vec<String>,
+        /// User preset file paths.
+        user_presets: Vec<PresetInfo>,
+    },
+
     /// Pong response to GUI's Ping.
     Pong,
 
@@ -275,6 +319,12 @@ pub struct RackSlotState {
     pub param_cache: Vec<ParamSnapshot>,
     /// Staged parameter changes.
     pub staged_changes: Vec<(u32, f64)>,
+    /// Component state blob (binary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component_state: Option<Vec<u8>>,
+    /// Controller state blob (binary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_state: Option<Vec<u8>>,
 }
 
 /// Serializable audio status.
@@ -359,6 +409,15 @@ pub struct TransportUpdate {
     pub time_sig_num: u32,
     /// Time signature denominator.
     pub time_sig_den: u32,
+}
+
+/// Preset info for IPC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetInfo {
+    /// Preset display name.
+    pub name: String,
+    /// Absolute path to the preset file.
+    pub path: String,
 }
 
 // ── Wire helpers (reuse from ipc::messages) ─────────────────────────────
@@ -537,6 +596,8 @@ mod tests {
             bypassed: false,
             param_cache: Vec::new(),
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         };
         let json = serde_json::to_string(&slot).expect("serialize");
         let decoded: RackSlotState = serde_json::from_str(&json).expect("deserialize");
@@ -649,5 +710,221 @@ mod tests {
         let mut cursor = std::io::Cursor::new(encoded);
         let decoded: Option<AudioCommand> = decode(&mut cursor).expect("decode");
         assert!(decoded.is_some());
+    }
+
+    // ── Phase 8.1/8.2: New message variant tests ────────────────────────
+
+    #[test]
+    fn test_gui_action_capture_plugin_state_serde() {
+        let action = GuiAction::CapturePluginState { slot_index: 3 };
+        let json = serde_json::to_string(&action).unwrap();
+        let decoded: GuiAction = serde_json::from_str(&json).unwrap();
+        match decoded {
+            GuiAction::CapturePluginState { slot_index } => assert_eq!(slot_index, 3),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_gui_action_load_preset_serde() {
+        let action = GuiAction::LoadPreset {
+            path: "/tmp/preset.json".into(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let decoded: GuiAction = serde_json::from_str(&json).unwrap();
+        match decoded {
+            GuiAction::LoadPreset { path } => assert_eq!(path, "/tmp/preset.json"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_gui_action_save_preset_serde() {
+        let action = GuiAction::SavePreset {
+            path: "/tmp/my_preset.json".into(),
+            name: "My Preset".into(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let decoded: GuiAction = serde_json::from_str(&json).unwrap();
+        match decoded {
+            GuiAction::SavePreset { path, name } => {
+                assert_eq!(path, "/tmp/my_preset.json");
+                assert_eq!(name, "My Preset");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_gui_action_list_presets_serde() {
+        let action = GuiAction::ListPresets;
+        let json = serde_json::to_string(&action).unwrap();
+        let decoded: GuiAction = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, GuiAction::ListPresets));
+    }
+
+    #[test]
+    fn test_supervisor_update_plugin_state_captured_serde() {
+        let update = SupervisorUpdate::PluginStateCaptured {
+            slot_index: 1,
+            component_state: vec![0xDE, 0xAD],
+            controller_state: vec![0xBE, 0xEF],
+        };
+        let json = serde_json::to_string(&update).unwrap();
+        let decoded: SupervisorUpdate = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SupervisorUpdate::PluginStateCaptured {
+                slot_index,
+                component_state,
+                controller_state,
+            } => {
+                assert_eq!(slot_index, 1);
+                assert_eq!(component_state, vec![0xDE, 0xAD]);
+                assert_eq!(controller_state, vec![0xBE, 0xEF]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_supervisor_update_preset_list_serde() {
+        let update = SupervisorUpdate::PresetList {
+            factory_presets: vec!["Init".into()],
+            user_presets: vec![
+                PresetInfo {
+                    name: "Heavy Bass".into(),
+                    path: "/user/heavy_bass.json".into(),
+                },
+                PresetInfo {
+                    name: "Light Pad".into(),
+                    path: "/user/light_pad.json".into(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&update).unwrap();
+        let decoded: SupervisorUpdate = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SupervisorUpdate::PresetList {
+                factory_presets,
+                user_presets,
+            } => {
+                assert_eq!(factory_presets.len(), 1);
+                assert_eq!(factory_presets[0], "Init");
+                assert_eq!(user_presets.len(), 2);
+                assert_eq!(user_presets[1].name, "Light Pad");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_rack_slot_state_with_state_blobs_serde() {
+        let slot = RackSlotState {
+            name: "Test".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: std::path::PathBuf::from("/test.vst3"),
+            cid: [1u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: Some(vec![0x01, 0x02, 0x03]),
+            controller_state: Some(vec![0x04, 0x05]),
+        };
+        let json = serde_json::to_string(&slot).unwrap();
+        assert!(json.contains("component_state"));
+        let decoded: RackSlotState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.component_state.unwrap(), vec![0x01, 0x02, 0x03]);
+        assert_eq!(decoded.controller_state.unwrap(), vec![0x04, 0x05]);
+    }
+
+    #[test]
+    fn test_rack_slot_state_without_state_blobs_serde() {
+        let slot = RackSlotState {
+            name: "Test".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: std::path::PathBuf::from("/test.vst3"),
+            cid: [1u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
+        };
+        let json = serde_json::to_string(&slot).unwrap();
+        // None values should be skipped in serialization
+        assert!(!json.contains("component_state"));
+        assert!(!json.contains("controller_state"));
+        let decoded: RackSlotState = serde_json::from_str(&json).unwrap();
+        assert!(decoded.component_state.is_none());
+        assert!(decoded.controller_state.is_none());
+    }
+
+    #[test]
+    fn test_rack_slot_state_backward_compat_no_state_fields() {
+        // JSON without component_state/controller_state should deserialize fine
+        let json = r#"{
+            "name": "Old",
+            "vendor": "V",
+            "category": "C",
+            "path": "/old.vst3",
+            "cid": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            "bypassed": false,
+            "param_cache": [],
+            "staged_changes": []
+        }"#;
+        let decoded: RackSlotState = serde_json::from_str(json).unwrap();
+        assert!(decoded.component_state.is_none());
+        assert!(decoded.controller_state.is_none());
+    }
+
+    #[test]
+    fn test_preset_info_serde() {
+        let info = PresetInfo {
+            name: "My Preset".into(),
+            path: "/path/to/preset.json".into(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let decoded: PresetInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.name, "My Preset");
+        assert_eq!(decoded.path, "/path/to/preset.json");
+    }
+
+    #[test]
+    fn test_capture_plugin_state_encode_decode() {
+        let action = GuiAction::CapturePluginState { slot_index: 0 };
+        let encoded = encode(&action).expect("encode");
+        let mut cursor = std::io::Cursor::new(encoded);
+        let decoded: Option<GuiAction> = decode(&mut cursor).expect("decode");
+        assert!(decoded.is_some());
+        assert!(matches!(
+            decoded.unwrap(),
+            GuiAction::CapturePluginState { slot_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn test_plugin_state_captured_encode_decode() {
+        let update = SupervisorUpdate::PluginStateCaptured {
+            slot_index: 2,
+            component_state: vec![0xFF; 100],
+            controller_state: vec![],
+        };
+        let encoded = encode(&update).expect("encode");
+        let mut cursor = std::io::Cursor::new(encoded);
+        let decoded: Option<SupervisorUpdate> = decode(&mut cursor).expect("decode");
+        match decoded.unwrap() {
+            SupervisorUpdate::PluginStateCaptured {
+                slot_index,
+                component_state,
+                controller_state,
+            } => {
+                assert_eq!(slot_index, 2);
+                assert_eq!(component_state.len(), 100);
+                assert!(controller_state.is_empty());
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 }

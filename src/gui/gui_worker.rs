@@ -336,6 +336,17 @@ impl GuiWorkerApp {
                 self.audio_status = AudioStatusState::default();
                 debug!("Audio process was restarted by supervisor");
             }
+
+            SupervisorUpdate::PluginStateCaptured { .. } => {
+                // State capture results are handled by the supervisor;
+                // the GUI worker doesn't need to act on them directly.
+                debug!("Received PluginStateCaptured (no GUI action needed)");
+            }
+
+            SupervisorUpdate::PresetList { .. } => {
+                // TODO: Phase 8.2 — display preset list in GUI panel
+                debug!("Received PresetList (not yet implemented in GUI)");
+            }
         }
     }
 
@@ -1271,6 +1282,8 @@ mod tests {
                 bypassed: false,
                 param_cache: Vec::new(),
                 staged_changes: Vec::new(),
+                component_state: None,
+                controller_state: None,
             }],
             selected_slot: Some(0),
             active_slot: Some(0),
@@ -1369,6 +1382,8 @@ mod tests {
                     bypassed: false,
                     param_cache: Vec::new(),
                     staged_changes: Vec::new(),
+                    component_state: None,
+                    controller_state: None,
                 },
                 RackSlotState {
                     name: "B".into(),
@@ -1379,6 +1394,8 @@ mod tests {
                     bypassed: true,
                     param_cache: Vec::new(),
                     staged_changes: Vec::new(),
+                    component_state: None,
+                    controller_state: None,
                 },
             ],
             active_slot: Some(0),

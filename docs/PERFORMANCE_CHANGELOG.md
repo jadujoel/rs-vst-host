@@ -4,6 +4,32 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.23.0] - 2026-02-28 — Plugin State Persistence & Presets (minimal perf impact)
+
+### Summary
+
+Phase 8.1 + 8.2 implementation: plugin state save/restore via IBStream, session format v2.0 with base64 state blobs, preset file management. State capture/restore methods added to Vst3Instance, AudioEngine, HostBackend, and PluginProcess proxy. New `presets.rs` module, 4 new `GuiAction` variants, 2 new `SupervisorUpdate` variants. Base64 dependency added.
+
+**Changes to hot paths:** None. State capture (`getState()`) and restore (`setState()`) are only invoked on user-initiated save/load/preset actions — never during the audio callback. The audio `process()` loop is completely unaffected.
+
+**Session serde:** The v2.0 session format adds optional base64 state blobs to `SlotSnapshot`. For sessions without state (or empty state), serialization is identical to v1.0.
+
+### Session Serde Benchmarks (v2.0 format, no state blobs)
+| Benchmark | Fastest | Median | Mean |
+|-----------|---------|--------|------|
+| capture/1 slot | 170 ns | 183 ns | 185 ns |
+| capture/16 slots | 1.63 µs | 1.68 µs | 1.69 µs |
+| restore/1 slot | 122 ns | 126 ns | 135 ns |
+| restore/16 slots | 1.62 µs | 1.69 µs | 1.78 µs |
+| serde_serialize/1 | 422 ns | 429 ns | 443 ns |
+| serde_serialize/16 | 3.10 µs | 3.19 µs | 4.06 µs |
+| serde_deserialize/1 | 625 ns | 667 ns | 725 ns |
+| serde_deserialize/16 | 6.92 µs | 7.08 µs | 7.32 µs |
+| serde_roundtrip/1 | 1.31 µs | 1.38 µs | 1.39 µs |
+| serde_roundtrip/16 | 11.9 µs | 12.2 µs | 16.8 µs |
+
+**No benchmark regressions.**
+
 ## [0.22.1] - 2026-02-28 — GUI Window Close Fix (no perf impact)
 
 ### Summary

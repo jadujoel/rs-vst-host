@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0] - 2026-02-28
+
+### Added — Plugin State Persistence & Preset Management (Phase 8.1 + 8.2)
+
+Full plugin state save/restore via VST3 IBStream COM interfaces, session format v2.0, and preset file management.
+
+**Plugin State Persistence (8.1):**
+- `Vst3Instance`: 4 new methods — `get_component_state()`, `get_controller_state()`, `set_component_state()`, `set_controller_state()` using HostBStream for IBStream transfer
+- `AudioEngine`: 4 new state methods + `get_controller_state` with interior mutability for lazy controller creation
+- `HostBackend`: 4 new state methods supporting both in-process and sandboxed (via PluginProcess proxy) modes
+- `PluginProcess` proxy: `get_state()` / `set_state()` methods for sandboxed plugin state transfer
+- IPC worker: `get_state`/`set_state` TODO stubs replaced with real `IComponent::getState()`/`setState()` implementations
+- Session format upgraded from v1.0 to v2.0 — `SlotSnapshot` now includes `component_state` and `controller_state` as base64-encoded binary blobs
+- Backward compatible: v1 sessions (without state fields) load cleanly via `#[serde(default, skip_serializing_if)]`
+- `PluginSlot` and `RackSlotState` extended with `component_state: Option<Vec<u8>>` and `controller_state: Option<Vec<u8>>`
+- Audio worker `SaveSession` handler: captures live plugin state before saving
+- Audio worker `ActivateSlot` handler: restores saved state from session after plugin activation
+- Audio worker `LoadSession` handler: preserves state blobs from loaded session
+
+**Preset Management (8.2):**
+- New `src/vst3/presets.rs` module with `Preset` struct (name, plugin_cid, component/controller state)
+- Custom serde: base64 encoding/decoding for state blobs
+- `save_to_file()` / `load_from_file()` — JSON preset file I/O
+- `presets_dir(plugin_name)` — returns `~/.rs-vst-host/presets/<sanitized-name>/`
+- `list_user_presets(plugin_name)` — lists .json preset files, sorted by name
+- `sanitize_filename()` — replaces filesystem-unsafe characters
+- New `GuiAction` variants: `CapturePluginState`, `LoadPreset`, `SavePreset`, `ListPresets`
+- New `SupervisorUpdate` variants: `PluginStateCaptured`, `PresetList`
+- New `PresetInfo` type for preset listing
+- Audio worker handlers for all 4 preset actions
+
+**Dependencies:**
+- Added `base64 = "0.22"` for state blob encoding in sessions and presets
+
+**Tests added:** 88 new tests (1326 → 1414 total):
+- 12 preset module tests (serde roundtrip, file I/O, directory management, sanitization, large state)
+- 9 session state tests (capture with blobs, serde roundtrip, file roundtrip, v1 backward compat, encode/decode helpers, large state, mixed slots)
+- 13 IPC message tests (new action/update variant serde, encode/decode, PresetInfo, RackSlotState state blobs, backward compat)
+- 8 audio worker tests (capture state no-active, invalid index, list presets empty, load missing preset, save no-active, state blob preservation, new variant serialize)
+- Fixed `test_worker_set_state` (no-plugin returns Error, not StateLoaded)
+- Updated `test_session_version_constant` for v2.0
+
+**Results:** 1414 tests passing (763 lib + 651 bin), 0 failures, no benchmark regressions.
+
 ## [0.22.1] - 2026-02-28
 
 ### Fixed — GUI Window Close Reopens

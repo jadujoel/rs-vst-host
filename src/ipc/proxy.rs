@@ -507,6 +507,34 @@ impl PluginProcess {
         }
     }
 
+    /// Get the component state from the sandboxed plugin.
+    ///
+    /// Returns the binary state blob or an error description.
+    pub fn get_state(&self) -> Result<Vec<u8>, String> {
+        // Need &mut for send_receive; use interior mutability pattern
+        let self_ptr = self as *const Self as *mut Self;
+        let response = unsafe { (*self_ptr).send_receive(HostMessage::GetState)? };
+        match response {
+            WorkerResponse::State { data } => Ok(data),
+            WorkerResponse::Error { message } => Err(message),
+            _ => Err("Unexpected response to GetState".to_string()),
+        }
+    }
+
+    /// Restore component state on the sandboxed plugin.
+    ///
+    /// `data` should be a blob previously obtained from [`get_state`].
+    pub fn set_state(&mut self, data: &[u8]) -> Result<(), String> {
+        let response = self.send_receive(HostMessage::SetState {
+            data: data.to_vec(),
+        })?;
+        match response {
+            WorkerResponse::StateLoaded => Ok(()),
+            WorkerResponse::Error { message } => Err(message),
+            _ => Err("Unexpected response to SetState".to_string()),
+        }
+    }
+
     /// Set the tempo in BPM.
     pub fn set_tempo(&mut self, bpm: f64) {
         self.transport.tempo = bpm;
@@ -539,7 +567,10 @@ impl PluginProcess {
 
     /// Ping the worker process (health check).
     pub fn ping(&mut self) -> bool {
-        matches!(self.send_receive(HostMessage::Ping), Ok(WorkerResponse::Pong))
+        matches!(
+            self.send_receive(HostMessage::Ping),
+            Ok(WorkerResponse::Pong)
+        )
     }
 
     /// Get the child process PID.
@@ -573,9 +604,7 @@ mod tests {
     fn test_read_output_interleaved_silence() {
         // Without shared memory, output should be unchanged (function returns early)
         let process = PluginProcess {
-            child: std::process::Command::new("true")
-                .spawn()
-                .unwrap(),
+            child: std::process::Command::new("true").spawn().unwrap(),
             stream: {
                 // Create a dummy socket pair for testing
                 let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -604,9 +633,7 @@ mod tests {
     #[test]
     fn test_plugin_process_transport_setters() {
         let mut process = PluginProcess {
-            child: std::process::Command::new("true")
-                .spawn()
-                .unwrap(),
+            child: std::process::Command::new("true").spawn().unwrap(),
             stream: {
                 let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
                 s1
@@ -638,9 +665,7 @@ mod tests {
     #[test]
     fn test_plugin_process_crashed_state() {
         let process = PluginProcess {
-            child: std::process::Command::new("true")
-                .spawn()
-                .unwrap(),
+            child: std::process::Command::new("true").spawn().unwrap(),
             stream: {
                 let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
                 s1
@@ -665,9 +690,7 @@ mod tests {
     #[test]
     fn test_pending_param_queue() {
         let process = PluginProcess {
-            child: std::process::Command::new("true")
-                .spawn()
-                .unwrap(),
+            child: std::process::Command::new("true").spawn().unwrap(),
             stream: {
                 let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
                 s1
@@ -694,9 +717,7 @@ mod tests {
     #[test]
     fn test_process_outputs_silence_when_crashed() {
         let mut process = PluginProcess {
-            child: std::process::Command::new("true")
-                .spawn()
-                .unwrap(),
+            child: std::process::Command::new("true").spawn().unwrap(),
             stream: {
                 let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
                 s1
@@ -722,9 +743,7 @@ mod tests {
     #[test]
     fn test_process_outputs_silence_when_shutdown() {
         let mut process = PluginProcess {
-            child: std::process::Command::new("true")
-                .spawn()
-                .unwrap(),
+            child: std::process::Command::new("true").spawn().unwrap(),
             stream: {
                 let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
                 s1

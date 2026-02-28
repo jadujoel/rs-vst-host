@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.22.1 — GUI window close fix).
+Last updated: 2026-02-28 (v0.23.0 — Plugin state persistence & preset management).
 
 ## Summary
 
-- **Total tests:** 1330 (723 unit + 607 binary/integration)
+- **Total tests:** 1414 (763 unit + 651 binary/integration)
 - **All passing:** ✅ (0 failures)
 - **Build warnings:** 0 (clippy `-D warnings` clean)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (723 tests passing, 0 failures, 0 ignored) — GUI window close fix
+- **Last test run:** 2026-02-28 (763 tests passing, 0 failures, 0 ignored) — Phase 8.1 + 8.2
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -45,19 +45,20 @@ Last updated: 2026-02-28 (v0.22.1 — GUI window close fix).
 | `src/vst3/scanner.rs` | 10 | ✅ Full | Default paths, discover/dedup/sort, recursive scan, non-vst3 filtering, bundle resolution |
 | `src/vst3/process_context.rs` | 10 | ✅ Full | Transport, tempo, time sig, advance, bar position, state flags |
 | `src/vst3/cache.rs` | 9 | ✅ Full | Epoch date math, serde roundtrip, save/load roundtrip, corrupt JSON, timestamp format |
-| `src/gui/session.rs` | 9 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
+| `src/gui/session.rs` | 19 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant (v2.0), CID preservation, capture with state blobs, state serde roundtrip, state file roundtrip, v1 backward compat, encode/decode helpers, large state blob (1 MB), mixed slots with/without state |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
 | `src/vst3/instance.rs` | 21 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED), DEACTIVATION_HEAP_CORRUPTED flag, host object leak on crash (prevents use-after-free), host object destroy on clean shutdown, crash flags set together on COM crash; create_editor_view/has_editor require real COM objects |
 | `src/vst3/module.rs` | 16 | ⚠️ Partial | UTF-8/UTF-16 utilities, vtable layout assertions (Factory/Factory2/Factory3 slot counts, RawClassInfoW size), IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/e2e_tests.rs` | 39 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 crash-resilience tests use subprocess isolation with permanent SIGABRT handler (0 ignored). 10 multi-plugin lifecycle tests: forward/reverse shutdown, interleaved setup, stop-and-restart, duplicate instances, deterministic random ordering (seeds 42/1337), random start/stop cycles, concurrent AudioEngine, rapid add/remove stress. |
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
-| `src/gui/ipc.rs` | 8 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 12 variants incl. AudioProcessRestarted), AudioCommand serde roundtrip (all 4 variants), encode/decode wire protocol, DecodeError timeout classification |
+| `src/gui/ipc.rs` | 21 | ✅ Full | GuiAction serde roundtrip (all 24 variants), SupervisorUpdate roundtrip (all 14 variants), AudioCommand serde roundtrip (all 4 variants), encode/decode wire protocol, DecodeError timeout classification, CapturePluginState/LoadPreset/SavePreset/ListPresets serde, PluginStateCaptured/PresetList serde, RackSlotState with/without state blobs, backward compat (no state fields), PresetInfo serde, state captured encode/decode |
 | `src/gui/supervisor.rs` | 12 | ✅ Full | ShadowState (new, update_from FullState/RackUpdated/PluginModulesUpdated, ignores others, to_restore_command), LoopResult variants, AudioCommand encode/decode, RestoreState roundtrip, AudioProcessRestarted roundtrip, check_gui_exit (clean shutdown, nonzero exit, waits for delayed exit); full supervisor loop requires child processes |
-| `src/gui/audio_worker.rs` | 17 | ✅ Full | AudioWorkerState (safe_mode, normal), audio_status_state conversion, build_full_state structure, handle_action dispatch (ping, shutdown, set_tone, add_to_rack, remove_from_rack, select_slot, stage_parameter, set_transport, add_invalid_index, refresh_devices), AudioCommand serialize roundtrip |
+| `src/gui/audio_worker.rs` | 25 | ✅ Full | AudioWorkerState (safe_mode, normal), audio_status_state conversion, build_full_state structure, handle_action dispatch (ping, shutdown, set_tone, add_to_rack, remove_from_rack, select_slot, stage_parameter, set_transport, add_invalid_index, refresh_devices, capture_plugin_state, capture_invalid_index, list_presets_empty, load_preset_missing, save_preset_no_active), AudioCommand serialize roundtrip, state blob preservation, new variant serialize |
 | `src/gui/gui_worker.rs` | 18 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, send_shutdown_action_on_close, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 9 | ⚠️ Partial | Platform constant, struct size, result constant, sandbox import, NSApplication init idempotency, pump_events main-thread guard, pump_platform_events no-panic; open/close/poll require real NSWindow + IPlugView |
 | `src/gui_tests.rs` | 6 | ✅ Full | Headless GUI integration: add plugin to rack with screenshot, open editor view and verify visible, full editor workflow (add→select→switch→deselect) with 9 screenshots, parameter types (automatable/bypass/read-only), multi-frame stability (10 frames), editor open without active plugin. CPU software-rasterized PNG screenshots saved to `target/test-screenshots/`. |
 | `src/vst3/ibstream.rs` | 6 | ✅ Full | IBStream COM implementation (vst3-rs types): create/destroy, write/read roundtrip, seek/tell, from_data, take_data, query_interface, ref counting |
+| `src/vst3/presets.rs` | 12 | ✅ Full | Preset serde roundtrip for binary state, no-state preset, base64 encoding, file I/O roundtrip, invalid JSON, missing file, filename sanitization, presets_dir, empty listing, listing with files, backward compat, large state (1 MB) |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 

@@ -3,12 +3,21 @@
 //! A session captures the current host state: transport settings, rack
 //! plugin slots, and selected devices. This allows the user to save
 //! their setup and restore it later.
+//!
+//! ## Session format versions
+//!
+//! - **v1.0**: Original format — rack slots contain metadata only (name/path/cid/bypassed).
+//! - **v2.0**: Adds optional `component_state` and `controller_state` base64-encoded
+//!   binary blobs to each slot, enabling full plugin state persistence.
+//!
+//! v2 code can load v1 sessions (state blobs default to `None`).
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Session file format version.
-const SESSION_VERSION: &str = "1.0";
+const SESSION_VERSION: &str = "2.0";
 
 /// A serializable session containing the full host state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +60,47 @@ pub struct SlotSnapshot {
     pub cid: [u8; 16],
     /// Whether the slot is bypassed.
     pub bypassed: bool,
+    /// Component state blob (base64-encoded), from `IComponent::getState()`.
+    /// `None` for v1 sessions or plugins that don't support state persistence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component_state: Option<String>,
+    /// Controller state blob (base64-encoded), from `IEditController::getState()`.
+    /// `None` for v1 sessions or plugins without separate controller state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_state: Option<String>,
+}
+
+impl SlotSnapshot {
+    /// Get the decoded component state bytes, if present.
+    pub fn component_state_bytes(&self) -> Option<Vec<u8>> {
+        self.component_state
+            .as_ref()
+            .and_then(|s| BASE64.decode(s).ok())
+    }
+
+    /// Get the decoded controller state bytes, if present.
+    pub fn controller_state_bytes(&self) -> Option<Vec<u8>> {
+        self.controller_state
+            .as_ref()
+            .and_then(|s| BASE64.decode(s).ok())
+    }
+}
+
+/// Encode binary state data as base64 for session serialization.
+/// Returns `None` for empty data.
+pub fn encode_state(data: &[u8]) -> Option<String> {
+    if data.is_empty() {
+        None
+    } else {
+        Some(BASE64.encode(data))
+    }
+}
+
+/// Decode base64 state data from session deserialization.
+/// Returns `None` for `None` input or decode errors.
+#[allow(dead_code)]
+pub fn decode_state(encoded: &Option<String>) -> Option<Vec<u8>> {
+    encoded.as_ref().and_then(|s| BASE64.decode(s).ok())
 }
 
 impl Session {
@@ -77,6 +127,8 @@ impl Session {
                     path: slot.path.clone(),
                     cid: slot.cid,
                     bypassed: slot.bypassed,
+                    component_state: slot.component_state.as_ref().and_then(|d| encode_state(d)),
+                    controller_state: slot.controller_state.as_ref().and_then(|d| encode_state(d)),
                 })
                 .collect(),
             audio_device,
@@ -105,6 +157,8 @@ impl Session {
                 bypassed: snap.bypassed,
                 param_cache: Vec::new(),
                 staged_changes: Vec::new(),
+                component_state: snap.component_state_bytes(),
+                controller_state: snap.controller_state_bytes(),
             })
             .collect();
 
@@ -164,6 +218,8 @@ mod tests {
                 bypassed: false,
                 param_cache: Vec::new(),
                 staged_changes: Vec::new(),
+                component_state: None,
+                controller_state: None,
             },
             PluginSlot {
                 name: "TestEQ".into(),
@@ -174,6 +230,8 @@ mod tests {
                 bypassed: true,
                 param_cache: Vec::new(),
                 staged_changes: Vec::new(),
+                component_state: None,
+                controller_state: None,
             },
         ]
     }
@@ -298,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_session_version_constant() {
-        assert_eq!(SESSION_VERSION, "1.0");
+        assert_eq!(SESSION_VERSION, "2.0");
     }
 
     #[test]
@@ -316,10 +374,217 @@ mod tests {
             bypassed: false,
             param_cache: Vec::new(),
             staged_changes: Vec::new(),
+            component_state: None,
+            controller_state: None,
         };
 
         let session = Session::capture(&TransportState::default(), &[slot], None, None);
         let (_, rack) = session.restore();
         assert_eq!(rack[0].cid, cid);
+    }
+
+    // ── Phase 8.1: Plugin State Persistence Tests ───────────────────────
+
+    #[test]
+    fn test_session_capture_with_state_blobs() {
+        let comp_state = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03];
+        let ctrl_state = vec![0xCA, 0xFE, 0xBA, 0xBE];
+
+        let rack = vec![PluginSlot {
+            name: "StatefulPlugin".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: PathBuf::from("/test.vst3"),
+            cid: [5u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: Some(comp_state.clone()),
+            controller_state: Some(ctrl_state.clone()),
+        }];
+
+        let session = Session::capture(&TransportState::default(), &rack, None, None);
+
+        // Should be base64-encoded in the snapshot
+        assert!(session.rack[0].component_state.is_some());
+        assert!(session.rack[0].controller_state.is_some());
+
+        // Roundtrip to verify
+        let (_, restored) = session.restore();
+        assert_eq!(restored[0].component_state.as_ref().unwrap(), &comp_state);
+        assert_eq!(restored[0].controller_state.as_ref().unwrap(), &ctrl_state);
+    }
+
+    #[test]
+    fn test_session_state_serde_roundtrip() {
+        let comp_state = vec![0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F];
+        let rack = vec![PluginSlot {
+            name: "P".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: PathBuf::from("/test.vst3"),
+            cid: [9u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: Some(comp_state.clone()),
+            controller_state: None,
+        }];
+
+        let session = Session::capture(&TransportState::default(), &rack, None, None);
+        let json = serde_json::to_string_pretty(&session).unwrap();
+        let loaded: Session = serde_json::from_str(&json).unwrap();
+
+        let (_, restored) = loaded.restore();
+        assert_eq!(restored[0].component_state.as_ref().unwrap(), &comp_state);
+        assert!(restored[0].controller_state.is_none());
+    }
+
+    #[test]
+    fn test_session_state_file_roundtrip() {
+        let dir = std::env::temp_dir().join("rs-vst-host-test-session-state");
+        let path = dir.join("stateful_session.json");
+
+        let comp_state = vec![0x10, 0x20, 0x30, 0x40];
+        let ctrl_state = vec![0x50, 0x60];
+
+        let rack = vec![PluginSlot {
+            name: "Stateful".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: PathBuf::from("/test.vst3"),
+            cid: [7u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: Some(comp_state.clone()),
+            controller_state: Some(ctrl_state.clone()),
+        }];
+
+        let session = Session::capture(&TransportState::default(), &rack, None, None);
+        session.save_to_file(&path).unwrap();
+
+        let loaded = Session::load_from_file(&path).unwrap();
+        let (_, restored) = loaded.restore();
+        assert_eq!(restored[0].component_state.as_ref().unwrap(), &comp_state);
+        assert_eq!(restored[0].controller_state.as_ref().unwrap(), &ctrl_state);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_session_v1_backward_compat() {
+        // Simulate a v1.0 session JSON without state fields — should load fine
+        let v1_json = r#"{
+            "version": "1.0",
+            "transport": { "playing": false, "tempo": 120.0, "time_sig_num": 4, "time_sig_den": 4 },
+            "rack": [{
+                "name": "OldPlugin",
+                "vendor": "V",
+                "category": "C",
+                "path": "/old.vst3",
+                "cid": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
+                "bypassed": false
+            }],
+            "audio_device": null,
+            "midi_port": null
+        }"#;
+
+        let session: Session = serde_json::from_str(v1_json).unwrap();
+        assert_eq!(session.version, "1.0");
+        assert!(session.rack[0].component_state.is_none());
+        assert!(session.rack[0].controller_state.is_none());
+
+        let (_, restored) = session.restore();
+        assert_eq!(restored[0].name, "OldPlugin");
+        assert!(restored[0].component_state.is_none());
+        assert!(restored[0].controller_state.is_none());
+    }
+
+    #[test]
+    fn test_session_encode_state_empty() {
+        assert!(encode_state(&[]).is_none());
+    }
+
+    #[test]
+    fn test_session_encode_decode_state() {
+        let data = vec![0xFF, 0x00, 0x80, 0x7F, 0x01];
+        let encoded = encode_state(&data).unwrap();
+        let decoded = decode_state(&Some(encoded)).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_session_decode_state_none() {
+        assert!(decode_state(&None).is_none());
+    }
+
+    #[test]
+    fn test_session_large_state_blob() {
+        // 1 MB state blob
+        let large_state: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
+
+        let rack = vec![PluginSlot {
+            name: "LargeState".into(),
+            vendor: "V".into(),
+            category: "C".into(),
+            path: PathBuf::from("/test.vst3"),
+            cid: [3u8; 16],
+            bypassed: false,
+            param_cache: Vec::new(),
+            staged_changes: Vec::new(),
+            component_state: Some(large_state.clone()),
+            controller_state: None,
+        }];
+
+        let session = Session::capture(&TransportState::default(), &rack, None, None);
+        let json = serde_json::to_string(&session).unwrap();
+        let loaded: Session = serde_json::from_str(&json).unwrap();
+        let (_, restored) = loaded.restore();
+        assert_eq!(restored[0].component_state.as_ref().unwrap().len(), 1_000_000);
+        assert_eq!(restored[0].component_state.as_ref().unwrap(), &large_state);
+    }
+
+    #[test]
+    fn test_session_mixed_slots_with_and_without_state() {
+        let rack = vec![
+            PluginSlot {
+                name: "HasState".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: PathBuf::from("/a.vst3"),
+                cid: [1u8; 16],
+                bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+                component_state: Some(vec![0xAA, 0xBB]),
+                controller_state: Some(vec![0xCC]),
+            },
+            PluginSlot {
+                name: "NoState".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: PathBuf::from("/b.vst3"),
+                cid: [2u8; 16],
+                bypassed: true,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+                component_state: None,
+                controller_state: None,
+            },
+        ];
+
+        let session = Session::capture(&TransportState::default(), &rack, None, None);
+        let json = serde_json::to_string_pretty(&session).unwrap();
+
+        // Ensure no state fields for the second slot in JSON (skip_serializing_if)
+        assert!(json.contains("component_state"));
+        let loaded: Session = serde_json::from_str(&json).unwrap();
+        let (_, restored) = loaded.restore();
+
+        assert_eq!(restored[0].component_state.as_ref().unwrap(), &[0xAA, 0xBB]);
+        assert_eq!(restored[0].controller_state.as_ref().unwrap(), &[0xCC]);
+        assert!(restored[1].component_state.is_none());
+        assert!(restored[1].controller_state.is_none());
     }
 }
