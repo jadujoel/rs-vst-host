@@ -4,7 +4,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 
 ## Features
 
-- **Plugin scanning** — Discover VST3 plugins in standard OS directories with metadata extraction via manual COM FFI
+- **Plugin scanning** — Discover VST3 plugins in standard OS directories with metadata extraction via the `vst3` crate (coupler-rs/vst3-rs)
 - **Plugin cache** — JSON-based cache for instant plugin listing without re-scanning
 - **Real-time audio** — Load and run plugins with real-time audio processing via `cpal`
 - **MIDI input** — Connect MIDI devices to send notes to instrument plugins via `midir`
@@ -129,7 +129,7 @@ src/
 └── vst3/
     ├── cache.rs     # JSON plugin cache
     ├── cf_bundle.rs # CoreFoundation CFBundleRef FFI (macOS)
-    ├── com.rs       # VST3 COM vtable definitions (IComponent, IAudioProcessor, IEditController, IEventList, IPlugView, IPlugFrame)
+    ├── com.rs       # VST3 type re-exports from vst3-rs crate (IComponent, IAudioProcessor, IEditController, IEventList, IPlugView, IPlugFrame)
     ├── component_handler.rs # IComponentHandler COM for parameter notifications
     ├── event_list.rs    # IEventList COM implementation for MIDI events
     ├── host_context.rs  # IHostApplication COM implementation
@@ -148,7 +148,7 @@ src/
 
 ### VST3 Interop
 
-This project uses **manual COM FFI** rather than the `vst3-sys` crate. All VST3 interface vtables are defined as `#[repr(C)]` structs with function pointers, matching the Steinberg SDK binary layout. This gives full control over the host–plugin boundary without external binding dependencies.
+This project uses the **[vst3](https://crates.io/crates/vst3) crate** (v0.3.0, coupler-rs/vst3-rs) for VST3 COM type definitions. All interface vtables (`IComponent`, `IAudioProcessor`, `IEditController`, `IEventList`, etc.) come from the crate's auto-generated bindings, ensuring binary-compatible `#[repr(C)]` layouts matching the Steinberg SDK. Host-side COM objects (event lists, parameter changes, component handler, plug frame, IBStream, host context) implement these vtable types with custom Rust logic. The `com.rs` module centralizes all vst3-rs re-exports and provides convenience helpers for IID constants, type conversions, and event construction.
 
 ### VST3 Plugin Class Types
 
@@ -246,6 +246,7 @@ RUST_LOG=rs_vst_host::vst3=trace rs-vst-host scan
 | `ctrlc` 3 | Ctrl+C signal handling |
 | `midir` 0.10 | Cross-platform MIDI input |
 | `libloading` 0.8 | Dynamic library loading |
+| `vst3` 0.3 | VST3 COM type definitions (coupler-rs/vst3-rs) |
 | `serde` / `serde_json` | Plugin cache serialization |
 | `thiserror` / `anyhow` | Error handling |
 | `tracing` | Structured logging |
@@ -278,7 +279,7 @@ cargo test --lib e2e_tests -- --test-threads=1
 
 Test screenshots end up in target/test-screenshots/
 
-726 tests (687 unit + 39 E2E integration) covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management (NSApplication initialization, AppKit event pumping, activation policy preservation), IPlugFrame COM, IBStream COM (state transfer for split-architecture plugins), CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 727 tests with `--features debug-tools`. 39 of these are E2E integration tests that exercise real FabFilter VST3 plugins (Pro-MB and Pro-Q 4) covering the full pipeline: discovery, loading, metadata, instance creation, multi-block processing, parameter operations, editor queries, component handler installation, AudioEngine integration, scan-cache roundtrip, and multi-plugin lifecycle (loading multiple plugins simultaneously, random start/stop ordering, interleaved setup, stop-and-restart, duplicate instances, concurrent AudioEngine, rapid add/remove stress testing). 6 of the E2E tests are crash-resilience tests that verify the host survives plugin COM teardown crashes using subprocess isolation.
+1310 tests (711 unit + 599 binary/integration) covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management (NSApplication initialization, AppKit event pumping, activation policy preservation), IPlugFrame COM, IBStream COM (state transfer for split-architecture plugins), CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. All VST3 COM types use vst3-rs crate bindings.
 
 109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. 564 pass under [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) for native memory error detection. See [DYNAMIC_ANALYSIS.md](docs/DYNAMIC_ANALYSIS.md) for the full guide.
 

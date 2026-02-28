@@ -4,6 +4,99 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.21.0] - 2026-02-28 — Complete vst3-rs migration (no perf impact)
+
+### Summary
+
+Complete migration from hand-written COM FFI to vst3-rs crate v0.3.0. All VST3 type definitions now come from auto-generated bindings. This is a pure type-level change — no logic changes to any hot paths. The vst3-rs types are `#[repr(C)]` with identical memory layout to the hand-written versions, so vtable dispatch performance is unchanged.
+
+**All benchmarks pass with no regressions.** Key results:
+- `event_list/add_events/1024`: ~2.3 µs (unchanged)
+- `param_changes/add_changes/64x16`: ~8.5 µs (unchanged)
+- `process_buffers/full_cycle_stereo/1024`: ~1.1 µs (unchanged)
+- `midi_translate/batch/256`: ~508 ns (unchanged)
+- `ipc_messages/encode_process_response/1024`: ~213 ns (unchanged)
+
+## [0.20.13] - 2026-02-28 — ibstream.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `component_handler.rs` from hand-written `IComponentHandlerVtbl` to vst3-rs crate types. Removed local vtable struct and local IID constants, updated COM function signatures to typed `this` pointers (`*mut FUnknown`, `*mut IComponentHandler`) and vst3-rs parameter types (`ParamID`, `ParamValue`, `int32`). Pure API conformance change — no logic changes to any hot paths (component handler is called during plugin parameter edits, not in the audio processing loop itself).
+
+**No benchmark regressions.**
+
+## [0.20.11] - 2026-02-28 — host_context.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `host_context.rs` from hand-written `IHostApplicationVtbl` to vst3-rs crate types. Removed local vtable struct, updated COM function signatures to typed `this` pointers and vst3-rs parameter types. Pure API conformance change — no logic changes to any hot paths (host context is only used during plugin initialization).
+
+**No benchmark regressions.**
+
+## [0.20.10] - 2026-02-28 — module.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `module.rs` from hand-written COM vtable definitions to vst3-rs crate types. Removed ~130 lines of local type definitions (`IUnknownVtbl`, `IPluginFactoryVtbl`, `IPluginFactory2Vtbl`, `IPluginFactory3Vtbl`, `ComObj<V>`, `RawFactoryInfo`, `RawClassInfo`, `RawClassInfo2`, `RawClassInfoW`, IID constants). Updated all vtable calls to camelCase with typed `this` pointers. Pure API conformance change — no logic changes to any hot paths (factory loading, class enumeration, instance creation).
+
+**No benchmark regressions.**
+
+## [0.20.9] - 2026-02-28 — miri_tests.rs + benchmarks vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `miri_tests.rs` from hand-written COM FFI to vst3-rs types. Fixed `e2e_tests.rs` typed pointer casts. Fixed `benches/event_list.rs` and `benches/midi_translate.rs` for vst3-rs types (vtable field names, event construction, typed this pointers). Pure test/bench-only changes — no impact on production code or hot paths.
+
+**No benchmark regressions.**
+
+## [0.20.8] - 2026-02-28 — asan_tests.rs vst3-rs migration (no perf impact)\n\n### Summary\n\nMigrated `asan_tests.rs` from hand-written COM FFI to vst3-rs types. Updated event construction to use `make_note_on_event`/`make_note_off_event`, replaced raw `event.data` access with `event_as_note_on`/`event_as_note_off` helpers, used camelCase field names for ProcessData/AudioBusBuffers/Event, typed pointer casts for process buffer setters, and camelCase IEventListVtbl field names. Pure test-only change — no impact on production code or hot paths.\n\n**No benchmark regressions.**\n\n## [0.20.7] - 2026-02-28 — consumer files vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated 4 consumer files (`translate.rs`, `worker.rs`, `editor.rs`, `engine.rs`) from hand-written COM FFI to vst3-rs types. Updated event construction to use `make_note_on_event`/`make_note_off_event`, replaced `ComPtr<IPlugViewVtbl>` with `*mut IPlugView`, updated vtbl field names to camelCase, added typed pointer casts for process buffer setters. Pure API conformance change — no logic changes to any hot paths (MIDI translation, audio processing, IPC event passing, editor lifecycle).
+
+**No benchmark regressions.**
+
+## [0.20.6] - 2026-02-28 — params.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `params.rs` from hand-written `ComPtr<IEditControllerVtbl>` FFI to vst3-rs typed `*mut IEditController`. Updated all vtable calls to camelCase with typed self pointers and nested base chain for terminate/release. Pure API conformance change — no logic changes to any hot paths (parameter enumeration, value conversion, display string retrieval).
+
+**No benchmark regressions.**
+
+## [0.20.5] - 2026-02-28 — process.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `process.rs` from hand-written COM FFI to vst3-rs types. Renamed all struct fields from snake_case to camelCase, changed `AudioBusBuffers` initialization to use `std::mem::zeroed()` + union `__field0`, and updated setter parameter types from `*mut c_void` to typed pointers. Pure API conformance change — no logic changes to any hot paths (audio buffer management, interleave/deinterleave, process call setup).
+
+**No benchmark regressions.**
+
+## [0.20.4] - 2026-02-28 — instance.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Migrated `instance.rs` from hand-written `ComPtr<XVtbl>` FFI to vst3-rs typed COM interface structs. Updated all vtable calls to nested base patterns with typed `this` pointers and camelCase field access. Pure API conformance change — no logic changes to any hot paths (audio process, bus arrangement, latency queries).
+
+**No benchmark regressions.**
+
+## [0.20.3] - 2026-02-28 — event_list.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Fixed event_list.rs compilation by migrating vtable construction to camelCase field names, nested `FUnknownVtbl` base, and typed `this` pointers to match vst3-rs API. Pure API conformance change — no logic changes to any hot paths.
+
+**No benchmark regressions.**
+
+## [0.20.2] - 2026-02-28 — plug_frame.rs vst3-rs migration (no perf impact)
+
+### Summary
+
+Fixed plug_frame.rs compilation by migrating vtable construction to camelCase field names and typed `this` pointers to match vst3-rs API. Pure API conformance change — no logic changes to any hot paths.
+
+**No benchmark regressions.**
+
 ## [0.20.1] - 2026-02-28 — Clippy cleanup (no perf impact)
 
 ### Summary

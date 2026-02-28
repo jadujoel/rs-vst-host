@@ -3,7 +3,10 @@
 //! Plugins receive this context during `IComponent::initialize()`.
 //! We implement the bare minimum: host name query and stub `createInstance`.
 
-use crate::vst3::com::{FUNKNOWN_IID, IHOST_APPLICATION_IID, K_NOT_IMPLEMENTED, K_RESULT_OK};
+use crate::vst3::com::{
+    FUnknown, FUnknownVtbl, IHostApplication, IHostApplicationVtbl, String128, TUID,
+    FUNKNOWN_IID, IHOST_APPLICATION_IID, K_NOT_IMPLEMENTED, K_RESULT_OK,
+};
 use crate::vst3::host_alloc;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -11,36 +14,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// Host application name (UTF-16 encoded, null-terminated).
 const HOST_NAME: &str = "rs-vst-host";
 
-// ─── IHostApplication vtable ──────────────────────────────────────────────
-
-/// IHostApplication vtable layout:
-///   [0-2] FUnknown: queryInterface, addRef, release
-///   [3]   getName(name: *mut u16) -> tresult
-///   [4]   createInstance(cid, iid, obj) -> tresult
-#[repr(C)]
-struct IHostApplicationVtbl {
-    // FUnknown
-    query_interface:
-        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
-    add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
-    release: unsafe extern "system" fn(this: *mut c_void) -> u32,
-    // IHostApplication
-    get_name: unsafe extern "system" fn(this: *mut c_void, name: *mut u16) -> i32,
-    create_instance: unsafe extern "system" fn(
-        this: *mut c_void,
-        cid: *const u8,
-        iid: *const u8,
-        obj: *mut *mut c_void,
-    ) -> i32,
-}
+// ─── IHostApplication vtable (from vst3-rs) ──────────────────────────────
 
 /// Static vtable instance — shared by all HostApplication instances.
 static HOST_APP_VTBL: IHostApplicationVtbl = IHostApplicationVtbl {
-    query_interface: host_query_interface,
-    add_ref: host_add_ref,
-    release: host_release,
-    get_name: host_get_name,
-    create_instance: host_create_instance,
+    base: FUnknownVtbl {
+        queryInterface: host_query_interface,
+        addRef: host_add_ref,
+        release: host_release,
+    },
+    getName: host_get_name,
+    createInstance: host_create_instance,
 };
 
 // ─── HostApplication COM object ───────────────────────────────────────────
@@ -93,8 +77,8 @@ impl HostApplication {
 // ─── COM method implementations ───────────────────────────────────────────
 
 unsafe extern "system" fn host_query_interface(
-    this: *mut c_void,
-    iid: *const u8,
+    this: *mut FUnknown,
+    iid: *const TUID,
     obj: *mut *mut c_void,
 ) -> i32 {
     if iid.is_null() || obj.is_null() {
@@ -107,7 +91,7 @@ unsafe extern "system" fn host_query_interface(
     if iid_bytes == FUNKNOWN_IID || iid_bytes == IHOST_APPLICATION_IID {
         // AddRef before returning
         unsafe { host_add_ref(this) };
-        unsafe { *obj = this };
+        unsafe { *obj = this as *mut c_void };
         return K_RESULT_OK;
     }
 
@@ -115,12 +99,12 @@ unsafe extern "system" fn host_query_interface(
     K_NOT_IMPLEMENTED
 }
 
-unsafe extern "system" fn host_add_ref(this: *mut c_void) -> u32 {
+unsafe extern "system" fn host_add_ref(this: *mut FUnknown) -> u32 {
     let host = this as *mut HostApplication;
     unsafe { (*host).ref_count.fetch_add(1, Ordering::Relaxed) + 1 }
 }
 
-unsafe extern "system" fn host_release(this: *mut c_void) -> u32 {
+unsafe extern "system" fn host_release(this: *mut FUnknown) -> u32 {
     let host = this as *mut HostApplication;
     // Note: We don't auto-destroy here because the host manages the lifetime.
     // The ref_count is maintained for protocol correctness.
@@ -130,10 +114,15 @@ unsafe extern "system" fn host_release(this: *mut c_void) -> u32 {
     }
 }
 
-unsafe extern "system" fn host_get_name(_this: *mut c_void, name: *mut u16) -> i32 {
+unsafe extern "system" fn host_get_name(
+    _this: *mut IHostApplication,
+    name: *mut String128,
+) -> i32 {
     if name.is_null() {
         return K_NOT_IMPLEMENTED;
     }
+
+    let name_ptr = name as *mut u16;
 
     // Write host name as UTF-16, null-terminated, max 128 chars (String128)
     let utf16: Vec<u16> = HOST_NAME.encode_utf16().collect();
@@ -141,18 +130,18 @@ unsafe extern "system" fn host_get_name(_this: *mut c_void, name: *mut u16) -> i
     let copy_len = utf16.len().min(max_chars);
 
     unsafe {
-        std::ptr::copy_nonoverlapping(utf16.as_ptr(), name, copy_len);
+        std::ptr::copy_nonoverlapping(utf16.as_ptr(), name_ptr, copy_len);
         // Null terminator
-        *name.add(copy_len) = 0;
+        *name_ptr.add(copy_len) = 0;
     }
 
     K_RESULT_OK
 }
 
 unsafe extern "system" fn host_create_instance(
-    _this: *mut c_void,
-    _cid: *const u8,
-    _iid: *const u8,
+    _this: *mut IHostApplication,
+    _cid: *mut TUID,
+    _iid: *mut TUID,
     obj: *mut *mut c_void,
 ) -> i32 {
     // We don't support creating instances from the host side.
@@ -190,9 +179,10 @@ mod tests {
     #[test]
     fn test_host_get_name() {
         let host = HostApplication::new();
-        let mut name_buf = [0u16; 128];
+        let mut name_buf: String128 = [0u16; 128];
         unsafe {
-            let result = host_get_name(host as *mut c_void, name_buf.as_mut_ptr());
+            let result =
+                host_get_name(host as *mut IHostApplication, &mut name_buf as *mut String128);
             assert_eq!(result, K_RESULT_OK);
 
             // Find null terminator
@@ -209,7 +199,11 @@ mod tests {
         let host = HostApplication::new();
         unsafe {
             let mut obj: *mut c_void = std::ptr::null_mut();
-            let result = host_query_interface(host as *mut c_void, FUNKNOWN_IID.as_ptr(), &mut obj);
+            let result = host_query_interface(
+                host as *mut FUnknown,
+                FUNKNOWN_IID.as_ptr() as *const TUID,
+                &mut obj,
+            );
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(obj, host as *mut c_void);
 
@@ -223,9 +217,9 @@ mod tests {
         unsafe {
             let mut obj: *mut c_void = std::ptr::null_mut();
             let result = host_create_instance(
-                host as *mut c_void,
-                [0u8; 16].as_ptr(),
-                [0u8; 16].as_ptr(),
+                host as *mut IHostApplication,
+                [0u8; 16].as_ptr() as *mut TUID,
+                [0u8; 16].as_ptr() as *mut TUID,
                 &mut obj,
             );
             assert_eq!(result, K_NOT_IMPLEMENTED);
@@ -241,8 +235,8 @@ mod tests {
         unsafe {
             let mut obj: *mut c_void = std::ptr::null_mut();
             let result = host_query_interface(
-                host as *mut c_void,
-                IHOST_APPLICATION_IID.as_ptr(),
+                host as *mut FUnknown,
+                IHOST_APPLICATION_IID.as_ptr() as *const TUID,
                 &mut obj,
             );
             assert_eq!(result, K_RESULT_OK);
@@ -259,7 +253,11 @@ mod tests {
             let mut obj: *mut c_void = std::ptr::null_mut();
             // Use a random IID that shouldn't be supported
             let random_iid: [u8; 16] = [0xFF; 16];
-            let result = host_query_interface(host as *mut c_void, random_iid.as_ptr(), &mut obj);
+            let result = host_query_interface(
+                host as *mut FUnknown,
+                random_iid.as_ptr() as *const TUID,
+                &mut obj,
+            );
             assert_eq!(result, K_NOT_IMPLEMENTED);
             assert!(obj.is_null());
 
@@ -272,16 +270,16 @@ mod tests {
         let host = HostApplication::new();
         unsafe {
             // Initial ref count is 1 (from new())
-            let count = host_add_ref(host as *mut c_void);
+            let count = host_add_ref(host as *mut FUnknown);
             assert_eq!(count, 2);
 
-            let count = host_add_ref(host as *mut c_void);
+            let count = host_add_ref(host as *mut FUnknown);
             assert_eq!(count, 3);
 
-            let count = host_release(host as *mut c_void);
+            let count = host_release(host as *mut FUnknown);
             assert_eq!(count, 2);
 
-            let count = host_release(host as *mut c_void);
+            let count = host_release(host as *mut FUnknown);
             assert_eq!(count, 1);
 
             HostApplication::destroy(host);
@@ -315,13 +313,13 @@ mod tests {
         unsafe {
             // Null iid
             let mut obj: *mut c_void = std::ptr::null_mut();
-            let result = host_query_interface(host as *mut c_void, std::ptr::null(), &mut obj);
+            let result = host_query_interface(host as *mut FUnknown, std::ptr::null(), &mut obj);
             assert_eq!(result, K_NOT_IMPLEMENTED);
 
             // Null obj
             let result = host_query_interface(
-                host as *mut c_void,
-                FUNKNOWN_IID.as_ptr(),
+                host as *mut FUnknown,
+                FUNKNOWN_IID.as_ptr() as *const TUID,
                 std::ptr::null_mut(),
             );
             assert_eq!(result, K_NOT_IMPLEMENTED);

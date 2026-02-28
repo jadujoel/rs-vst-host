@@ -4,21 +4,19 @@
 //! resize the editor window. The host stores the requested size so the
 //! GUI can apply it on the next frame.
 
-use crate::vst3::com::{FUNKNOWN_IID, IPLUG_FRAME_IID, IPlugFrameVtbl, ViewRect};
+use crate::vst3::com::{
+    FUNKNOWN_IID, FUnknown, FUnknownVtbl, IPLUG_FRAME_IID, IPlugFrame, IPlugFrameVtbl, IPlugView,
+    K_NOT_IMPLEMENTED, K_RESULT_OK, TUID, ViewRect, kNoInterface, tresult, uint32,
+    view_rect_height, view_rect_width,
+};
 use crate::vst3::host_alloc;
 use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::debug;
 
-/// Result code: success.
-const K_RESULT_OK: i32 = 0;
-
-/// Result code: not implemented.
-const K_NOT_IMPLEMENTED: i32 = 1;
-
 /// Result code: unknown interface.
-const K_NO_INTERFACE: i32 = -1;
+const K_NO_INTERFACE: i32 = kNoInterface;
 
 /// Host-side IPlugFrame COM object.
 ///
@@ -39,10 +37,12 @@ unsafe impl Sync for HostPlugFrame {}
 
 /// Static vtable for HostPlugFrame.
 static HOST_PLUG_FRAME_VTBL: IPlugFrameVtbl = IPlugFrameVtbl {
-    query_interface: host_plug_frame_query_interface,
-    add_ref: host_plug_frame_add_ref,
-    release: host_plug_frame_release,
-    resize_view: host_plug_frame_resize_view,
+    base: FUnknownVtbl {
+        queryInterface: host_plug_frame_query_interface,
+        addRef: host_plug_frame_add_ref,
+        release: host_plug_frame_release,
+    },
+    resizeView: host_plug_frame_resize_view,
 };
 
 impl HostPlugFrame {
@@ -108,20 +108,20 @@ impl HostPlugFrame {
 // ── COM vtable functions ────────────────────────────────────────────────────
 
 unsafe extern "system" fn host_plug_frame_query_interface(
-    this: *mut c_void,
-    iid: *const u8,
+    this: *mut FUnknown,
+    iid: *const TUID,
     obj: *mut *mut c_void,
-) -> i32 {
+) -> tresult {
     unsafe {
         if this.is_null() || iid.is_null() || obj.is_null() {
             return K_NO_INTERFACE;
         }
 
-        let iid_slice = std::slice::from_raw_parts(iid, 16);
+        let iid_slice = std::slice::from_raw_parts(iid as *const c_void as *const u8, 16);
 
         if iid_slice == IPLUG_FRAME_IID || iid_slice == FUNKNOWN_IID {
             host_plug_frame_add_ref(this);
-            *obj = this;
+            *obj = this as *mut c_void;
             K_RESULT_OK
         } else {
             *obj = std::ptr::null_mut();
@@ -130,7 +130,7 @@ unsafe extern "system" fn host_plug_frame_query_interface(
     }
 }
 
-unsafe extern "system" fn host_plug_frame_add_ref(this: *mut c_void) -> u32 {
+unsafe extern "system" fn host_plug_frame_add_ref(this: *mut FUnknown) -> uint32 {
     unsafe {
         if this.is_null() {
             return 0;
@@ -140,7 +140,7 @@ unsafe extern "system" fn host_plug_frame_add_ref(this: *mut c_void) -> u32 {
     }
 }
 
-unsafe extern "system" fn host_plug_frame_release(this: *mut c_void) -> u32 {
+unsafe extern "system" fn host_plug_frame_release(this: *mut FUnknown) -> uint32 {
     unsafe {
         if this.is_null() {
             return 0;
@@ -158,10 +158,10 @@ unsafe extern "system" fn host_plug_frame_release(this: *mut c_void) -> u32 {
 }
 
 unsafe extern "system" fn host_plug_frame_resize_view(
-    this: *mut c_void,
-    _view: *mut c_void,
+    this: *mut IPlugFrame,
+    _view: *mut IPlugView,
     new_size: *mut ViewRect,
-) -> i32 {
+) -> tresult {
     unsafe {
         if this.is_null() || new_size.is_null() {
             return K_NOT_IMPLEMENTED;
@@ -169,8 +169,8 @@ unsafe extern "system" fn host_plug_frame_resize_view(
 
         let frame = &*(this as *const HostPlugFrame);
         let rect = &*new_size;
-        let width = rect.width();
-        let height = rect.height();
+        let width = view_rect_width(rect);
+        let height = view_rect_height(rect);
 
         debug!(width, height, "Plugin requested editor resize");
 
@@ -187,6 +187,7 @@ unsafe extern "system" fn host_plug_frame_resize_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vst3::com::iid_as_tuid_ptr;
 
     #[test]
     fn test_plug_frame_create_destroy() {
@@ -245,7 +246,7 @@ mod tests {
                 right: 800,
                 bottom: 600,
             };
-            let result = (vtbl.resize_view)(ptr, std::ptr::null_mut(), &mut rect);
+            let result = (vtbl.resizeView)(ptr as *mut IPlugFrame, std::ptr::null_mut(), &mut rect);
             assert_eq!(result, K_RESULT_OK);
 
             // Check pending
@@ -267,12 +268,16 @@ mod tests {
 
             let vtbl = &*(*frame).vtbl;
             let mut out: *mut c_void = std::ptr::null_mut();
-            let result = (vtbl.query_interface)(ptr, IPLUG_FRAME_IID.as_ptr(), &mut out);
+            let result = (vtbl.base.queryInterface)(
+                ptr as *mut FUnknown,
+                iid_as_tuid_ptr(&IPLUG_FRAME_IID),
+                &mut out,
+            );
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(out, ptr);
 
             // Release the extra ref from QI
-            (vtbl.release)(ptr);
+            (vtbl.base.release)(ptr as *mut FUnknown);
             HostPlugFrame::destroy(frame);
         }
     }
@@ -285,11 +290,15 @@ mod tests {
 
             let vtbl = &*(*frame).vtbl;
             let mut out: *mut c_void = std::ptr::null_mut();
-            let result = (vtbl.query_interface)(ptr, FUNKNOWN_IID.as_ptr(), &mut out);
+            let result = (vtbl.base.queryInterface)(
+                ptr as *mut FUnknown,
+                iid_as_tuid_ptr(&FUNKNOWN_IID),
+                &mut out,
+            );
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(out, ptr);
 
-            (vtbl.release)(ptr);
+            (vtbl.base.release)(ptr as *mut FUnknown);
             HostPlugFrame::destroy(frame);
         }
     }
@@ -303,7 +312,11 @@ mod tests {
             let vtbl = &*(*frame).vtbl;
             let mut out: *mut c_void = std::ptr::null_mut();
             let fake_iid = [0xFFu8; 16];
-            let result = (vtbl.query_interface)(ptr, fake_iid.as_ptr(), &mut out);
+            let result = (vtbl.base.queryInterface)(
+                ptr as *mut FUnknown,
+                iid_as_tuid_ptr(&fake_iid),
+                &mut out,
+            );
             assert_eq!(result, K_NO_INTERFACE);
             assert!(out.is_null());
 
@@ -319,16 +332,16 @@ mod tests {
             let vtbl = &*(*frame).vtbl;
 
             // Initial ref count is 1
-            let count = (vtbl.add_ref)(ptr); // now 2
+            let count = (vtbl.base.addRef)(ptr as *mut FUnknown); // now 2
             assert_eq!(count, 2);
 
-            let count = (vtbl.add_ref)(ptr); // now 3
+            let count = (vtbl.base.addRef)(ptr as *mut FUnknown); // now 3
             assert_eq!(count, 3);
 
-            let count = (vtbl.release)(ptr); // now 2
+            let count = (vtbl.base.release)(ptr as *mut FUnknown); // now 2
             assert_eq!(count, 2);
 
-            let count = (vtbl.release)(ptr); // now 1
+            let count = (vtbl.base.release)(ptr as *mut FUnknown); // now 1
             assert_eq!(count, 1);
 
             // Don't call release again — use destroy instead to avoid double-free
@@ -342,7 +355,7 @@ mod tests {
             let vtbl = &HOST_PLUG_FRAME_VTBL;
 
             // Null this pointer
-            let result = (vtbl.resize_view)(
+            let result = (vtbl.resizeView)(
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -350,7 +363,7 @@ mod tests {
             assert_ne!(result, K_RESULT_OK);
 
             // Null iid
-            let result = (vtbl.query_interface)(
+            let result = (vtbl.base.queryInterface)(
                 std::ptr::null_mut(),
                 std::ptr::null(),
                 std::ptr::null_mut(),
@@ -358,8 +371,8 @@ mod tests {
             assert_eq!(result, K_NO_INTERFACE);
 
             // Null add_ref / release
-            assert_eq!((vtbl.add_ref)(std::ptr::null_mut()), 0);
-            assert_eq!((vtbl.release)(std::ptr::null_mut()), 0);
+            assert_eq!((vtbl.base.addRef)(std::ptr::null_mut()), 0);
+            assert_eq!((vtbl.base.release)(std::ptr::null_mut()), 0);
         }
     }
 
@@ -376,15 +389,15 @@ mod tests {
             let vtbl = &*(*frame).vtbl;
 
             // Simulate plugin calling AddRef (e.g. during setFrame)
-            let count = (vtbl.add_ref)(ptr); // ref_count: 1 → 2
+            let count = (vtbl.base.addRef)(ptr as *mut FUnknown); // ref_count: 1 → 2
             assert_eq!(count, 2);
 
             // Simulate plugin releasing during removed() / setFrame(null)
-            let count = (vtbl.release)(ptr); // ref_count: 2 → 1
+            let count = (vtbl.base.release)(ptr as *mut FUnknown); // ref_count: 2 → 1
             assert_eq!(count, 1);
 
             // Simulate plugin releasing again during view destructor (release())
-            let count = (vtbl.release)(ptr); // ref_count: 1 → 0
+            let count = (vtbl.base.release)(ptr as *mut FUnknown); // ref_count: 1 → 0
             assert_eq!(count, 0);
 
             // Host calls destroy() — this must NOT be a double-free.
@@ -404,7 +417,7 @@ mod tests {
             let vtbl = &*(*frame).vtbl;
 
             // Plugin AddRef during setFrame (ref_count: 1 → 2)
-            (vtbl.add_ref)(ptr);
+            (vtbl.base.addRef)(ptr as *mut FUnknown);
 
             // Plugin may call resizeView during its lifetime
             let mut rect = ViewRect {
@@ -413,14 +426,14 @@ mod tests {
                 right: 640,
                 bottom: 480,
             };
-            (vtbl.resize_view)(ptr, std::ptr::null_mut(), &mut rect);
+            (vtbl.resizeView)(ptr as *mut IPlugFrame, std::ptr::null_mut(), &mut rect);
 
             // Editor close: plugin releases (ref_count: 2 → 1)
-            (vtbl.release)(ptr);
+            (vtbl.base.release)(ptr as *mut FUnknown);
 
             // View destructor releases again (ref_count: 1 → 0)
             // This must NOT free the memory
-            (vtbl.release)(ptr);
+            (vtbl.base.release)(ptr as *mut FUnknown);
 
             // Host safely destroys the frame
             HostPlugFrame::destroy(frame);

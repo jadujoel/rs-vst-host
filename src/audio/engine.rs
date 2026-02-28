@@ -12,6 +12,7 @@ use crate::vst3::instance::Vst3Instance;
 use crate::vst3::param_changes::HostParameterChanges;
 use crate::vst3::process::ProcessBuffers;
 use crate::vst3::process_context::ProcessContext;
+use crate::vst3::com::{IEventList, IParameterChanges, ProcessContext as VstProcessContext};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::debug;
@@ -219,7 +220,7 @@ impl AudioEngine {
 
             // Set the event list on the process data
             self.buffers
-                .set_input_events(HostEventList::as_ptr(self.event_list));
+                .set_input_events(HostEventList::as_ptr(self.event_list) as *mut IEventList);
         }
 
         // Handle parameter changes from the control thread
@@ -233,12 +234,12 @@ impl AudioEngine {
             }
 
             self.buffers
-                .set_input_parameter_changes(HostParameterChanges::as_ptr(self.param_changes));
+                .set_input_parameter_changes(HostParameterChanges::as_ptr(self.param_changes) as *mut IParameterChanges);
         }
 
         // Set process context (transport info)
         self.buffers
-            .set_process_context(self.process_context.as_ptr());
+            .set_process_context(self.process_context.as_ptr() as *mut VstProcessContext);
 
         // Call VST3 process (sandboxed — crash protection)
         unsafe {
@@ -343,7 +344,7 @@ impl AudioEngine {
     /// is a COM object that the caller must release.
     pub fn create_editor_view(
         &mut self,
-    ) -> Option<*mut crate::vst3::com::ComPtr<crate::vst3::com::IPlugViewVtbl>> {
+    ) -> Option<*mut crate::vst3::com::IPlugView> {
         self.instance.create_editor_view()
     }
 

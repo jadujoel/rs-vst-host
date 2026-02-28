@@ -424,7 +424,7 @@ mod tests {
         ctx.set_time_signature(4, 4);
         for _ in 0..10 {
             buffers.prepare(bs as usize);
-            buffers.set_process_context(ctx.as_ptr());
+            buffers.set_process_context(ctx.as_ptr() as *mut crate::vst3::com::ProcessContext);
             assert!(unsafe { instance.process(buffers.process_data_ptr()) });
             buffers.set_process_context(std::ptr::null_mut());
             ctx.advance(bs);
@@ -818,13 +818,16 @@ mod tests {
         let param_changes = HostParameterChanges::new();
         for _ in 0..10 {
             buffers.prepare(bs as usize);
-            buffers.set_process_context(ctx.as_ptr());
+            buffers.set_process_context(ctx.as_ptr() as *mut crate::vst3::com::ProcessContext);
             unsafe {
                 HostEventList::clear(event_list);
                 HostParameterChanges::clear(param_changes);
             }
-            buffers.set_input_events(HostEventList::as_ptr(event_list));
-            buffers.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes));
+            buffers.set_input_events(
+                HostEventList::as_ptr(event_list) as *mut crate::vst3::com::IEventList
+            );
+            buffers.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes)
+                as *mut crate::vst3::com::IParameterChanges);
             assert!(unsafe { instance.process(buffers.process_data_ptr()) });
             buffers.set_input_events(std::ptr::null_mut());
             buffers.set_input_parameter_changes(std::ptr::null_mut());

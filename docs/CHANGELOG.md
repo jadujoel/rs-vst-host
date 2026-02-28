@@ -2,6 +2,179 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.0] - 2026-02-28
+
+### Changed — Complete vst3-rs Migration
+
+Replaced all hand-written COM FFI with the standardized `vst3` crate (v0.3.0, coupler-rs/vst3-rs). This eliminates ~500 lines of manual vtable definitions and struct layouts, replacing them with auto-generated bindings that are guaranteed to match the Steinberg VST3 SDK binary layout.
+
+**Core module rewrites:**
+- **com.rs**: Rewritten as a pure re-export module from vst3-rs. Provides all VST3 type aliases, derived IID constants (`[u8; 16]`), backward-compatible result code aliases, and convenience helpers (`char8_to_string`, `tuid_to_bytes`, `make_note_on_event`, `event_as_note_on`, `view_rect_width`, etc.)
+- **module.rs**: Removed `IUnknownVtbl`, `IPluginFactoryVtbl`, `IPluginFactory2Vtbl`, `IPluginFactory3Vtbl`, `ComObj<V>`, `RawFactoryInfo`, `RawClassInfo`, `RawClassInfo2`, `RawClassInfoW`, and platform-specific IID constants. Now uses `IPluginFactory`, `PFactoryInfo`, `PClassInfo`, `PClassInfo2`, `PClassInfoW` from vst3-rs. Fixed `PClassInfoW` size (was 1208 bytes with incorrect `[u16; 128]` name fields, now correct 696 bytes with `[char16; 64]`).
+- **instance.rs**: Replaced `ComPtr<IComponentVtbl>` / `ComPtr<IAudioProcessorVtbl>` / `ComPtr<IEditControllerVtbl>` with typed `IComponent` / `IAudioProcessor` / `IEditController`. All vtable calls use nested camelCase patterns.
+- **process.rs**: All `ProcessData` and `AudioBusBuffers` fields renamed to camelCase. `AudioBusBuffers` channel access uses `__field0.channelBuffers32` union. Setter methods take typed pointers.
+- **param_changes.rs**: Full rewrite using `IParameterChangesVtbl` and `IParamValueQueueVtbl` from vst3-rs.
+- **params.rs**: Replaced `ComPtr<IEditControllerVtbl>` with `*mut IEditController`. All vtable calls use nested base patterns.
+
+**Host COM object migrations:**
+- **host_context.rs**: Removed local `IHostApplicationVtbl`. Uses vst3-rs `IHostApplicationVtbl` with nested `base: FUnknownVtbl`, typed this pointers (`*mut FUnknown`, `*mut IHostApplication`).
+- **component_handler.rs**: Removed local `IComponentHandlerVtbl` and IID constants. Uses vst3-rs vtable types with `ParamID`, `ParamValue`, typed this pointers.
+- **ibstream.rs**: Removed local `IBStreamVtbl`, IID constants, and result code constants. Uses vst3-rs `IBStreamVtbl` with typed this pointers.
+- **plug_frame.rs**: Updated to nested `base: FUnknownVtbl` with camelCase fields and typed this pointers.
+- **event_list.rs**: Updated to nested `base: FUnknownVtbl` with camelCase fields. `addEvent` takes `*mut Event`.
+
+**Consumer file updates:**
+- **midi/translate.rs**: `Event::note_on/off` → `make_note_on_event/make_note_off_event`
+- **gui/editor.rs**: `ComPtr<IPlugViewVtbl>` → `*mut IPlugView`, camelCase vtable calls, `ViewRect` helpers
+- **audio/engine.rs**: Typed pointer casts for IPC setters
+- **ipc/worker.rs**: Event construction helpers, typed pointer casts
+
+**Test file updates:**
+- **asan_tests.rs**: 73 errors fixed — event construction, field access, typed pointers
+- **miri_tests.rs**: 66 errors fixed — same patterns
+- **e2e_tests.rs**: 4 errors fixed — typed pointer casts
+- **benches/**: Updated event_list.rs and midi_translate.rs benchmarks
+
+**Results:** 1310 tests passing (711 + 599), 0 failures. All benchmarks pass with no performance regressions.
+
+## [0.20.13] - 2026-02-28
+
+### Changed
+- **ibstream.rs vst3-rs migration**: Rewrote `src/vst3/ibstream.rs` to use vst3-rs crate types instead of hand-written COM vtable definitions:
+  - Removed local `IBStreamVtbl` struct (flat snake_case fields with `*mut c_void` this pointers)
+  - Removed local `IBSTREAM_IID` and `FUNKNOWN_IID` constants (both `#[cfg(target_os = "macos")]`)
+  - Removed local `K_RESULT_FALSE` and `K_INVALID_ARGUMENT` constants
+  - Now imports from `crate::vst3::com`: `FUnknown`, `FUnknownVtbl`, `IBStream`, `IBStreamVtbl`, `TUID`, `FUNKNOWN_IID`, `IBSTREAM_IID`, `K_RESULT_OK`, `K_RESULT_FALSE`, `K_INVALID_ARGUMENT`
+  - Updated static vtable to use nested `base: FUnknownVtbl { queryInterface, addRef, release }` with camelCase fields (`read`, `write`, `seek`, `tell`)
+  - Updated `host_bstream_query_interface` signature: `*mut c_void` → `*mut FUnknown`, `*const u8` → `*const TUID`
+  - Updated `host_bstream_add_ref`/`host_bstream_release` signature: `*mut c_void` → `*mut FUnknown`
+  - Updated `host_bstream_read`/`host_bstream_write`/`host_bstream_seek`/`host_bstream_tell` signature: `*mut c_void` → `*mut IBStream`
+  - Updated `host_bstream_write` buffer parameter: `*const c_void` → `*mut c_void` (matches vst3-rs)
+  - Removed `#[cfg(target_os = "macos")]` guards from `query_interface` — IIDs now platform-independent
+  - Removed non-macOS `const _ = ...` suppression block
+  - Updated all 6 unit tests with proper typed pointer casts (`*mut FUnknown`, `*mut IBStream`, `*const TUID`)
+- **com.rs**: Added `IBSTREAM_IID` constant (`<IBStream as Interface>::IID`)
+- Version bumped to 0.20.13
+
+## [0.20.12] - 2026-02-28
+
+### Changed
+- **component_handler.rs vst3-rs migration**: Rewrote `src/vst3/component_handler.rs` to use vst3-rs crate types instead of hand-written COM vtable definitions:
+  - Removed local `IComponentHandlerVtbl` struct (flat snake_case fields with `*mut c_void` this pointers)
+  - Removed local `ICOMPONENT_HANDLER_IID` constants (both `cfg(not(target_os = "windows"))` and `cfg(target_os = "windows")` variants) — now uses the one from `crate::vst3::com`
+  - Now imports from `crate::vst3::com` (via glob): `FUnknown`, `FUnknownVtbl`, `IComponentHandler`, `IComponentHandlerVtbl`, `TUID`, `ParamID`, `ParamValue`, `tresult`, `int32`, `uint32`
+  - Updated static vtable to use nested `base: FUnknownVtbl { queryInterface, addRef, release }` with camelCase fields (`beginEdit`, `performEdit`, `endEdit`, `restartComponent`)
+  - Updated `handler_query_interface` signature: `*mut c_void` → `*mut FUnknown`, `*const u8` → `*const TUID`
+  - Updated `handler_add_ref`/`handler_release` signature: `*mut c_void` → `*mut FUnknown`, return type `u32` → `uint32`
+  - Updated `handler_begin_edit`/`handler_end_edit` signature: `*mut c_void` → `*mut IComponentHandler`, `u32` → `ParamID`, `i32` → `tresult`
+  - Updated `handler_perform_edit` signature: `*mut c_void` → `*mut IComponentHandler`, `u32` → `ParamID`, `f64` → `ParamValue`
+  - Updated `handler_restart_component` signature: `*mut c_void` → `*mut IComponentHandler`, `i32` → `int32`
+  - Updated all 13 unit tests with proper typed pointer casts (`*mut FUnknown`, `*mut IComponentHandler`, `*const TUID`)
+- Version bumped to 0.20.12
+
+## [0.20.11] - 2026-02-28
+
+### Changed
+- **host_context.rs vst3-rs migration**: Rewrote `src/vst3/host_context.rs` to use vst3-rs crate types instead of hand-written COM vtable definitions:
+  - Removed local `IHostApplicationVtbl` struct (flat snake_case fields with `*mut c_void` this pointers)
+  - Now imports from `crate::vst3::com`: `FUnknown`, `FUnknownVtbl`, `IHostApplication`, `IHostApplicationVtbl`, `String128`, `TUID`
+  - Updated static vtable to use nested `base: FUnknownVtbl { queryInterface, addRef, release }` with camelCase fields (`getName`, `createInstance`)
+  - Updated `host_query_interface` signature: `*mut c_void` → `*mut FUnknown`, `*const u8` → `*const TUID`
+  - Updated `host_add_ref`/`host_release` signature: `*mut c_void` → `*mut FUnknown`
+  - Updated `host_get_name` signature: `*mut c_void` → `*mut IHostApplication`, `*mut u16` → `*mut String128`
+  - Updated `host_create_instance` signature: `*mut c_void` → `*mut IHostApplication`, `*const u8` → `*mut TUID`
+  - Updated all 13 unit tests with proper typed pointer casts
+- Version bumped to 0.20.11
+
+## [0.20.10] - 2026-02-28
+
+### Changed
+- **module.rs vst3-rs migration**: Rewrote `src/vst3/module.rs` to use vst3-rs crate types instead of hand-written COM definitions:
+  - Removed all local type definitions: `K_RESULT_OK`, `RawFactoryInfo`, `RawClassInfo`, `RawClassInfo2`, `RawClassInfoW`, `IUnknownVtbl`, `IPluginFactoryVtbl`, `IPluginFactory2Vtbl`, `IPluginFactory3Vtbl`, `ComObj<V>`, `IPLUGIN_FACTORY2_IID`, `IPLUGIN_FACTORY3_IID`
+  - Now imports from `crate::vst3::com`: `IPluginFactory`, `IPluginFactory2`, `IPluginFactory3`, `PFactoryInfo`, `PClassInfo`, `PClassInfo2`, `FUnknown`, `FUnknownVtbl`, `IPluginFactoryVtbl`, `IPluginFactory2Vtbl`, `IPluginFactory3Vtbl`, `K_RESULT_OK`, `IPLUGIN_FACTORY2_IID`, `IPLUGIN_FACTORY3_IID`
+  - Updated `Vst3Module.factory` from `*mut ComObj<IPluginFactoryVtbl>` to `*mut IPluginFactory`
+  - Updated all vtable calls to camelCase: `get_factory_info` → `getFactoryInfo`, `count_classes` → `countClasses`, `get_class_info` → `getClassInfo`, `get_class_info2` → `getClassInfo2`, `set_host_context` → `setHostContext`, `query_interface` → `queryInterface`
+  - Updated all `this` pointers from `*mut c_void` to typed pointers (`*mut IPluginFactory`, `*mut IPluginFactory2`, `*mut IPluginFactory3`, `*mut FUnknown`)
+  - Replaced `bytes_to_string` with `char8_to_string` for `[char8]` arrays
+  - Added `tuid_to_bytes` for TUID → `[u8; 16]` conversion
+  - Used `iid_as_tuid_ptr` for QueryInterface IID arguments
+  - Updated PClassInfo2 field names: `subcategories` → `subCategories`, `sdk_version` → `sdkVersion`
+  - Fixed `ibstream.rs` to import `K_RESULT_OK` from `com` instead of `module`
+  - Replaced `test_raw_class_info_w_layout` test (1208 bytes) with `test_pclass_info_w_layout` (696 bytes, correct vst3-rs size)
+- Version bumped to 0.20.10
+
+## [0.20.9] - 2026-02-28
+
+### Fixed
+- **miri_tests.rs vst3-rs migration**: Migrated `src/miri_tests.rs` from hand-written COM FFI to vst3-rs types:
+  - Replaced `Event::note_on()`/`Event::note_off()` with `make_note_on_event()`/`make_note_off_event()` (11 call sites)
+  - Replaced `event.data.as_ptr() as *const NoteOnEvent/NoteOffEvent` with `event_as_note_on()`/`event_as_note_off()` helper functions
+  - Replaced `event.data` byte iteration with `std::slice::from_raw_parts` over full Event struct for initialization checks
+  - Replaced `original.data == cloned.data` comparison with raw byte comparison via `std::slice::from_raw_parts`
+  - Updated `event.event_type` → `event.r#type`, `event.sample_offset` → `event.sampleOffset`, `note.note_id` → `note.noteId`
+  - Updated ProcessData fields: `num_samples` → `numSamples`, `num_inputs` → `numInputs`, `num_outputs` → `numOutputs`, `input_events` → `inputEvents`, `input_parameter_changes` → `inputParameterChanges`, `process_context` → `processContext`
+  - Updated AudioBusBuffers fields: `num_channels` → `numChannels`, `channel_buffers_32` → `__field0.channelBuffers32`
+  - Updated IEventListVtbl field names: `get_event_count` → `getEventCount`, `get_event` → `getEvent`, `query_interface` → `base.queryInterface`
+  - Updated vtable function `this` pointers: `*mut c_void` → `*mut IEventList` / `*mut FUnknown`
+  - Added typed pointer casts for `set_input_events` (`as *mut IEventList`), `set_input_parameter_changes` (`as *mut IParameterChanges`), `set_process_context` (`as *mut ProcessContext`)
+- **e2e_tests.rs typed pointer casts**: Fixed `set_process_context`, `set_input_events`, `set_input_parameter_changes` to use typed pointer casts (2 call sites)
+- **Benchmark fixes**: Fixed `benches/event_list.rs` and `benches/midi_translate.rs` for vst3-rs types — updated vtable field names, event construction functions, and typed `this` pointers
+
+### Changed
+- Version bumped to 0.20.9
+
+## [0.20.8] - 2026-02-28\n\n### Fixed\n- **asan_tests.rs vst3-rs migration**: Migrated `src/asan_tests.rs` from hand-written COM FFI to vst3-rs types:\n  - Replaced `Event::note_on()`/`Event::note_off()` with `make_note_on_event()`/`make_note_off_event()` (15 call sites)\n  - Replaced `event.data.as_ptr() as *const NoteOnEvent/NoteOffEvent` with `event_as_note_on()`/`event_as_note_off()` helper functions (6 call sites)\n  - Replaced `event.data` byte iteration with `event.__field0` union access\n  - Replaced `original.data == cloned.data` comparison with typed field comparisons via `event_as_note_on()`\n  - Updated `event.event_type` → `event.r#type`, `event.sample_offset` → `event.sampleOffset`, `note.note_id` → `note.noteId`\n  - Updated ProcessData fields: `num_samples` → `numSamples`, `num_inputs` → `numInputs`, `num_outputs` → `numOutputs`, `input_events` → `inputEvents`, `input_parameter_changes` → `inputParameterChanges`, `process_context` → `processContext`\n  - Updated AudioBusBuffers fields: `num_channels` → `numChannels`, `channel_buffers_32` → `__field0.channelBuffers32`\n  - Updated IEventListVtbl field names: `get_event_count` → `getEventCount`, `get_event` → `getEvent`, `query_interface` → `base.queryInterface`\n  - Updated vtable function `this` pointers: `*mut c_void` → `*mut IEventList` / `*mut FUnknown`\n  - Added typed pointer casts for `set_input_events` (`as *mut IEventList`), `set_input_parameter_changes` (`as *mut IParameterChanges`), `set_process_context` (`as *mut VstProcessContext`)\n\n### Changed\n- Version bumped to 0.20.8\n\n## [0.20.7] - 2026-02-28
+
+### Fixed
+- **Consumer files vst3-rs migration**: Migrated 4 consumer files from hand-written COM FFI to vst3-rs types:
+  - `src/midi/translate.rs`: Replaced `Event::note_on()`/`Event::note_off()` with `make_note_on_event()`/`make_note_off_event()` from `crate::vst3::com`. Updated 14 test assertions to use `event.r#type`/`event.sampleOffset` (camelCase) and `event_as_note_on()`/`event_as_note_off()` helper functions instead of raw pointer casts through `event.data`.
+  - `src/ipc/worker.rs`: Same `Event::note_on/note_off` → `make_note_on_event/make_note_off_event`. Added typed pointer casts (`as *mut IEventList`, `as *mut IParameterChanges`, `as *mut VstProcessContext`) for `set_input_events`/`set_input_parameter_changes`/`set_process_context` calls.
+  - `src/gui/editor.rs`: Replaced `*mut ComPtr<IPlugViewVtbl>` with `*mut IPlugView` throughout. Updated vtbl field names to camelCase (`isPlatformTypeSupported`, `getSize`, `setFrame`, `onSize`). Changed `this` pointer casts from `*mut c_void` to `*mut IPlugView`. Used `vtbl.base.release` with `*mut FUnknown` cast. Replaced `ViewRect::default()` with explicit zero-init. Replaced `rect.width()`/`rect.height()` with `view_rect_width()`/`view_rect_height()`. Added `FIDString` cast for platform type strings.
+  - `src/audio/engine.rs`: Updated `create_editor_view()` return type from `*mut ComPtr<IPlugViewVtbl>` to `*mut IPlugView`. Added typed pointer casts for process buffer setters.
+
+### Changed
+- Version bumped to 0.20.7
+
+## [0.20.6] - 2026-02-28
+
+### Fixed
+- **params.rs vst3-rs migration**: Migrated parameter introspection from hand-written COM FFI to vst3-rs types. Replaced `*mut ComPtr<IEditControllerVtbl>` with `*mut IEditController`. Updated all vtable calls to camelCase (`getParameterCount`, `getParameterInfo`, `getParamNormalized`, `setParamNormalized`, `getParamStringByValue`, `normalizedParamToPlain`, `plainParamToNormalized`). Updated `ParameterInfo` field access to camelCase (`shortTitle`, `stepCount`, `defaultNormalizedValue`). Fixed Drop to use nested base chain (`vtbl.base.terminate`, `vtbl.base.base.release`) with typed pointers (`*mut IPluginBase`, `*mut FUnknown`). Removed `std::ffi::c_void` import, added `vst3::Steinberg::IPluginBase`.
+
+### Changed
+- Version bumped to 0.20.6
+
+## [0.20.5] - 2026-02-28
+
+### Fixed
+- **process.rs vst3-rs migration**: Migrated process buffer management from hand-written COM FFI to vst3-rs types. Renamed all `ProcessData` fields from snake_case to camelCase (`processMode`, `symbolicSampleSize`, `numSamples`, `numInputs`, `numOutputs`, `inputParameterChanges`, `outputParameterChanges`, `inputEvents`, `outputEvents`, `processContext`). Renamed `AudioBusBuffers` fields (`numChannels`, `silenceFlags`) and changed `channelBuffers32` access to go through `__field0` union. Changed setter parameter types from `*mut c_void` to typed pointers (`*mut IEventList`, `*mut IParameterChanges`, `*mut ProcessContext`). Used `unsafe { std::mem::zeroed() }` for `AudioBusBuffers` initialization (union fields cannot be named directly). Updated all 20 unit tests.
+
+### Changed
+- Version bumped to 0.20.5
+
+## [0.20.4] - 2026-02-28
+
+### Fixed
+- **instance.rs vst3-rs migration**: Migrated the entire VST3 instance lifecycle module from hand-written COM FFI to vst3-rs types. Replaced all `ComPtr<XVtbl>` usages with typed COM interface structs (`IComponent`, `IAudioProcessor`, `IEditController`, `IConnectionPoint`, `IPlugView`). Updated all vtable calls to use nested base patterns (`comp_vtbl.base.base.queryInterface`, `comp_vtbl.base.initialize`, `comp_vtbl.setActive`, etc.) with typed `this` pointers (`*mut FUnknown`, `*mut IPluginBase`, `*mut IComponent`, etc.). Migrated `BusInfo.channel_count` → `channelCount`, `ProcessSetup` fields to camelCase (`processMode`, `symbolicSampleSize`, `maxSamplesPerBlock`, `sampleRate`). Changed factory vtbl import from `module::IPluginFactoryVtbl` to `com::IPluginFactoryVtbl` (vst3-rs) with `createInstance`/`addRef`/`release` calls using typed pointers. All 41 compile errors resolved.
+
+### Changed
+- Version bumped to 0.20.4
+
+## [0.20.3] - 2026-02-28
+
+### Fixed
+- **event_list.rs vst3-rs migration**: Fixed compilation errors caused by snake_case vtable field names vs vst3-rs camelCase. Updated `IEventListVtbl` construction to use nested `base: FUnknownVtbl { queryInterface, addRef, release }` with camelCase fields (`getEventCount`, `getEvent`, `addEvent`). Changed function signatures to typed `this` pointers (`*mut FUnknown` for QI/AddRef/Release, `*mut IEventList` for event methods). Changed `addEvent` parameter from `*const Event` to `*mut Event` to match vtable definition. Fixed Event field access: `event_type` → `r#type`, `sample_offset` → `sampleOffset`, `note_id` → `noteId`. Replaced `Event::note_on`/`Event::note_off` helpers with `make_note_on_event`/`make_note_off_event` from `crate::vst3::com`. Used `event_as_note_on` for type-safe union field access. Updated all 14 unit tests with camelCase vtable access (`vtbl.base.queryInterface`, `vtbl.getEventCount`, etc.) and typed pointer casts (`*mut FUnknown`, `*mut IEventList`).
+
+### Changed
+- Version bumped to 0.20.3
+
+## [0.20.2] - 2026-02-28
+
+### Fixed
+- **plug_frame.rs vst3-rs migration**: Fixed compilation errors caused by snake_case vtable field names vs vst3-rs camelCase. Updated `IPlugFrameVtbl` construction to use `base: FUnknownVtbl { queryInterface, addRef, release }, resizeView`. Changed function signatures to typed `this` pointers (`*mut FUnknown` for QI/AddRef/Release, `*mut IPlugFrame` for resizeView). Imported `K_RESULT_OK`, `K_NOT_IMPLEMENTED`, `kNoInterface`, `view_rect_width`, `view_rect_height` from `crate::vst3::com` instead of defining locally. Updated all 12 unit tests to use camelCase vtable access and typed pointer casts.
+
+### Changed
+- Version bumped to 0.20.2
+
 ## [0.20.1] - 2026-02-28
 
 ### Fixed

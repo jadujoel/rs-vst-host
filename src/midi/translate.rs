@@ -4,7 +4,7 @@
 //! suitable for the `IEventList` input.
 
 use crate::midi::device::RawMidiMessage;
-use crate::vst3::com::Event;
+use crate::vst3::com::{Event, make_note_off_event, make_note_on_event};
 use tracing::debug;
 
 // MIDI status byte masks
@@ -35,18 +35,30 @@ pub fn midi_to_vst3_event(msg: &RawMidiMessage, sample_offset: i32) -> Option<Ev
             // Note On with velocity 0 is treated as Note Off (MIDI convention)
             if velocity_raw == 0 {
                 debug!(channel, pitch, "MIDI Note Off (vel=0)");
-                Some(Event::note_off(sample_offset, channel, pitch, 0.0, -1))
+                Some(make_note_off_event(sample_offset, channel, pitch, 0.0, -1))
             } else {
                 let velocity = velocity_raw as f32 / 127.0;
                 debug!(channel, pitch, velocity = %format!("{:.2}", velocity), "MIDI Note On");
-                Some(Event::note_on(sample_offset, channel, pitch, velocity, -1))
+                Some(make_note_on_event(
+                    sample_offset,
+                    channel,
+                    pitch,
+                    velocity,
+                    -1,
+                ))
             }
         }
         NOTE_OFF if msg.len >= 3 => {
             let pitch = msg.data[1] as i16;
             let velocity = msg.data[2] as f32 / 127.0;
             debug!(channel, pitch, "MIDI Note Off");
-            Some(Event::note_off(sample_offset, channel, pitch, velocity, -1))
+            Some(make_note_off_event(
+                sample_offset,
+                channel,
+                pitch,
+                velocity,
+                -1,
+            ))
         }
         _ => {
             // TODO: Phase 5+ — CC, pitch bend, aftertouch, etc.
@@ -88,11 +100,10 @@ mod tests {
     fn test_note_on() {
         let msg = make_midi(&[0x90, 60, 100]); // Note On, C4, vel 100
         let event = midi_to_vst3_event(&msg, 0).expect("should produce event");
-        assert_eq!(event.event_type, crate::vst3::com::K_NOTE_ON_EVENT);
-        assert_eq!(event.sample_offset, 0);
+        assert_eq!(event.r#type, crate::vst3::com::K_NOTE_ON_EVENT);
+        assert_eq!(event.sampleOffset, 0);
 
-        let note: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+        let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
         assert_eq!(note.channel, 0);
         assert_eq!(note.pitch, 60);
         assert!((note.velocity - 100.0 / 127.0).abs() < 0.01);
@@ -102,11 +113,10 @@ mod tests {
     fn test_note_off() {
         let msg = make_midi(&[0x80, 60, 64]); // Note Off, C4
         let event = midi_to_vst3_event(&msg, 128).expect("should produce event");
-        assert_eq!(event.event_type, crate::vst3::com::K_NOTE_OFF_EVENT);
-        assert_eq!(event.sample_offset, 128);
+        assert_eq!(event.r#type, crate::vst3::com::K_NOTE_OFF_EVENT);
+        assert_eq!(event.sampleOffset, 128);
 
-        let note: &crate::vst3::com::NoteOffEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOffEvent) };
+        let note = unsafe { crate::vst3::com::event_as_note_off(&event) };
         assert_eq!(note.pitch, 60);
     }
 
@@ -114,7 +124,7 @@ mod tests {
     fn test_note_on_velocity_zero_is_note_off() {
         let msg = make_midi(&[0x90, 64, 0]); // Note On with vel 0 = Note Off
         let event = midi_to_vst3_event(&msg, 0).expect("should produce event");
-        assert_eq!(event.event_type, crate::vst3::com::K_NOTE_OFF_EVENT);
+        assert_eq!(event.r#type, crate::vst3::com::K_NOTE_OFF_EVENT);
     }
 
     #[test]
@@ -123,8 +133,7 @@ mod tests {
         let msg = make_midi(&[0x95, 60, 100]);
         let event = midi_to_vst3_event(&msg, 0).expect("should produce event");
 
-        let note: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+        let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
         assert_eq!(note.channel, 5);
     }
 
@@ -166,16 +175,14 @@ mod tests {
         // Min velocity
         let msg = make_midi(&[0x90, 60, 1]);
         let event = midi_to_vst3_event(&msg, 0).unwrap();
-        let note: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+        let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
         assert!(note.velocity > 0.0);
         assert!(note.velocity < 0.02);
 
         // Max velocity
         let msg = make_midi(&[0x90, 60, 127]);
         let event = midi_to_vst3_event(&msg, 0).unwrap();
-        let note: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+        let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
         assert!((note.velocity - 1.0).abs() < 0.001);
     }
 
@@ -185,8 +192,7 @@ mod tests {
         for ch in 0..16u8 {
             let msg = make_midi(&[0x90 | ch, 60, 100]);
             let event = midi_to_vst3_event(&msg, 0).unwrap();
-            let note: &crate::vst3::com::NoteOnEvent =
-                unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+            let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
             assert_eq!(note.channel, ch as i16, "Channel {} mismatch", ch);
         }
     }
@@ -197,8 +203,7 @@ mod tests {
         for pitch in [0u8, 1, 60, 126, 127] {
             let msg = make_midi(&[0x90, pitch, 100]);
             let event = midi_to_vst3_event(&msg, 0).unwrap();
-            let note: &crate::vst3::com::NoteOnEvent =
-                unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+            let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
             assert_eq!(note.pitch, pitch as i16);
         }
     }
@@ -208,8 +213,7 @@ mod tests {
         // Note Off with non-zero velocity
         let msg = make_midi(&[0x80, 64, 100]);
         let event = midi_to_vst3_event(&msg, 0).unwrap();
-        let note: &crate::vst3::com::NoteOffEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOffEvent) };
+        let note = unsafe { crate::vst3::com::event_as_note_off(&event) };
         assert!((note.velocity - 100.0 / 127.0).abs() < 0.01);
     }
 
@@ -217,7 +221,7 @@ mod tests {
     fn test_sample_offset_propagated() {
         let msg = make_midi(&[0x90, 60, 100]);
         let event = midi_to_vst3_event(&msg, 256).unwrap();
-        assert_eq!(event.sample_offset, 256);
+        assert_eq!(event.sampleOffset, 256);
     }
 
     #[test]
@@ -225,9 +229,8 @@ mod tests {
         // All translated events should use note_id = -1 (unspecified)
         let msg = make_midi(&[0x90, 60, 100]);
         let event = midi_to_vst3_event(&msg, 0).unwrap();
-        let note: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(event.data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
-        assert_eq!(note.note_id, -1);
+        let note = unsafe { crate::vst3::com::event_as_note_on(&event) };
+        assert_eq!(note.noteId, -1);
     }
 
     #[test]
@@ -268,17 +271,15 @@ mod tests {
         assert_eq!(events.len(), 3);
 
         // First should be note on C4
-        let note0: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(events[0].data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+        let note0 = unsafe { crate::vst3::com::event_as_note_on(&events[0]) };
         assert_eq!(note0.pitch, 60);
 
         // Second should be note on E4
-        let note1: &crate::vst3::com::NoteOnEvent =
-            unsafe { &*(events[1].data.as_ptr() as *const crate::vst3::com::NoteOnEvent) };
+        let note1 = unsafe { crate::vst3::com::event_as_note_on(&events[1]) };
         assert_eq!(note1.pitch, 64);
 
         // Third should be note off C4
-        assert_eq!(events[2].event_type, crate::vst3::com::K_NOTE_OFF_EVENT);
+        assert_eq!(events[2].r#type, crate::vst3::com::K_NOTE_OFF_EVENT);
     }
 
     #[test]

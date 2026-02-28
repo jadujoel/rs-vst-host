@@ -1,15 +1,15 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.20.1 — clippy clean, all 26 warnings fixed).
+Last updated: 2026-02-28 (v0.21.0 — complete vst3-rs migration).
 
 ## Summary
 
-- **Total tests:** 726 (687 unit + 39 E2E)
-- **All passing:** ✅ (0 ignored)
+- **Total tests:** 1310 (711 unit + 599 binary/integration)
+- **All passing:** ✅ (0 failures)
 - **Build warnings:** 0 (clippy `-D warnings` clean)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (726 tests, 0 errors, 0 ignored)
-- **Miri coverage:** 99 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
+- **Last test run:** 2026-02-28 (1310 tests passing, 0 failures, 0 ignored) — full vst3-rs migration complete
+- **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
 - **GUI integration tests:** 6 headless GUI tests with 12 PNG screenshots saved to `target/test-screenshots/`
@@ -28,7 +28,7 @@ Last updated: 2026-02-28 (v0.20.1 — clippy clean, all 26 warnings fixed).
 | `src/app/cli.rs` | 22 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, `gui --paths`, `audio-worker`, `audio-worker` with flags and paths, `scan --paths` exclusive mode, required/optional args, invalid input rejection |
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
 | `src/vst3/host_context.rs` | 13 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety, system heap verification |\n| `src/vst3/host_alloc.rs` | 8 | ✅ Full | system_alloc/system_free lifecycle, null safety, system malloc zone verification (macOS), drop semantics, alignment, stress test (100 allocs), Box-is-not-system-zone (mimalloc validation) |
-| `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
+| `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable (vst3-rs types), perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
 | `src/gui/app.rs` | 60 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
 | `src/gui/backend.rs` | 45 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none, sandbox-wrapped deactivation (no active/no crash, flags cleared before drop, SandboxResult crashed detection, SandboxResult ok not crashed); activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
@@ -57,7 +57,7 @@ Last updated: 2026-02-28 (v0.20.1 — clippy clean, all 26 warnings fixed).
 | `src/gui/gui_worker.rs` | 17 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 9 | ⚠️ Partial | Platform constant, struct size, result constant, sandbox import, NSApplication init idempotency, pump_events main-thread guard, pump_platform_events no-panic; open/close/poll require real NSWindow + IPlugView |
 | `src/gui_tests.rs` | 6 | ✅ Full | Headless GUI integration: add plugin to rack with screenshot, open editor view and verify visible, full editor workflow (add→select→switch→deselect) with 9 screenshots, parameter types (automatable/bypass/read-only), multi-frame stability (10 frames), editor open without active plugin. CPU software-rasterized PNG screenshots saved to `target/test-screenshots/`. |
-| `src/vst3/ibstream.rs` | 6 | ✅ Full | IBStream COM implementation: create/destroy, write/read roundtrip, seek/tell, from_data, take_data, system heap verification |
+| `src/vst3/ibstream.rs` | 6 | ✅ Full | IBStream COM implementation (vst3-rs types): create/destroy, write/read roundtrip, seek/tell, from_data, take_data, query_interface, ref counting |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 

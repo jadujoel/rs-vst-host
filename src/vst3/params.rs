@@ -5,8 +5,8 @@
 
 use crate::vst3::com::*;
 use crate::vst3::sandbox::{SandboxResult, sandbox_call};
-use std::ffi::c_void;
 use tracing::{debug, info, warn};
+use vst3::Steinberg::IPluginBase;
 
 /// A single plugin parameter with metadata.
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ pub struct ParameterEntry {
 /// Parameter registry — holds all discoverable parameters from a plugin's IEditController.
 pub struct ParameterRegistry {
     /// The IEditController COM pointer (if available).
-    controller: *mut ComPtr<IEditControllerVtbl>,
+    controller: *mut IEditController,
     /// Whether we own (and should release) the controller.
     owns_controller: bool,
     /// All enumerated parameters.
@@ -55,7 +55,7 @@ impl ParameterRegistry {
     /// The `controller` must be a valid IEditController COM pointer.
     /// If `owns` is true, the registry will release it on drop.
     pub unsafe fn from_controller(
-        controller: *mut ComPtr<IEditControllerVtbl>,
+        controller: *mut IEditController,
         owns: bool,
     ) -> Self {
         let mut registry = Self {
@@ -75,7 +75,7 @@ impl ParameterRegistry {
 
         unsafe {
             let vtbl = &*(*self.controller).vtbl;
-            let count = (vtbl.get_parameter_count)(self.controller as *mut c_void);
+            let count = (vtbl.getParameterCount)(self.controller);
 
             if count <= 0 {
                 info!("Plugin has no parameters");
@@ -86,8 +86,8 @@ impl ParameterRegistry {
 
             for i in 0..count {
                 let mut info: ParameterInfo = std::mem::zeroed();
-                let result = (vtbl.get_parameter_info)(
-                    self.controller as *mut c_void,
+                let result = (vtbl.getParameterInfo)(
+                    self.controller,
                     i,
                     &mut info,
                 );
@@ -98,12 +98,12 @@ impl ParameterRegistry {
                 }
 
                 let title = utf16_to_string(&info.title);
-                let short_title = utf16_to_string(&info.short_title);
+                let short_title = utf16_to_string(&info.shortTitle);
                 let units = utf16_to_string(&info.units);
 
                 // Get current normalized value
-                let current = (vtbl.get_param_normalized)(
-                    self.controller as *mut c_void,
+                let current = (vtbl.getParamNormalized)(
+                    self.controller,
                     info.id,
                 );
 
@@ -112,8 +112,8 @@ impl ParameterRegistry {
                     title,
                     short_title,
                     units,
-                    step_count: info.step_count,
-                    default_normalized: info.default_normalized_value,
+                    step_count: info.stepCount,
+                    default_normalized: info.defaultNormalizedValue,
                     current_normalized: current,
                     can_automate: (info.flags & K_CAN_AUTOMATE) != 0,
                     is_read_only: (info.flags & K_IS_READ_ONLY) != 0,
@@ -164,8 +164,8 @@ impl ParameterRegistry {
             let vtbl = &*(*self.controller).vtbl;
             let clamped = value.clamp(0.0, 1.0);
 
-            let result = (vtbl.set_param_normalized)(
-                self.controller as *mut c_void,
+            let result = (vtbl.setParamNormalized)(
+                self.controller,
                 id,
                 clamped,
             );
@@ -175,8 +175,8 @@ impl ParameterRegistry {
             }
 
             // Read back the actual value
-            let actual = (vtbl.get_param_normalized)(
-                self.controller as *mut c_void,
+            let actual = (vtbl.getParamNormalized)(
+                self.controller,
                 id,
             );
 
@@ -197,13 +197,13 @@ impl ParameterRegistry {
 
         unsafe {
             let vtbl = &*(*self.controller).vtbl;
-            let mut buf = [0u16; 128];
+            let mut buf: String128 = [0u16; 128];
 
-            let result = (vtbl.get_param_string_by_value)(
-                self.controller as *mut c_void,
+            let result = (vtbl.getParamStringByValue)(
+                self.controller,
                 id,
                 value,
-                buf.as_mut_ptr(),
+                &mut buf,
             );
 
             if result == K_RESULT_OK {
@@ -223,8 +223,8 @@ impl ParameterRegistry {
 
         unsafe {
             let vtbl = &*(*self.controller).vtbl;
-            (vtbl.normalized_param_to_plain)(
-                self.controller as *mut c_void,
+            (vtbl.normalizedParamToPlain)(
+                self.controller,
                 id,
                 normalized,
             )
@@ -240,8 +240,8 @@ impl ParameterRegistry {
 
         unsafe {
             let vtbl = &*(*self.controller).vtbl;
-            (vtbl.plain_param_to_normalized)(
-                self.controller as *mut c_void,
+            (vtbl.plainParamToNormalized)(
+                self.controller,
                 id,
                 plain,
             )
@@ -300,10 +300,10 @@ impl Drop for ParameterRegistry {
         if self.owns_controller && !self.controller.is_null() {
             let controller = self.controller as usize;
             let result = sandbox_call("param_registry_drop", move || unsafe {
-                let ctrl = controller as *mut ComPtr<IEditControllerVtbl>;
+                let ctrl = controller as *mut IEditController;
                 let vtbl = &*(*ctrl).vtbl;
-                (vtbl.terminate)(ctrl as *mut c_void);
-                (vtbl.release)(ctrl as *mut c_void);
+                (vtbl.base.terminate)(ctrl as *mut IPluginBase);
+                (vtbl.base.base.release)(ctrl as *mut FUnknown);
             });
             match &result {
                 SandboxResult::Crashed(crash) => {
@@ -522,7 +522,7 @@ mod tests {
     fn test_param_registry_drop_non_owning_skips_release() {
         // When owns_controller is false, Drop should not call terminate/release
         // even with a non-null (but invalid) controller pointer
-        let fake_ptr = 0xDEAD_BEEF as *mut ComPtr<IEditControllerVtbl>;
+        let fake_ptr = 0xDEAD_BEEF as *mut IEditController;
         let registry = ParameterRegistry {
             controller: fake_ptr,
             owns_controller: false, // <-- key: does not own

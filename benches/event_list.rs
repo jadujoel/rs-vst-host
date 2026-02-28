@@ -4,9 +4,8 @@
 //! and through the COM vtable (as plugins would call them).
 
 use divan::Bencher;
-use rs_vst_host::vst3::com::{Event, IEventListVtbl};
+use rs_vst_host::vst3::com::{make_note_on_event, Event, IEventList, IEventListVtbl};
 use rs_vst_host::vst3::event_list::HostEventList;
-use std::ffi::c_void;
 
 fn main() {
     divan::main();
@@ -39,7 +38,7 @@ fn add_events(bencher: Bencher, count: usize) {
         .with_inputs(|| {
             let list = HostEventList::new();
             let events: Vec<Event> = (0..count)
-                .map(|i| Event::note_on(i as i32, 0, 60 + (i % 12) as i16, 0.8, -1))
+                .map(|i| make_note_on_event(i as i32, 0, 60 + (i % 12) as i16, 0.8, -1))
                 .collect();
             (list, events)
         })
@@ -60,7 +59,7 @@ fn clear_with_events(bencher: Bencher, count: usize) {
             let list = HostEventList::new();
             unsafe {
                 for i in 0..count {
-                    HostEventList::add(list, Event::note_on(i as i32, 0, 60, 0.8, -1));
+                    HostEventList::add(list, make_note_on_event(i as i32, 0, 60, 0.8, -1));
                 }
             }
             list
@@ -78,7 +77,7 @@ fn add_clear_cycle(bencher: Bencher, events_per_block: usize) {
         .with_inputs(|| {
             let list = HostEventList::new();
             let events: Vec<Event> = (0..events_per_block)
-                .map(|i| Event::note_on(i as i32, 0, 60 + (i % 12) as i16, 0.8, -1))
+                .map(|i| make_note_on_event(i as i32, 0, 60 + (i % 12) as i16, 0.8, -1))
                 .collect();
             (list, events)
         })
@@ -99,14 +98,14 @@ fn vtable_get_event_count(bencher: Bencher, count: usize) {
             let list = HostEventList::new();
             unsafe {
                 for i in 0..count {
-                    HostEventList::add(list, Event::note_on(i as i32, 0, 60, 0.8, -1));
+                    HostEventList::add(list, make_note_on_event(i as i32, 0, 60, 0.8, -1));
                 }
             }
             list
         })
         .bench_local_refs(|list| unsafe {
             let vt = vtbl(*list);
-            divan::black_box((vt.get_event_count)(*list as *mut c_void));
+            divan::black_box((vt.getEventCount)(*list as *mut IEventList));
         });
 }
 
@@ -119,17 +118,17 @@ fn vtable_get_all_events(bencher: Bencher, count: usize) {
             let list = HostEventList::new();
             unsafe {
                 for i in 0..count {
-                    HostEventList::add(list, Event::note_on(i as i32, 0, 60, 0.8, -1));
+                    HostEventList::add(list, make_note_on_event(i as i32, 0, 60, 0.8, -1));
                 }
             }
             list
         })
         .bench_local_refs(|list| unsafe {
             let vt = vtbl(*list);
-            let n = (vt.get_event_count)(*list as *mut c_void);
+            let n = (vt.getEventCount)(*list as *mut IEventList);
             let mut evt = std::mem::zeroed::<Event>();
             for i in 0..n {
-                (vt.get_event)(*list as *mut c_void, i, &mut evt);
+                (vt.getEvent)(*list as *mut IEventList, i, &mut evt);
             }
             divan::black_box(&evt);
         });
@@ -143,7 +142,7 @@ fn vtable_add_events(bencher: Bencher, count: usize) {
         .with_inputs(|| {
             let list = HostEventList::new();
             let events: Vec<Event> = (0..count)
-                .map(|i| Event::note_on(i as i32, 0, 60, 0.8, -1))
+                .map(|i| make_note_on_event(i as i32, 0, 60, 0.8, -1))
                 .collect();
             (list, events)
         })
@@ -151,7 +150,7 @@ fn vtable_add_events(bencher: Bencher, count: usize) {
             HostEventList::clear(*list);
             let vt = vtbl(*list);
             for event in events.iter() {
-                (vt.add_event)(*list as *mut c_void, event);
+                (vt.addEvent)(*list as *mut IEventList, event as *const Event as *mut Event);
             }
         });
 }

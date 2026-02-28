@@ -33,6 +33,11 @@
 mod tests {
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use crate::vst3::com::{
+        make_note_on_event, make_note_off_event, event_as_note_on, event_as_note_off,
+        K_NOTE_ON_EVENT, K_NOTE_OFF_EVENT,
+        IEventList, IParameterChanges, ProcessContext as VstProcessContext,
+    };
 
     // ═══════════════════════════════════════════════════════════════════
     // host_alloc: system malloc lifecycle (libc::malloc / libc::free)
@@ -250,22 +255,22 @@ mod tests {
         unsafe {
             // Fill with events
             for i in 0..100 {
-                HostEventList::add(list, Event::note_on(i, 0, (i % 128) as i16, 0.8, i));
+                HostEventList::add(list, make_note_on_event(i, 0, (i % 128) as i16, 0.8, i));
             }
             assert_eq!(HostEventList::event_count(list), 100);
 
             // Read back through vtable
             let vtbl_ptr = *(list as *const *const IEventListVtbl);
             let vtbl = &*vtbl_ptr;
-            assert_eq!((vtbl.get_event_count)(list as *mut c_void), 100);
+            assert_eq!((vtbl.getEventCount)(list as *mut IEventList), 100);
 
             let mut evt = std::mem::zeroed::<Event>();
-            let result = (vtbl.get_event)(list as *mut c_void, 50, &mut evt);
+            let result = (vtbl.getEvent)(list as *mut IEventList, 50, &mut evt);
             assert_eq!(result, K_RESULT_OK);
-            assert_eq!(evt.sample_offset, 50);
+            assert_eq!(evt.sampleOffset, 50);
 
-            // Read typed data through raw pointer cast
-            let note: &NoteOnEvent = &*(evt.data.as_ptr() as *const NoteOnEvent);
+            // Read typed data through union access
+            let note = event_as_note_on(&evt);
             assert_eq!(note.pitch, 50);
 
             // Clear and reuse
@@ -274,7 +279,7 @@ mod tests {
 
             // Add more events after clear
             for i in 0..50 {
-                HostEventList::add(list, Event::note_off(i, 0, 60, 0.5, i));
+                HostEventList::add(list, make_note_off_event(i, 0, 60, 0.5, i));
             }
             assert_eq!(HostEventList::event_count(list), 50);
 
@@ -321,7 +326,6 @@ mod tests {
     /// ASan's quarantine list catches use-after-free from stale pointers.
     #[test]
     fn asan_com_rapid_create_destroy() {
-        use crate::vst3::com::Event;
         use crate::vst3::event_list::HostEventList;
         use crate::vst3::param_changes::HostParameterChanges;
 
@@ -330,8 +334,8 @@ mod tests {
             let pc = HostParameterChanges::new();
 
             unsafe {
-                HostEventList::add(el, Event::note_on(0, 0, 60, 0.8, 1));
-                HostEventList::add(el, Event::note_off(64, 0, 60, 0.0, 1));
+                HostEventList::add(el, make_note_on_event(0, 0, 60, 0.8, 1));
+                HostEventList::add(el, make_note_off_event(64, 0, 60, 0.0, 1));
                 HostParameterChanges::add_change(pc, 1, 0, 0.5);
                 HostParameterChanges::add_change(pc, 1, 32, 0.75);
 
@@ -354,7 +358,7 @@ mod tests {
         unsafe {
             // Fill to capacity (512)
             for i in 0..512 {
-                HostEventList::add(list, Event::note_on(i, 0, (i % 128) as i16, 0.5, i));
+                HostEventList::add(list, make_note_on_event(i, 0, (i % 128) as i16, 0.5, i));
             }
             assert_eq!(HostEventList::event_count(list), 512);
 
@@ -365,19 +369,19 @@ mod tests {
             let mut evt = std::mem::zeroed::<Event>();
 
             // First element
-            (vtbl.get_event)(list as *mut c_void, 0, &mut evt);
-            assert_eq!(evt.sample_offset, 0);
+            (vtbl.getEvent)(list as *mut IEventList, 0, &mut evt);
+            assert_eq!(evt.sampleOffset, 0);
 
             // Last element
-            (vtbl.get_event)(list as *mut c_void, 511, &mut evt);
-            assert_eq!(evt.sample_offset, 511);
+            (vtbl.getEvent)(list as *mut IEventList, 511, &mut evt);
+            assert_eq!(evt.sampleOffset, 511);
 
             // Out-of-bounds read should return error (not crash)
-            let result = (vtbl.get_event)(list as *mut c_void, 512, &mut evt);
+            let result = (vtbl.getEvent)(list as *mut IEventList, 512, &mut evt);
             assert_ne!(result, K_RESULT_OK);
 
             // Overflow: 513th event silently dropped
-            HostEventList::add(list, Event::note_on(999, 0, 60, 1.0, 999));
+            HostEventList::add(list, make_note_on_event(999, 0, 60, 1.0, 999));
             assert_eq!(HostEventList::event_count(list), 512); // Still 512
 
             HostEventList::destroy(list);
@@ -398,18 +402,18 @@ mod tests {
 
             // QI for IEventList
             let result =
-                (vtbl.query_interface)(list as *mut c_void, IEVENT_LIST_IID.as_ptr(), &mut obj);
+                (vtbl.base.queryInterface)(list as *mut FUnknown, IEVENT_LIST_IID.as_ptr() as *const _, &mut obj);
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(obj, list as *mut c_void);
 
             // QI for FUnknown
             let result =
-                (vtbl.query_interface)(list as *mut c_void, FUNKNOWN_IID.as_ptr(), &mut obj);
+                (vtbl.base.queryInterface)(list as *mut FUnknown, FUNKNOWN_IID.as_ptr() as *const _, &mut obj);
             assert_eq!(result, K_RESULT_OK);
 
             // QI for unknown IID should fail
             let fake_iid: [u8; 16] = [0xFF; 16];
-            let result = (vtbl.query_interface)(list as *mut c_void, fake_iid.as_ptr(), &mut obj);
+            let result = (vtbl.base.queryInterface)(list as *mut FUnknown, fake_iid.as_ptr() as *const _, &mut obj);
             assert_ne!(result, K_RESULT_OK);
 
             HostEventList::destroy(list);
@@ -546,15 +550,15 @@ mod tests {
 
         unsafe {
             let pd = &*bufs.process_data_ptr();
-            assert_eq!(pd.num_samples, 256);
-            assert_eq!(pd.num_inputs, 1);
-            assert_eq!(pd.num_outputs, 1);
+            assert_eq!(pd.numSamples, 256);
+            assert_eq!(pd.numInputs, 1);
+            assert_eq!(pd.numOutputs, 1);
 
             // Walk input chain
             let input_bus = &*pd.inputs;
-            assert_eq!(input_bus.num_channels, 2);
-            let ch0_ptr = *input_bus.channel_buffers_32;
-            let ch1_ptr = *input_bus.channel_buffers_32.add(1);
+            assert_eq!(input_bus.numChannels, 2);
+            let ch0_ptr = *input_bus.__field0.channelBuffers32;
+            let ch1_ptr = *input_bus.__field0.channelBuffers32.add(1);
 
             // Write to every sample in both channels — tests boundary access
             for i in 0..256 {
@@ -564,9 +568,9 @@ mod tests {
 
             // Walk output chain
             let output_bus = &*pd.outputs;
-            assert_eq!(output_bus.num_channels, 2);
-            let out0_ptr = *output_bus.channel_buffers_32;
-            let out1_ptr = *output_bus.channel_buffers_32.add(1);
+            assert_eq!(output_bus.numChannels, 2);
+            let out0_ptr = *output_bus.__field0.channelBuffers32;
+            let out1_ptr = *output_bus.__field0.channelBuffers32.add(1);
 
             for i in 0..256 {
                 *out0_ptr.add(i) = *ch0_ptr.add(i) * 0.5;
@@ -603,9 +607,9 @@ mod tests {
             // Verify through pointer chain
             unsafe {
                 let pd = &*bufs.process_data_ptr();
-                assert_eq!(pd.num_samples, block_size as i32);
+                assert_eq!(pd.numSamples, block_size as i32);
                 let input_bus = &*pd.inputs;
-                let ch0 = *input_bus.channel_buffers_32;
+                let ch0 = *input_bus.__field0.channelBuffers32;
                 assert_eq!(*ch0.add(block_size - 1), block_size as f32);
             }
         }
@@ -630,8 +634,8 @@ mod tests {
             let in_bus = &*pd.inputs;
             let out_bus = &*pd.outputs;
             for ch in 0..2 {
-                let in_ptr = *in_bus.channel_buffers_32.add(ch);
-                let out_ptr = *out_bus.channel_buffers_32.add(ch);
+                let in_ptr = *in_bus.__field0.channelBuffers32.add(ch);
+                let out_ptr = *out_bus.__field0.channelBuffers32.add(ch);
                 std::ptr::copy_nonoverlapping(in_ptr, out_ptr, 1024);
             }
         }
@@ -672,10 +676,10 @@ mod tests {
 
             unsafe {
                 let pd = &*bufs.process_data_ptr();
-                assert_eq!(pd.num_samples, 64);
+                assert_eq!(pd.numSamples, 64);
 
                 let input_bus = &*pd.inputs;
-                let ch0 = *input_bus.channel_buffers_32;
+                let ch0 = *input_bus.__field0.channelBuffers32;
                 // Write through raw pointer
                 for i in 0..64 {
                     *ch0.add(i) = i as f32 * 2.0;
@@ -701,8 +705,8 @@ mod tests {
 
         unsafe {
             let pd = &*bufs.process_data_ptr();
-            assert_eq!(pd.num_inputs, 0);
-            assert_eq!(pd.num_outputs, 0);
+            assert_eq!(pd.numInputs, 0);
+            assert_eq!(pd.numOutputs, 0);
             assert!(pd.inputs.is_null());
             assert!(pd.outputs.is_null());
         }
@@ -938,21 +942,27 @@ mod tests {
     fn asan_event_note_on_byte_access() {
         use crate::vst3::com::*;
 
-        let event = Event::note_on(42, 3, 60, 0.75, 99);
+        let event = make_note_on_event(42, 3, 60, 0.75, 99);
 
-        // Read entire data field byte-by-byte — ASan checks each access
+        // Read event union bytes — ASan checks each access
+        let event_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &event.__field0 as *const _ as *const u8,
+                std::mem::size_of_val(&event.__field0),
+            )
+        };
         let mut checksum: u8 = 0;
-        for byte in &event.data {
+        for byte in event_bytes {
             checksum = checksum.wrapping_add(*byte);
         }
         let _ = checksum;
 
-        // Cast to typed pointer — alignment check
-        let note: &NoteOnEvent = unsafe { &*(event.data.as_ptr() as *const NoteOnEvent) };
+        // Read typed data through union access — alignment check
+        let note = unsafe { event_as_note_on(&event) };
         assert_eq!(note.channel, 3);
         assert_eq!(note.pitch, 60);
         assert!((note.velocity - 0.75).abs() < f32::EPSILON);
-        assert_eq!(note.note_id, 99);
+        assert_eq!(note.noteId, 99);
     }
 
     /// Event clone: bitwise copy of the event data.
@@ -960,16 +970,14 @@ mod tests {
     fn asan_event_clone_safety() {
         use crate::vst3::com::*;
 
-        let original = Event::note_on(10, 3, 72, 0.9, 42);
+        let original = make_note_on_event(10, 3, 72, 0.9, 42);
         let cloned = original;
 
-        // Both should have identical data — ASan validates both memory regions
-        assert_eq!(original.data, cloned.data);
-
-        let orig_note: &NoteOnEvent = unsafe { &*(original.data.as_ptr() as *const NoteOnEvent) };
-        let clone_note: &NoteOnEvent = unsafe { &*(cloned.data.as_ptr() as *const NoteOnEvent) };
+        // Both should have identical typed data — ASan validates both memory regions
+        let orig_note = unsafe { event_as_note_on(&original) };
+        let clone_note = unsafe { event_as_note_on(&cloned) };
         assert_eq!(orig_note.pitch, clone_note.pitch);
-        assert_eq!(orig_note.note_id, clone_note.note_id);
+        assert_eq!(orig_note.noteId, clone_note.noteId);
     }
 
     /// Batch event creation and typed readback.
@@ -979,8 +987,8 @@ mod tests {
 
         let mut events = Vec::new();
         for i in 0..256 {
-            events.push(Event::note_on(i, (i % 16) as i16, (i % 128) as i16, 0.8, i));
-            events.push(Event::note_off(
+            events.push(make_note_on_event(i, (i % 16) as i16, (i % 128) as i16, 0.8, i));
+            events.push(make_note_off_event(
                 i + 1,
                 (i % 16) as i16,
                 (i % 128) as i16,
@@ -991,13 +999,13 @@ mod tests {
 
         assert_eq!(events.len(), 512);
 
-        // Read all events through typed pointers
+        // Read all events through typed union access
         for (idx, event) in events.iter().enumerate() {
-            if event.event_type == K_NOTE_ON_EVENT {
-                let note: &NoteOnEvent = unsafe { &*(event.data.as_ptr() as *const NoteOnEvent) };
+            if event.r#type == K_NOTE_ON_EVENT {
+                let note = unsafe { event_as_note_on(event) };
                 assert_eq!(note.pitch, (idx / 2 % 128) as i16);
             } else {
-                let note: &NoteOffEvent = unsafe { &*(event.data.as_ptr() as *const NoteOffEvent) };
+                let note = unsafe { event_as_note_off(event) };
                 assert_eq!(note.pitch, (idx / 2 % 128) as i16);
             }
         }
@@ -1063,9 +1071,9 @@ mod tests {
         // Wire into process buffers
         let mut bufs = ProcessBuffers::new(2, 2, 512);
         bufs.prepare(256);
-        bufs.set_input_events(HostEventList::as_ptr(event_list));
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes));
-        bufs.set_process_context(ctx.as_ptr());
+        bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
+        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         // Write audio input
         if let Some(ch0) = bufs.input_buffer_mut(0) {
@@ -1077,27 +1085,27 @@ mod tests {
         // Validate full ProcessData under ASan
         unsafe {
             let pd = &*bufs.process_data_ptr();
-            assert_eq!(pd.num_samples, 256);
-            assert!(!pd.input_events.is_null());
-            assert!(!pd.input_parameter_changes.is_null());
-            assert!(!pd.process_context.is_null());
+            assert_eq!(pd.numSamples, 256);
+            assert!(!pd.inputEvents.is_null());
+            assert!(!pd.inputParameterChanges.is_null());
+            assert!(!pd.processContext.is_null());
             assert!(!pd.inputs.is_null());
             assert!(!pd.outputs.is_null());
 
             // Read events through vtable
-            let el = pd.input_events as *mut HostEventList;
+            let el = pd.inputEvents as *mut HostEventList;
             let vtbl_ptr = *(el as *const *const IEventListVtbl);
             let vtbl = &*vtbl_ptr;
-            assert_eq!((vtbl.get_event_count)(el as *mut c_void), 128);
+            assert_eq!((vtbl.getEventCount)(el as *mut IEventList), 128);
 
             // Read first event
             let mut evt = std::mem::zeroed::<Event>();
-            (vtbl.get_event)(el as *mut c_void, 0, &mut evt);
-            assert_eq!(evt.event_type, K_NOTE_ON_EVENT);
+            (vtbl.getEvent)(el as *mut IEventList, 0, &mut evt);
+            assert_eq!(evt.r#type, K_NOTE_ON_EVENT);
 
             // Read audio through pointer chain
             let input_bus = &*pd.inputs;
-            let ch0 = *input_bus.channel_buffers_32;
+            let ch0 = *input_bus.__field0.channelBuffers32;
             assert!((*ch0).abs() < 0.01); // sin(0) ≈ 0
         }
 
@@ -1133,11 +1141,11 @@ mod tests {
         // Wire into process buffers and read back
         let mut bufs = crate::vst3::process::ProcessBuffers::new(2, 2, 256);
         bufs.prepare(256);
-        bufs.set_process_context(ctx.as_ptr());
+        bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         unsafe {
             let pd = &*bufs.process_data_ptr();
-            assert!(!pd.process_context.is_null());
+            assert!(!pd.processContext.is_null());
         }
 
         bufs.set_process_context(std::ptr::null_mut());
@@ -1167,8 +1175,8 @@ mod tests {
         assert_eq!(events.len(), 128);
 
         for (i, event) in events.iter().enumerate() {
-            assert_eq!(event.event_type, K_NOTE_ON_EVENT);
-            let note: &NoteOnEvent = unsafe { &*(event.data.as_ptr() as *const NoteOnEvent) };
+            assert_eq!(event.r#type, K_NOTE_ON_EVENT);
+            let note = unsafe { event_as_note_on(event) };
             assert_eq!(note.pitch, i as i16);
         }
     }
@@ -1192,7 +1200,7 @@ mod tests {
         assert_eq!(events.len(), 16);
 
         for (ch, event) in events.iter().enumerate() {
-            let note: &NoteOnEvent = unsafe { &*(event.data.as_ptr() as *const NoteOnEvent) };
+            let note = unsafe { event_as_note_on(event) };
             assert_eq!(note.channel, ch as i16);
         }
     }
@@ -1367,13 +1375,13 @@ mod tests {
             for i in 0..100 {
                 HostEventList::add(
                     event_list,
-                    Event::note_on(i, 0, (60 + i % 24) as i16, 0.8, i),
+                    make_note_on_event(i, 0, (60 + i % 24) as i16, 0.8, i),
                 );
             }
             for i in 0..100 {
                 HostEventList::add(
                     event_list,
-                    Event::note_off(100 + i, 0, (60 + i % 24) as i16, 0.0, i),
+                    make_note_off_event(100 + i, 0, (60 + i % 24) as i16, 0.0, i),
                 );
             }
         }
@@ -1392,9 +1400,9 @@ mod tests {
         bufs.prepare(512);
 
         // Wire everything together
-        bufs.set_input_events(HostEventList::as_ptr(event_list));
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes));
-        bufs.set_process_context(ctx.as_ptr());
+        bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
+        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         // Generate input audio
         for ch in 0..2 {
@@ -1412,8 +1420,8 @@ mod tests {
             let out_bus = &*pd.outputs;
 
             for ch in 0..2 {
-                let in_ptr = *in_bus.channel_buffers_32.add(ch);
-                let out_ptr = *out_bus.channel_buffers_32.add(ch);
+                let in_ptr = *in_bus.__field0.channelBuffers32.add(ch);
+                let out_ptr = *out_bus.__field0.channelBuffers32.add(ch);
                 std::ptr::copy_nonoverlapping(in_ptr, out_ptr, 512);
             }
         }
@@ -1437,13 +1445,13 @@ mod tests {
 
         // Second block
         bufs.prepare(512);
-        bufs.set_input_events(HostEventList::as_ptr(event_list));
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes));
-        bufs.set_process_context(ctx.as_ptr());
+        bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
+        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         unsafe {
             let pd = &*bufs.process_data_ptr();
-            assert_eq!(pd.num_samples, 512);
+            assert_eq!(pd.numSamples, 512);
         }
 
         // Clean up
@@ -1484,14 +1492,14 @@ mod tests {
             // Add some events for this block
             if block % 10 == 0 {
                 unsafe {
-                    HostEventList::add(event_list, Event::note_on(0, 0, 60, 0.8, block as i32));
+                    HostEventList::add(event_list, make_note_on_event(0, 0, 60, 0.8, block as i32));
                 }
             }
             if block % 10 == 5 {
                 unsafe {
                     HostEventList::add(
                         event_list,
-                        Event::note_off(0, 0, 60, 0.0, block as i32 - 5),
+                        make_note_off_event(0, 0, 60, 0.0, block as i32 - 5),
                     );
                 }
             }
@@ -1502,9 +1510,9 @@ mod tests {
             }
 
             bufs.prepare(512);
-            bufs.set_input_events(HostEventList::as_ptr(event_list));
-            bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes));
-            bufs.set_process_context(ctx.as_ptr());
+            bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
+            bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+            bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
             // Generate sine wave input
             if let Some(ch0) = bufs.input_buffer_mut(0) {
@@ -1520,8 +1528,8 @@ mod tests {
                 let in_bus = &*pd.inputs;
                 let out_bus = &*pd.outputs;
                 for ch in 0..2 {
-                    let in_ptr = *in_bus.channel_buffers_32.add(ch);
-                    let out_ptr = *out_bus.channel_buffers_32.add(ch);
+                    let in_ptr = *in_bus.__field0.channelBuffers32.add(ch);
+                    let out_ptr = *out_bus.__field0.channelBuffers32.add(ch);
                     std::ptr::copy_nonoverlapping(in_ptr, out_ptr, 512);
                 }
             }
@@ -1547,7 +1555,6 @@ mod tests {
     /// ASan's thread-aware tracking catches data races on heap metadata.
     #[test]
     fn asan_concurrent_com_objects() {
-        use crate::vst3::com::Event;
         use crate::vst3::event_list::HostEventList;
         use crate::vst3::param_changes::HostParameterChanges;
 
@@ -1560,7 +1567,7 @@ mod tests {
 
                         unsafe {
                             for j in 0..10 {
-                                HostEventList::add(el, Event::note_on(j, 0, 60, 0.8, j));
+                                HostEventList::add(el, make_note_on_event(j, 0, 60, 0.8, j));
                                 HostParameterChanges::add_change(pc, j as u32, 0, 0.5);
                             }
 

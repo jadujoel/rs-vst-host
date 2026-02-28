@@ -11,12 +11,12 @@ use crate::error::Vst3Error;
 use crate::vst3::com::*;
 use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::host_context::HostApplication;
-use crate::vst3::module::IPluginFactoryVtbl;
 use crate::vst3::params::ParameterRegistry;
 use crate::vst3::sandbox::{SandboxResult, sandbox_call};
 use std::cell::Cell;
 use std::ffi::c_void;
 use tracing::{debug, error, info, warn};
+use vst3::Steinberg::IPluginBase;
 
 // ── Thread-local flag for instance ↔ module crash communication ─────────
 //
@@ -47,9 +47,9 @@ thread_local! {
 /// Manages the complete lifecycle from initialization through shutdown.
 pub struct Vst3Instance {
     /// IComponent COM pointer.
-    component: *mut ComPtr<IComponentVtbl>,
+    component: *mut IComponent,
     /// IAudioProcessor COM pointer (queried from component).
-    processor: *mut ComPtr<IAudioProcessorVtbl>,
+    processor: *mut IAudioProcessor,
     /// Host context (owned, destroyed on drop).
     host_context: *mut HostApplication,
     /// IComponentHandler (owned, destroyed on drop).
@@ -69,7 +69,7 @@ pub struct Vst3Instance {
     /// Factory vtable pointer (valid as long as factory is alive).
     factory_vtbl: *const IPluginFactoryVtbl,
     /// Cached IEditController pointer (obtained via QI or separate creation).
-    cached_controller: *mut ComPtr<IEditControllerVtbl>,
+    cached_controller: *mut IEditController,
     /// Whether we own the separate controller (need to terminate + release on drop).
     owns_separate_controller: bool,
     /// Host context for the separate controller (destroyed on drop if non-null).
@@ -97,7 +97,7 @@ impl Vst3Instance {
     /// the VST3 module, and `factory_vtbl` must point to its vtable.
     pub unsafe fn create(
         factory: *mut c_void,
-        factory_vtbl: &crate::vst3::module::IPluginFactoryVtbl,
+        factory_vtbl: &IPluginFactoryVtbl,
         cid: &[u8; 16],
         name: &str,
     ) -> Result<Self, Vst3Error> {
@@ -107,10 +107,10 @@ impl Vst3Instance {
 
             // Create component instance
             let mut component_ptr: *mut c_void = std::ptr::null_mut();
-            let result = (factory_vtbl.create_instance)(
-                factory,
-                cid.as_ptr(),
-                ICOMPONENT_IID.as_ptr(),
+            let result = (factory_vtbl.createInstance)(
+                factory as *mut IPluginFactory,
+                cid.as_ptr() as FIDString,
+                ICOMPONENT_IID.as_ptr() as FIDString,
                 &mut component_ptr,
             );
 
@@ -122,16 +122,18 @@ impl Vst3Instance {
                 )));
             }
 
-            let component = component_ptr as *mut ComPtr<IComponentVtbl>;
+            let component = component_ptr as *mut IComponent;
             debug!(plugin = %name, "Created IComponent instance");
 
             // Initialize the component with host context
             let comp_vtbl = &*(*component).vtbl;
-            let init_result =
-                (comp_vtbl.initialize)(component_ptr, HostApplication::as_unknown(host_context));
+            let init_result = (comp_vtbl.base.initialize)(
+                component_ptr as *mut IPluginBase,
+                HostApplication::as_unknown(host_context) as *mut FUnknown,
+            );
 
             if init_result != K_RESULT_OK {
-                (comp_vtbl.release)(component_ptr);
+                (comp_vtbl.base.base.release)(component_ptr as *mut FUnknown);
                 HostApplication::destroy(host_context);
                 return Err(Vst3Error::Factory(format!(
                     "IComponent::initialize failed for '{}' (result: {})",
@@ -143,15 +145,15 @@ impl Vst3Instance {
 
             // Query for IAudioProcessor
             let mut processor_ptr: *mut c_void = std::ptr::null_mut();
-            let qi_result = (comp_vtbl.query_interface)(
-                component_ptr,
-                IAUDIO_PROCESSOR_IID.as_ptr(),
+            let qi_result = (comp_vtbl.base.base.queryInterface)(
+                component_ptr as *mut FUnknown,
+                iid_as_tuid_ptr(&IAUDIO_PROCESSOR_IID),
                 &mut processor_ptr,
             );
 
             if qi_result != K_RESULT_OK || processor_ptr.is_null() {
-                (comp_vtbl.terminate)(component_ptr);
-                (comp_vtbl.release)(component_ptr);
+                (comp_vtbl.base.terminate)(component_ptr as *mut IPluginBase);
+                (comp_vtbl.base.base.release)(component_ptr as *mut FUnknown);
                 HostApplication::destroy(host_context);
                 return Err(Vst3Error::Factory(format!(
                     "QueryInterface for IAudioProcessor failed for '{}' (result: {})",
@@ -159,22 +161,29 @@ impl Vst3Instance {
                 )));
             }
 
-            let processor = processor_ptr as *mut ComPtr<IAudioProcessorVtbl>;
+            let processor = processor_ptr as *mut IAudioProcessor;
             debug!(plugin = %name, "Obtained IAudioProcessor interface");
 
             // Query bus configuration
-            let input_bus_count = (comp_vtbl.get_bus_count)(component_ptr, K_AUDIO, K_INPUT);
-            let output_bus_count = (comp_vtbl.get_bus_count)(component_ptr, K_AUDIO, K_OUTPUT);
+            let input_bus_count =
+                (comp_vtbl.getBusCount)(component_ptr as *mut IComponent, K_AUDIO, K_INPUT);
+            let output_bus_count =
+                (comp_vtbl.getBusCount)(component_ptr as *mut IComponent, K_AUDIO, K_OUTPUT);
             debug!(plugin = %name, input_buses = input_bus_count, output_buses = output_bus_count, "Bus counts");
 
             // Get channel counts from bus info
             let input_channels = if input_bus_count > 0 {
                 let mut bus_info: BusInfo = std::mem::zeroed();
-                if (comp_vtbl.get_bus_info)(component_ptr, K_AUDIO, K_INPUT, 0, &mut bus_info)
-                    == K_RESULT_OK
+                if (comp_vtbl.getBusInfo)(
+                    component_ptr as *mut IComponent,
+                    K_AUDIO,
+                    K_INPUT,
+                    0,
+                    &mut bus_info,
+                ) == K_RESULT_OK
                 {
-                    debug!(channels = bus_info.channel_count, "Input bus 0");
-                    bus_info.channel_count.max(0) as usize
+                    debug!(channels = bus_info.channelCount, "Input bus 0");
+                    bus_info.channelCount.max(0) as usize
                 } else {
                     2 // Default to stereo
                 }
@@ -184,11 +193,16 @@ impl Vst3Instance {
 
             let output_channels = if output_bus_count > 0 {
                 let mut bus_info: BusInfo = std::mem::zeroed();
-                if (comp_vtbl.get_bus_info)(component_ptr, K_AUDIO, K_OUTPUT, 0, &mut bus_info)
-                    == K_RESULT_OK
+                if (comp_vtbl.getBusInfo)(
+                    component_ptr as *mut IComponent,
+                    K_AUDIO,
+                    K_OUTPUT,
+                    0,
+                    &mut bus_info,
+                ) == K_RESULT_OK
                 {
-                    debug!(channels = bus_info.channel_count, "Output bus 0");
-                    bus_info.channel_count.max(0) as usize
+                    debug!(channels = bus_info.channelCount, "Output bus 0");
+                    bus_info.channelCount.max(0) as usize
                 } else {
                     2
                 }
@@ -204,7 +218,7 @@ impl Vst3Instance {
             );
 
             // AddRef the factory so we can use it later for controller creation
-            (factory_vtbl.base.add_ref)(factory);
+            (factory_vtbl.base.addRef)(factory as *mut FUnknown);
 
             Ok(Self {
                 component,
@@ -233,9 +247,9 @@ impl Vst3Instance {
         }
         let proc = self.processor as usize;
         let result = sandbox_call("can_process_f32", move || unsafe {
-            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let processor = proc as *mut IAudioProcessor;
             let proc_vtbl = &*(*processor).vtbl;
-            (proc_vtbl.can_process_sample_size)(processor as *mut c_void, K_SAMPLE_32)
+            (proc_vtbl.canProcessSampleSize)(processor, K_SAMPLE_32)
         });
         matches!(result, SandboxResult::Ok(K_RESULT_OK))
     }
@@ -257,8 +271,8 @@ impl Vst3Instance {
         let in_ch = self.input_channels;
 
         let result = sandbox_call("set_bus_arrangements", move || unsafe {
-            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
-            let component = comp as *mut ComPtr<IComponentVtbl>;
+            let processor = proc as *mut IAudioProcessor;
+            let component = comp as *mut IComponent;
             let proc_vtbl = &*(*processor).vtbl;
             let comp_vtbl = &*(*component).vtbl;
 
@@ -267,8 +281,8 @@ impl Vst3Instance {
             let num_ins = if in_ch > 0 { 1 } else { 0 };
             let num_outs = 1i32;
 
-            let _result = (proc_vtbl.set_bus_arrangements)(
-                processor as *mut c_void,
+            let _result = (proc_vtbl.setBusArrangements)(
+                processor,
                 inputs.as_mut_ptr(),
                 num_ins,
                 outputs.as_mut_ptr(),
@@ -278,9 +292,9 @@ impl Vst3Instance {
 
             // Activate the audio buses
             if in_ch > 0 {
-                (comp_vtbl.activate_bus)(component as *mut c_void, K_AUDIO, K_INPUT, 0, 1);
+                (comp_vtbl.activateBus)(component, K_AUDIO, K_INPUT, 0, 1);
             }
-            (comp_vtbl.activate_bus)(component as *mut c_void, K_AUDIO, K_OUTPUT, 0, 1);
+            (comp_vtbl.activateBus)(component, K_AUDIO, K_OUTPUT, 0, 1);
         });
 
         match result {
@@ -317,15 +331,15 @@ impl Vst3Instance {
 
         let proc = self.processor as usize;
         let result = sandbox_call("setup_processing", move || unsafe {
-            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let processor = proc as *mut IAudioProcessor;
             let proc_vtbl = &*(*processor).vtbl;
             let mut setup = ProcessSetup {
-                process_mode: K_REALTIME,
-                symbolic_sample_size: K_SAMPLE_32,
-                max_samples_per_block: max_block_size,
-                sample_rate,
+                processMode: K_REALTIME,
+                symbolicSampleSize: K_SAMPLE_32,
+                maxSamplesPerBlock: max_block_size,
+                sampleRate: sample_rate,
             };
-            (proc_vtbl.setup_processing)(processor as *mut c_void, &mut setup)
+            (proc_vtbl.setupProcessing)(processor, &mut setup)
         });
 
         match result {
@@ -370,9 +384,9 @@ impl Vst3Instance {
 
         let comp = self.component as usize;
         let result = sandbox_call("activate", move || unsafe {
-            let component = comp as *mut ComPtr<IComponentVtbl>;
+            let component = comp as *mut IComponent;
             let comp_vtbl = &*(*component).vtbl;
-            (comp_vtbl.set_active)(component as *mut c_void, 1)
+            (comp_vtbl.setActive)(component, 1)
         });
 
         match result {
@@ -413,9 +427,9 @@ impl Vst3Instance {
 
         let proc = self.processor as usize;
         let result = sandbox_call("start_processing", move || unsafe {
-            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let processor = proc as *mut IAudioProcessor;
             let proc_vtbl = &*(*processor).vtbl;
-            (proc_vtbl.set_processing)(processor as *mut c_void, 1)
+            (proc_vtbl.setProcessing)(processor, 1)
         });
 
         match result {
@@ -463,7 +477,7 @@ impl Vst3Instance {
         let proc = self.processor;
         let result = sandbox_call("audio_process", move || unsafe {
             let proc_vtbl = &*(*proc).vtbl;
-            (proc_vtbl.process)(proc as *mut c_void, data)
+            (proc_vtbl.process)(proc, data)
         });
 
         match result {
@@ -501,9 +515,9 @@ impl Vst3Instance {
         }
         let proc = self.processor as usize;
         let result = sandbox_call("get_latency_samples", move || unsafe {
-            let processor = proc as *mut ComPtr<IAudioProcessorVtbl>;
+            let processor = proc as *mut IAudioProcessor;
             let proc_vtbl = &*(*processor).vtbl;
-            (proc_vtbl.get_latency_samples)(processor as *mut c_void)
+            (proc_vtbl.getLatencySamples)(processor)
         });
         match result {
             SandboxResult::Ok(v) => v,
@@ -519,7 +533,7 @@ impl Vst3Instance {
     /// 3. Create a separate controller via the factory (split component/controller plugins)
     ///
     /// The returned pointer is cached and owned by the instance.
-    fn get_controller(&mut self) -> Option<*mut ComPtr<IEditControllerVtbl>> {
+    fn get_controller(&mut self) -> Option<*mut IEditController> {
         if !self.cached_controller.is_null() {
             return Some(self.cached_controller);
         }
@@ -529,24 +543,24 @@ impl Vst3Instance {
 
             // Try 1: QueryInterface for IEditController directly on the component
             let mut controller_ptr: *mut c_void = std::ptr::null_mut();
-            let qi_result = (comp_vtbl.query_interface)(
-                self.component as *mut c_void,
-                IEDIT_CONTROLLER_IID.as_ptr(),
+            let qi_result = (comp_vtbl.base.base.queryInterface)(
+                self.component as *mut FUnknown,
+                iid_as_tuid_ptr(&IEDIT_CONTROLLER_IID),
                 &mut controller_ptr,
             );
 
             if qi_result == K_RESULT_OK && !controller_ptr.is_null() {
                 debug!(plugin = %self.name, "IEditController obtained via QueryInterface");
-                self.cached_controller = controller_ptr as *mut ComPtr<IEditControllerVtbl>;
+                self.cached_controller = controller_ptr as *mut IEditController;
                 self.owns_separate_controller = false;
                 return Some(self.cached_controller);
             }
 
             // Try 2: Get controller class ID and create a separate controller
             let mut controller_cid = [0u8; 16];
-            let result = (comp_vtbl.get_controller_class_id)(
-                self.component as *mut c_void,
-                &mut controller_cid,
+            let result = (comp_vtbl.getControllerClassId)(
+                self.component,
+                &mut controller_cid as *mut _ as *mut TUID,
             );
 
             if result != K_RESULT_OK || controller_cid == [0u8; 16] {
@@ -563,10 +577,10 @@ impl Vst3Instance {
             // Create the controller using the factory's createInstance
             let factory_vtbl = &*self.factory_vtbl;
             let mut ec_ptr: *mut c_void = std::ptr::null_mut();
-            let create_result = (factory_vtbl.create_instance)(
-                self.factory,
-                controller_cid.as_ptr(),
-                IEDIT_CONTROLLER_IID.as_ptr(),
+            let create_result = (factory_vtbl.createInstance)(
+                self.factory as *mut IPluginFactory,
+                controller_cid.as_ptr() as FIDString,
+                IEDIT_CONTROLLER_IID.as_ptr() as FIDString,
                 &mut ec_ptr,
             );
 
@@ -579,12 +593,15 @@ impl Vst3Instance {
                 return None;
             }
 
-            let controller = ec_ptr as *mut ComPtr<IEditControllerVtbl>;
+            let controller = ec_ptr as *mut IEditController;
 
             // Initialize the controller with a host context
             let host_ctx = HostApplication::new();
             let ctrl_vtbl = &*(*controller).vtbl;
-            let init_result = (ctrl_vtbl.initialize)(ec_ptr, HostApplication::as_unknown(host_ctx));
+            let init_result = (ctrl_vtbl.base.initialize)(
+                ec_ptr as *mut IPluginBase,
+                HostApplication::as_unknown(host_ctx) as *mut FUnknown,
+            );
 
             if init_result != K_RESULT_OK {
                 warn!(
@@ -592,7 +609,7 @@ impl Vst3Instance {
                     result = init_result,
                     "Separate IEditController::initialize failed"
                 );
-                (ctrl_vtbl.release)(ec_ptr);
+                (ctrl_vtbl.base.base.release)(ec_ptr as *mut FUnknown);
                 HostApplication::destroy(host_ctx);
                 return None;
             }
@@ -622,16 +639,16 @@ impl Vst3Instance {
     ///
     /// This enables bidirectional communication between the component (processor)
     /// and the controller (parameter/UI side) in split-architecture plugins.
-    fn connect_component_controller(&self, controller: *mut ComPtr<IEditControllerVtbl>) {
+    fn connect_component_controller(&self, controller: *mut IEditController) {
         unsafe {
             let comp_vtbl = &*(*self.component).vtbl;
             let ctrl_vtbl = &*(*controller).vtbl;
 
             // Query IConnectionPoint on the component
             let mut comp_cp: *mut c_void = std::ptr::null_mut();
-            let qi1 = (comp_vtbl.query_interface)(
-                self.component as *mut c_void,
-                ICONNECTION_POINT_IID.as_ptr(),
+            let qi1 = (comp_vtbl.base.base.queryInterface)(
+                self.component as *mut FUnknown,
+                iid_as_tuid_ptr(&ICONNECTION_POINT_IID),
                 &mut comp_cp,
             );
 
@@ -642,25 +659,31 @@ impl Vst3Instance {
 
             // Query IConnectionPoint on the controller
             let mut ctrl_cp: *mut c_void = std::ptr::null_mut();
-            let qi2 = (ctrl_vtbl.query_interface)(
-                controller as *mut c_void,
-                ICONNECTION_POINT_IID.as_ptr(),
+            let qi2 = (ctrl_vtbl.base.base.queryInterface)(
+                controller as *mut FUnknown,
+                iid_as_tuid_ptr(&ICONNECTION_POINT_IID),
                 &mut ctrl_cp,
             );
 
             if qi2 != K_RESULT_OK || ctrl_cp.is_null() {
                 debug!(plugin = %self.name, "Controller does not support IConnectionPoint");
-                let cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                (cp_vtbl.release)(comp_cp);
+                let cp_vtbl = &*(*(comp_cp as *mut IConnectionPoint)).vtbl;
+                (cp_vtbl.base.release)(comp_cp as *mut FUnknown);
                 return;
             }
 
             // Connect both directions
-            let comp_cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-            let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+            let comp_cp_vtbl = &*(*(comp_cp as *mut IConnectionPoint)).vtbl;
+            let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut IConnectionPoint)).vtbl;
 
-            let r1 = (comp_cp_vtbl.connect)(comp_cp, ctrl_cp);
-            let r2 = (ctrl_cp_vtbl.connect)(ctrl_cp, comp_cp);
+            let r1 = (comp_cp_vtbl.connect)(
+                comp_cp as *mut IConnectionPoint,
+                ctrl_cp as *mut IConnectionPoint,
+            );
+            let r2 = (ctrl_cp_vtbl.connect)(
+                ctrl_cp as *mut IConnectionPoint,
+                comp_cp as *mut IConnectionPoint,
+            );
 
             if r1 == K_RESULT_OK && r2 == K_RESULT_OK {
                 debug!(plugin = %self.name, "Component ↔ Controller connected via IConnectionPoint");
@@ -674,8 +697,8 @@ impl Vst3Instance {
             }
 
             // Release QI'd IConnectionPoint references
-            (comp_cp_vtbl.release)(comp_cp);
-            (ctrl_cp_vtbl.release)(ctrl_cp);
+            (comp_cp_vtbl.base.release)(comp_cp as *mut FUnknown);
+            (ctrl_cp_vtbl.base.release)(ctrl_cp as *mut FUnknown);
         }
     }
 
@@ -684,10 +707,7 @@ impl Vst3Instance {
     /// Split-architecture plugins (e.g., JUCE-based) require this call so the
     /// controller can initialize its internal state before creating editor views.
     /// Without it, `createView("editor")` may return null.
-    fn sync_component_state_to_controller(
-        &self,
-        controller: *mut ComPtr<IEditControllerVtbl>,
-    ) {
+    fn sync_component_state_to_controller(&self, controller: *mut IEditController) {
         use crate::vst3::ibstream::HostBStream;
 
         unsafe {
@@ -695,8 +715,10 @@ impl Vst3Instance {
 
             // 1. Get the component's state via IComponent::getState(stream)
             let get_stream = HostBStream::new();
-            let get_result =
-                (comp_vtbl.get_state)(self.component as *mut c_void, HostBStream::as_ptr(get_stream));
+            let get_result = (comp_vtbl.getState)(
+                self.component,
+                HostBStream::as_ptr(get_stream) as *mut IBStream,
+            );
 
             if get_result != K_RESULT_OK {
                 debug!(
@@ -721,9 +743,9 @@ impl Vst3Instance {
 
             // 3. Pass to controller via IEditController::setComponentState(stream)
             let ctrl_vtbl = &*(*controller).vtbl;
-            let set_result = (ctrl_vtbl.set_component_state)(
-                controller as *mut c_void,
-                HostBStream::as_ptr(set_stream),
+            let set_result = (ctrl_vtbl.setComponentState)(
+                controller,
+                HostBStream::as_ptr(set_stream) as *mut IBStream,
             );
 
             HostBStream::destroy(set_stream);
@@ -762,40 +784,46 @@ impl Vst3Instance {
             let ctrl_vtbl = &*(*self.cached_controller).vtbl;
 
             let mut comp_cp: *mut c_void = std::ptr::null_mut();
-            let qi1 = (comp_vtbl.query_interface)(
-                self.component as *mut c_void,
-                ICONNECTION_POINT_IID.as_ptr(),
+            let qi1 = (comp_vtbl.base.base.queryInterface)(
+                self.component as *mut FUnknown,
+                iid_as_tuid_ptr(&ICONNECTION_POINT_IID),
                 &mut comp_cp,
             );
 
             let mut ctrl_cp: *mut c_void = std::ptr::null_mut();
-            let qi2 = (ctrl_vtbl.query_interface)(
-                self.cached_controller as *mut c_void,
-                ICONNECTION_POINT_IID.as_ptr(),
+            let qi2 = (ctrl_vtbl.base.base.queryInterface)(
+                self.cached_controller as *mut FUnknown,
+                iid_as_tuid_ptr(&ICONNECTION_POINT_IID),
                 &mut ctrl_cp,
             );
 
             if qi1 == K_RESULT_OK && !comp_cp.is_null() && qi2 == K_RESULT_OK && !ctrl_cp.is_null()
             {
-                let comp_cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                let comp_cp_vtbl = &*(*(comp_cp as *mut IConnectionPoint)).vtbl;
+                let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut IConnectionPoint)).vtbl;
 
-                (comp_cp_vtbl.disconnect)(comp_cp, ctrl_cp);
-                (ctrl_cp_vtbl.disconnect)(ctrl_cp, comp_cp);
+                (comp_cp_vtbl.disconnect)(
+                    comp_cp as *mut IConnectionPoint,
+                    ctrl_cp as *mut IConnectionPoint,
+                );
+                (ctrl_cp_vtbl.disconnect)(
+                    ctrl_cp as *mut IConnectionPoint,
+                    comp_cp as *mut IConnectionPoint,
+                );
 
-                (comp_cp_vtbl.release)(comp_cp);
-                (ctrl_cp_vtbl.release)(ctrl_cp);
+                (comp_cp_vtbl.base.release)(comp_cp as *mut FUnknown);
+                (ctrl_cp_vtbl.base.release)(ctrl_cp as *mut FUnknown);
 
                 debug!(plugin = %self.name, "Component ↔ Controller disconnected");
             } else {
                 // Release any QI'd refs that succeeded
                 if qi1 == K_RESULT_OK && !comp_cp.is_null() {
-                    let vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                    (vtbl.release)(comp_cp);
+                    let vtbl = &*(*(comp_cp as *mut IConnectionPoint)).vtbl;
+                    (vtbl.base.release)(comp_cp as *mut FUnknown);
                 }
                 if qi2 == K_RESULT_OK && !ctrl_cp.is_null() {
-                    let vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                    (vtbl.release)(ctrl_cp);
+                    let vtbl = &*(*(ctrl_cp as *mut IConnectionPoint)).vtbl;
+                    (vtbl.base.release)(ctrl_cp as *mut FUnknown);
                 }
             }
         }
@@ -833,9 +861,9 @@ impl Vst3Instance {
         // Safety: HostPlugFrame::as_ptr returns the raw COM pointer.
         let handler_ptr = HostComponentHandler::as_ptr(handler);
         let result = sandbox_call("set_component_handler", move || unsafe {
-            let controller = ctrl as *mut ComPtr<IEditControllerVtbl>;
+            let controller = ctrl as *mut IEditController;
             let ctrl_vtbl = &*(*controller).vtbl;
-            (ctrl_vtbl.set_component_handler)(controller as *mut c_void, handler_ptr)
+            (ctrl_vtbl.setComponentHandler)(controller, handler_ptr as *mut IComponentHandler)
         });
 
         match result {
@@ -890,7 +918,7 @@ impl Vst3Instance {
     /// for managing the view lifecycle (attached, removed, release).
     ///
     /// Returns `None` if the plugin has no editor, no controller, or crashes.
-    pub fn create_editor_view(&mut self) -> Option<*mut ComPtr<IPlugViewVtbl>> {
+    pub fn create_editor_view(&mut self) -> Option<*mut IPlugView> {
         if self.crashed {
             return None;
         }
@@ -899,12 +927,12 @@ impl Vst3Instance {
 
         let ctrl = controller as usize;
         let result = sandbox_call("create_editor_view", move || unsafe {
-            let controller = ctrl as *mut ComPtr<IEditControllerVtbl>;
+            let controller = ctrl as *mut IEditController;
             let ctrl_vtbl = &*(*controller).vtbl;
 
             // Call createView("editor")
             let view_name = b"editor\0";
-            (ctrl_vtbl.create_view)(controller as *mut c_void, view_name.as_ptr())
+            (ctrl_vtbl.createView)(controller, view_name.as_ptr() as FIDString)
         });
 
         match result {
@@ -913,7 +941,7 @@ impl Vst3Instance {
                     debug!(plugin = %self.name, "Plugin does not provide an editor view");
                     return None;
                 }
-                let view = view_ptr as *mut ComPtr<IPlugViewVtbl>;
+                let view = view_ptr as *mut IPlugView;
                 debug!(plugin = %self.name, "IPlugView created");
                 Some(view)
             }
@@ -949,9 +977,9 @@ impl Vst3Instance {
         if let Some(view) = self.create_editor_view() {
             let v = view as usize;
             let _ = sandbox_call("has_editor_release", move || unsafe {
-                let view = v as *mut ComPtr<IPlugViewVtbl>;
+                let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                (vtbl.release)(view as *mut c_void)
+                (vtbl.base.release)(view as *mut FUnknown)
             });
             true
         } else {
@@ -974,7 +1002,7 @@ impl Vst3Instance {
             let proc = self.processor;
             let result = sandbox_call("set_processing_off", move || unsafe {
                 let proc_vtbl = &*(*proc).vtbl;
-                (proc_vtbl.set_processing)(proc as *mut c_void, 0)
+                (proc_vtbl.setProcessing)(proc, 0)
             });
             match result {
                 SandboxResult::Ok(_) => {
@@ -993,7 +1021,7 @@ impl Vst3Instance {
             let comp = self.component;
             let result = sandbox_call("set_active_off", move || unsafe {
                 let comp_vtbl = &*(*comp).vtbl;
-                (comp_vtbl.set_active)(comp as *mut c_void, 0)
+                (comp_vtbl.setActive)(comp, 0)
             });
             match result {
                 SandboxResult::Ok(_) => {
@@ -1036,10 +1064,7 @@ impl Drop for Vst3Instance {
             if !cached_controller.is_null() && !self.component_handler.is_null() {
                 let result = sandbox_call("clear_component_handler", move || unsafe {
                     let ctrl_vtbl = &*(*cached_controller).vtbl;
-                    (ctrl_vtbl.set_component_handler)(
-                        cached_controller as *mut c_void,
-                        std::ptr::null_mut(),
-                    )
+                    (ctrl_vtbl.setComponentHandler)(cached_controller, std::ptr::null_mut())
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1057,16 +1082,16 @@ impl Drop for Vst3Instance {
                     let ctrl_vtbl = &*(*cached_controller).vtbl;
 
                     let mut comp_cp: *mut c_void = std::ptr::null_mut();
-                    let qi1 = (comp_vtbl.query_interface)(
-                        component as *mut c_void,
-                        ICONNECTION_POINT_IID.as_ptr(),
+                    let qi1 = (comp_vtbl.base.base.queryInterface)(
+                        component as *mut FUnknown,
+                        iid_as_tuid_ptr(&ICONNECTION_POINT_IID),
                         &mut comp_cp,
                     );
 
                     let mut ctrl_cp: *mut c_void = std::ptr::null_mut();
-                    let qi2 = (ctrl_vtbl.query_interface)(
-                        cached_controller as *mut c_void,
-                        ICONNECTION_POINT_IID.as_ptr(),
+                    let qi2 = (ctrl_vtbl.base.base.queryInterface)(
+                        cached_controller as *mut FUnknown,
+                        iid_as_tuid_ptr(&ICONNECTION_POINT_IID),
                         &mut ctrl_cp,
                     );
 
@@ -1075,22 +1100,28 @@ impl Drop for Vst3Instance {
                         && qi2 == K_RESULT_OK
                         && !ctrl_cp.is_null()
                     {
-                        let comp_cp_vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                        let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
+                        let comp_cp_vtbl = &*(*(comp_cp as *mut IConnectionPoint)).vtbl;
+                        let ctrl_cp_vtbl = &*(*(ctrl_cp as *mut IConnectionPoint)).vtbl;
 
-                        (comp_cp_vtbl.disconnect)(comp_cp, ctrl_cp);
-                        (ctrl_cp_vtbl.disconnect)(ctrl_cp, comp_cp);
+                        (comp_cp_vtbl.disconnect)(
+                            comp_cp as *mut IConnectionPoint,
+                            ctrl_cp as *mut IConnectionPoint,
+                        );
+                        (ctrl_cp_vtbl.disconnect)(
+                            ctrl_cp as *mut IConnectionPoint,
+                            comp_cp as *mut IConnectionPoint,
+                        );
 
-                        (comp_cp_vtbl.release)(comp_cp);
-                        (ctrl_cp_vtbl.release)(ctrl_cp);
+                        (comp_cp_vtbl.base.release)(comp_cp as *mut FUnknown);
+                        (ctrl_cp_vtbl.base.release)(ctrl_cp as *mut FUnknown);
                     } else {
                         if qi1 == K_RESULT_OK && !comp_cp.is_null() {
-                            let vtbl = &*(*(comp_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                            (vtbl.release)(comp_cp);
+                            let vtbl = &*(*(comp_cp as *mut IConnectionPoint)).vtbl;
+                            (vtbl.base.release)(comp_cp as *mut FUnknown);
                         }
                         if qi2 == K_RESULT_OK && !ctrl_cp.is_null() {
-                            let vtbl = &*(*(ctrl_cp as *mut ComPtr<IConnectionPointVtbl>)).vtbl;
-                            (vtbl.release)(ctrl_cp);
+                            let vtbl = &*(*(ctrl_cp as *mut IConnectionPoint)).vtbl;
+                            (vtbl.base.release)(ctrl_cp as *mut FUnknown);
                         }
                     }
                 });
@@ -1107,7 +1138,7 @@ impl Drop for Vst3Instance {
             if !cached_controller.is_null() && !any_crash && owns_separate_controller {
                 let result = sandbox_call("terminate_controller", move || unsafe {
                     let ctrl_vtbl = &*(*cached_controller).vtbl;
-                    (ctrl_vtbl.terminate)(cached_controller as *mut c_void)
+                    (ctrl_vtbl.base.terminate)(cached_controller as *mut IPluginBase)
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1120,7 +1151,7 @@ impl Drop for Vst3Instance {
             if !cached_controller.is_null() && !any_crash {
                 let result = sandbox_call("release_controller", move || unsafe {
                     let ctrl_vtbl = &*(*cached_controller).vtbl;
-                    (ctrl_vtbl.release)(cached_controller as *mut c_void)
+                    (ctrl_vtbl.base.base.release)(cached_controller as *mut FUnknown)
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1133,7 +1164,7 @@ impl Drop for Vst3Instance {
             if !any_crash {
                 let result = sandbox_call("terminate_component", move || unsafe {
                     let comp_vtbl = &*(*component).vtbl;
-                    (comp_vtbl.terminate)(component as *mut c_void);
+                    (comp_vtbl.base.terminate)(component as *mut IPluginBase);
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1148,7 +1179,7 @@ impl Drop for Vst3Instance {
             if !any_crash {
                 let result = sandbox_call("release_processor", move || unsafe {
                     let proc_vtbl = &*(*processor).vtbl;
-                    (proc_vtbl.release)(processor as *mut c_void)
+                    (proc_vtbl.base.release)(processor as *mut FUnknown)
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1160,7 +1191,7 @@ impl Drop for Vst3Instance {
             if !any_crash {
                 let result = sandbox_call("release_component", move || unsafe {
                     let comp_vtbl = &*(*component).vtbl;
-                    (comp_vtbl.release)(component as *mut c_void)
+                    (comp_vtbl.base.base.release)(component as *mut FUnknown)
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1173,7 +1204,7 @@ impl Drop for Vst3Instance {
             if !any_crash && !factory_vtbl.is_null() {
                 let result = sandbox_call("release_factory", move || unsafe {
                     let fvtbl = &*factory_vtbl;
-                    (fvtbl.base.release)(factory);
+                    (fvtbl.base.release)(factory as *mut FUnknown);
                 });
 
                 if result.is_crashed() || result.is_panicked() {
@@ -1298,11 +1329,11 @@ mod tests {
 
     #[test]
     fn test_iconnection_point_vtbl_has_correct_layout() {
-        // IConnectionPointVtbl should have 5 function pointers:
-        // queryInterface, addRef, release, connect, disconnect
+        // IConnectionPointVtbl should have 6 function pointers:
+        // queryInterface, addRef, release, connect, disconnect, notify
         let size = std::mem::size_of::<IConnectionPointVtbl>();
         #[cfg(target_pointer_width = "64")]
-        assert_eq!(size, 5 * 8, "IConnectionPointVtbl should be 5 pointers");
+        assert_eq!(size, 6 * 8, "IConnectionPointVtbl should be 6 pointers");
     }
 
     #[test]
@@ -1501,15 +1532,15 @@ mod tests {
             // Objects intentionally leaked — verify they are still valid
             // (no crash/ASAN violation from accessing them).
             let ctx_ptr = HostApplication::as_unknown(host_ctx);
-                assert!(
-                    !ctx_ptr.is_null(),
-                    "Leaked host_context should remain valid"
-                );
-                let handler_ptr = HostComponentHandler::as_ptr(handler);
-                assert!(
-                    !handler_ptr.is_null(),
-                    "Leaked component_handler should remain valid"
-                );
+            assert!(
+                !ctx_ptr.is_null(),
+                "Leaked host_context should remain valid"
+            );
+            let handler_ptr = HostComponentHandler::as_ptr(handler);
+            assert!(
+                !handler_ptr.is_null(),
+                "Leaked component_handler should remain valid"
+            );
             // In production, these are intentionally leaked.
             // For the test, we clean up to avoid ASAN reports.
             unsafe {

@@ -6,7 +6,7 @@
 //!
 //! On macOS, uses Objective-C runtime FFI to create NSWindow + NSView.
 
-use crate::vst3::com::{ComPtr, IPlugViewVtbl, K_PLATFORM_TYPE_NSVIEW, ViewRect};
+use crate::vst3::com::{FIDString, FUnknown, IPlugFrame, IPlugView, K_PLATFORM_TYPE_NSVIEW, ViewRect, view_rect_height, view_rect_width};
 use crate::vst3::plug_frame::HostPlugFrame;
 use crate::vst3::sandbox::{SandboxResult, sandbox_call};
 use std::ffi::c_void;
@@ -18,7 +18,7 @@ const K_RESULT_OK: i32 = 0;
 /// Represents an open plugin editor window.
 pub struct EditorWindow {
     /// The IPlugView COM pointer (owned — released on close).
-    view: *mut ComPtr<IPlugViewVtbl>,
+    view: *mut IPlugView,
     /// The host-side IPlugFrame (owned — destroyed on close).
     plug_frame: *mut HostPlugFrame,
     /// Platform-specific native window handle.
@@ -54,7 +54,7 @@ impl EditorWindow {
     /// Creates a native window, attaches the IPlugView, and shows the window.
     /// Returns `None` if the platform is not supported or attachment fails.
     #[cfg(target_os = "macos")]
-    pub fn open(view: *mut ComPtr<IPlugViewVtbl>, plugin_name: &str) -> Option<Self> {
+    pub fn open(view: *mut IPlugView, plugin_name: &str) -> Option<Self> {
         // Ensure NSApplication is initialized — required for NSWindow creation.
         // In the in-process GUI mode, eframe already sets this up, but the
         // audio worker child process has no GUI event loop by default.
@@ -68,11 +68,11 @@ impl EditorWindow {
         let platform_ok = {
             let v = view_raw;
             sandbox_call("plugview_is_platform_supported", move || unsafe {
-                let view = v as *mut ComPtr<IPlugViewVtbl>;
+                let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                (vtbl.is_platform_type_supported)(
-                    view as *mut c_void,
-                    K_PLATFORM_TYPE_NSVIEW.as_ptr(),
+                (vtbl.isPlatformTypeSupported)(
+                    view,
+                    K_PLATFORM_TYPE_NSVIEW.as_ptr() as FIDString,
                 )
             })
         };
@@ -94,16 +94,16 @@ impl EditorWindow {
         let size_result = {
             let v = view_raw;
             sandbox_call("plugview_get_size", move || unsafe {
-                let view = v as *mut ComPtr<IPlugViewVtbl>;
+                let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                let mut rect = ViewRect::default();
-                let result = (vtbl.get_size)(view as *mut c_void, &mut rect);
+                let mut rect = ViewRect { left: 0, top: 0, right: 0, bottom: 0 };
+                let result = (vtbl.getSize)(view, &mut rect);
                 (result, rect)
             })
         };
         let (width, height) = match size_result {
-            SandboxResult::Ok((K_RESULT_OK, rect)) if rect.width() > 0 && rect.height() > 0 => {
-                (rect.width() as f64, rect.height() as f64)
+            SandboxResult::Ok((K_RESULT_OK, rect)) if view_rect_width(&rect) > 0 && view_rect_height(&rect) > 0 => {
+                (view_rect_width(&rect) as f64, view_rect_height(&rect) as f64)
             }
             SandboxResult::Crashed(_) | SandboxResult::Panicked(_) => {
                 warn!(plugin = %plugin_name, "Plugin crashed during getSize");
@@ -121,11 +121,11 @@ impl EditorWindow {
         {
             let v = view_raw;
             // Safety: HostPlugFrame::as_ptr returns the raw frame COM pointer.
-            let frame_ptr = unsafe { HostPlugFrame::as_ptr(plug_frame) };
+            let frame_ptr = unsafe { HostPlugFrame::as_ptr(plug_frame) as *mut IPlugFrame };
             let set_frame_result = sandbox_call("plugview_set_frame", move || unsafe {
-                let view = v as *mut ComPtr<IPlugViewVtbl>;
+                let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                (vtbl.set_frame)(view as *mut c_void, frame_ptr)
+                (vtbl.setFrame)(view, frame_ptr)
             });
             match set_frame_result {
                 SandboxResult::Ok(r) if r != K_RESULT_OK => {
@@ -149,9 +149,9 @@ impl EditorWindow {
         let attach_result = {
             let v = view_raw;
             sandbox_call("plugview_attached", move || unsafe {
-                let view = v as *mut ComPtr<IPlugViewVtbl>;
+                let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                (vtbl.attached)(view as *mut c_void, nsview, K_PLATFORM_TYPE_NSVIEW.as_ptr())
+                (vtbl.attached)(view, nsview, K_PLATFORM_TYPE_NSVIEW.as_ptr() as FIDString)
             })
         };
 
@@ -182,7 +182,7 @@ impl EditorWindow {
             let w = width as i32;
             let h = height as i32;
             let _ = sandbox_call("plugview_on_size", move || unsafe {
-                let view = v as *mut ComPtr<IPlugViewVtbl>;
+                let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
                 let mut rect = ViewRect {
                     left: 0,
@@ -190,7 +190,7 @@ impl EditorWindow {
                     right: w,
                     bottom: h,
                 };
-                (vtbl.on_size)(view as *mut c_void, &mut rect)
+                (vtbl.onSize)(view, &mut rect)
             });
         }
 
@@ -211,7 +211,7 @@ impl EditorWindow {
 
     /// Stub for non-macOS platforms.
     #[cfg(not(target_os = "macos"))]
-    pub fn open(view: *mut ComPtr<IPlugViewVtbl>, plugin_name: &str) -> Option<Self> {
+    pub fn open(view: *mut IPlugView, plugin_name: &str) -> Option<Self> {
         warn!(plugin = %plugin_name, "Plugin editor windows not supported on this platform");
         Self::release_view_safe(view, plugin_name);
         None
@@ -221,12 +221,12 @@ impl EditorWindow {
     ///
     /// If the plugin crashes during release, the COM object is leaked
     /// intentionally — the host stays alive.
-    fn release_view_safe(view: *mut ComPtr<IPlugViewVtbl>, plugin_name: &str) {
+    fn release_view_safe(view: *mut IPlugView, plugin_name: &str) {
         let v = view as usize;
         let result = sandbox_call("plugview_release", move || unsafe {
-            let view = v as *mut ComPtr<IPlugViewVtbl>;
+            let view = v as *mut IPlugView;
             let vtbl = &*(*view).vtbl;
-            (vtbl.release)(view as *mut c_void)
+            (vtbl.base.release)(view as *mut FUnknown)
         });
         if let SandboxResult::Crashed(crash) = &result {
             warn!(
@@ -249,7 +249,7 @@ impl EditorWindow {
 
                 let v = self.view as usize;
                 let result = sandbox_call("plugview_on_size", move || {
-                    let view = v as *mut ComPtr<IPlugViewVtbl>;
+                    let view = v as *mut IPlugView;
                     let vtbl = &*(*view).vtbl;
                     let mut rect = ViewRect {
                         left: 0,
@@ -257,7 +257,7 @@ impl EditorWindow {
                         right: width,
                         bottom: height,
                     };
-                    (vtbl.on_size)(view as *mut c_void, &mut rect)
+                    (vtbl.onSize)(view, &mut rect)
                 });
 
                 if let SandboxResult::Crashed(crash) = &result {
@@ -320,17 +320,17 @@ impl EditorWindow {
         // the remaining COM calls but still clean up host-owned resources.
         let v = self.view as usize;
         let result = sandbox_call("plugview_close", move || unsafe {
-            let view = v as *mut ComPtr<IPlugViewVtbl>;
+            let view = v as *mut IPlugView;
             let vtbl = &*(*view).vtbl;
 
             // Detach the plugin view
-            (vtbl.removed)(view as *mut c_void);
+            (vtbl.removed)(view);
 
             // Clear the frame reference
-            (vtbl.set_frame)(view as *mut c_void, std::ptr::null_mut());
+            (vtbl.setFrame)(view, std::ptr::null_mut());
 
             // Release the view
-            (vtbl.release)(view as *mut c_void);
+            (vtbl.base.release)(view as *mut FUnknown);
         });
 
         self.attached = false;

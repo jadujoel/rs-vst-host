@@ -23,12 +23,14 @@ pub struct HostEventList {
 
 // Static vtable for IEventList.
 static HOST_EVENT_LIST_VTBL: IEventListVtbl = IEventListVtbl {
-    query_interface: host_event_list_query_interface,
-    add_ref: host_event_list_add_ref,
-    release: host_event_list_release,
-    get_event_count: host_event_list_get_event_count,
-    get_event: host_event_list_get_event,
-    add_event: host_event_list_add_event,
+    base: FUnknownVtbl {
+        queryInterface: host_event_list_query_interface,
+        addRef: host_event_list_add_ref,
+        release: host_event_list_release,
+    },
+    getEventCount: host_event_list_get_event_count,
+    getEvent: host_event_list_get_event,
+    addEvent: host_event_list_add_event,
 };
 
 impl HostEventList {
@@ -90,10 +92,10 @@ impl HostEventList {
 // --- COM vtable implementations ---
 
 unsafe extern "system" fn host_event_list_query_interface(
-    this: *mut c_void,
-    iid: *const u8,
+    this: *mut FUnknown,
+    iid: *const TUID,
     obj: *mut *mut c_void,
-) -> i32 {
+) -> tresult {
     if obj.is_null() || iid.is_null() {
         return K_INVALID_ARGUMENT;
     }
@@ -102,7 +104,7 @@ unsafe extern "system" fn host_event_list_query_interface(
     let iid_bytes: [u8; 16] = unsafe { *(iid as *const [u8; 16]) };
 
     if iid_bytes == IEVENT_LIST_IID || iid_bytes == FUNKNOWN_IID {
-        unsafe { *obj = this };
+        unsafe { *obj = this as *mut c_void };
         K_RESULT_OK
     } else {
         unsafe { *obj = std::ptr::null_mut() };
@@ -110,26 +112,26 @@ unsafe extern "system" fn host_event_list_query_interface(
     }
 }
 
-unsafe extern "system" fn host_event_list_add_ref(_this: *mut c_void) -> u32 {
+unsafe extern "system" fn host_event_list_add_ref(_this: *mut FUnknown) -> uint32 {
     // Static lifetime managed by host, no real ref counting needed
     1
 }
 
-unsafe extern "system" fn host_event_list_release(_this: *mut c_void) -> u32 {
+unsafe extern "system" fn host_event_list_release(_this: *mut FUnknown) -> uint32 {
     // Destroyed explicitly by host
     1
 }
 
-unsafe extern "system" fn host_event_list_get_event_count(this: *mut c_void) -> i32 {
+unsafe extern "system" fn host_event_list_get_event_count(this: *mut IEventList) -> int32 {
     let list = this as *const HostEventList;
     unsafe { (*list).events.len() as i32 }
 }
 
 unsafe extern "system" fn host_event_list_get_event(
-    this: *mut c_void,
-    index: i32,
+    this: *mut IEventList,
+    index: int32,
     event: *mut Event,
-) -> i32 {
+) -> tresult {
     if event.is_null() {
         return K_INVALID_ARGUMENT;
     }
@@ -145,7 +147,10 @@ unsafe extern "system" fn host_event_list_get_event(
     K_RESULT_OK
 }
 
-unsafe extern "system" fn host_event_list_add_event(this: *mut c_void, event: *const Event) -> i32 {
+unsafe extern "system" fn host_event_list_add_event(
+    this: *mut IEventList,
+    event: *mut Event,
+) -> tresult {
     if event.is_null() {
         return K_INVALID_ARGUMENT;
     }
@@ -179,11 +184,11 @@ mod tests {
         unsafe {
             assert_eq!(HostEventList::event_count(list), 0);
 
-            let note_on = Event::note_on(0, 0, 60, 0.8, -1);
+            let note_on = make_note_on_event(0, 0, 60, 0.8, -1);
             HostEventList::add(list, note_on);
             assert_eq!(HostEventList::event_count(list), 1);
 
-            let note_off = Event::note_off(128, 0, 60, 0.0, -1);
+            let note_off = make_note_off_event(128, 0, 60, 0.0, -1);
             HostEventList::add(list, note_off);
             assert_eq!(HostEventList::event_count(list), 2);
 
@@ -196,8 +201,8 @@ mod tests {
         let list = HostEventList::new();
 
         unsafe {
-            HostEventList::add(list, Event::note_on(0, 0, 60, 0.8, -1));
-            HostEventList::add(list, Event::note_on(0, 0, 64, 0.8, -1));
+            HostEventList::add(list, make_note_on_event(0, 0, 60, 0.8, -1));
+            HostEventList::add(list, make_note_on_event(0, 0, 64, 0.8, -1));
             assert_eq!(HostEventList::event_count(list), 2);
 
             HostEventList::clear(list);
@@ -212,24 +217,24 @@ mod tests {
         let list = HostEventList::new();
 
         unsafe {
-            let note = Event::note_on(42, 0, 72, 0.9, 5);
+            let note = make_note_on_event(42, 0, 72, 0.9, 5);
             HostEventList::add(list, note);
 
             // Call through the vtable (as a plugin would)
             let vtbl = &*(*list).vtbl;
-            let count = (vtbl.get_event_count)(list as *mut c_void);
+            let count = (vtbl.getEventCount)(list as *mut IEventList);
             assert_eq!(count, 1);
 
             let mut retrieved = std::mem::zeroed::<Event>();
-            let result = (vtbl.get_event)(list as *mut c_void, 0, &mut retrieved);
+            let result = (vtbl.getEvent)(list as *mut IEventList, 0, &mut retrieved);
             assert_eq!(result, K_RESULT_OK);
-            assert_eq!(retrieved.event_type, K_NOTE_ON_EVENT);
-            assert_eq!(retrieved.sample_offset, 42);
+            assert_eq!(retrieved.r#type, K_NOTE_ON_EVENT);
+            assert_eq!(retrieved.sampleOffset, 42);
 
-            let note_data: &NoteOnEvent = &*(retrieved.data.as_ptr() as *const NoteOnEvent);
+            let note_data = event_as_note_on(&retrieved);
             assert_eq!(note_data.pitch, 72);
             assert!((note_data.velocity - 0.9).abs() < 0.001);
-            assert_eq!(note_data.note_id, 5);
+            assert_eq!(note_data.noteId, 5);
 
             HostEventList::destroy(list);
         }
@@ -243,10 +248,10 @@ mod tests {
             let vtbl = &*(*list).vtbl;
             let mut evt = std::mem::zeroed::<Event>();
 
-            let result = (vtbl.get_event)(list as *mut c_void, 0, &mut evt);
+            let result = (vtbl.getEvent)(list as *mut IEventList, 0, &mut evt);
             assert_ne!(result, K_RESULT_OK);
 
-            let result = (vtbl.get_event)(list as *mut c_void, -1, &mut evt);
+            let result = (vtbl.getEvent)(list as *mut IEventList, -1, &mut evt);
             assert_ne!(result, K_RESULT_OK);
 
             HostEventList::destroy(list);
@@ -262,26 +267,26 @@ mod tests {
             let mut obj: *mut c_void = std::ptr::null_mut();
 
             // Should succeed for IEventList IID
-            let result = (vtbl.query_interface)(
-                list as *mut c_void,
-                IEVENT_LIST_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                &IEVENT_LIST_IID as *const [u8; 16] as *const TUID,
                 &mut obj,
             );
             assert_eq!(result, K_RESULT_OK);
             assert!(!obj.is_null());
 
             // Should succeed for FUnknown IID
-            let result = (vtbl.query_interface)(
-                list as *mut c_void,
-                FUNKNOWN_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                &FUNKNOWN_IID as *const [u8; 16] as *const TUID,
                 &mut obj,
             );
             assert_eq!(result, K_RESULT_OK);
 
             // Should fail for unrelated IID
-            let result = (vtbl.query_interface)(
-                list as *mut c_void,
-                ICOMPONENT_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                &ICOMPONENT_IID as *const [u8; 16] as *const TUID,
                 &mut obj,
             );
             assert_ne!(result, K_RESULT_OK);
@@ -297,12 +302,12 @@ mod tests {
         unsafe {
             // Fill to the max
             for i in 0..MAX_EVENTS_PER_BLOCK {
-                HostEventList::add(list, Event::note_on(i as i32, 0, 60, 0.8, -1));
+                HostEventList::add(list, make_note_on_event(i as i32, 0, 60, 0.8, -1));
             }
             assert_eq!(HostEventList::event_count(list), MAX_EVENTS_PER_BLOCK);
 
             // One more should be silently dropped
-            HostEventList::add(list, Event::note_on(999, 0, 60, 0.8, -1));
+            HostEventList::add(list, make_note_on_event(999, 0, 60, 0.8, -1));
             assert_eq!(
                 HostEventList::event_count(list),
                 MAX_EVENTS_PER_BLOCK,
@@ -319,11 +324,11 @@ mod tests {
 
         unsafe {
             let vtbl = &*(*list).vtbl;
-            let note = Event::note_on(10, 0, 64, 0.7, -1);
-            let result = (vtbl.add_event)(list as *mut c_void, &note);
+            let mut note = make_note_on_event(10, 0, 64, 0.7, -1);
+            let result = (vtbl.addEvent)(list as *mut IEventList, &mut note);
             assert_eq!(result, K_RESULT_OK);
 
-            let count = (vtbl.get_event_count)(list as *mut c_void);
+            let count = (vtbl.getEventCount)(list as *mut IEventList);
             assert_eq!(count, 1);
 
             HostEventList::destroy(list);
@@ -339,14 +344,14 @@ mod tests {
 
             // Fill to the max via vtable
             for i in 0..MAX_EVENTS_PER_BLOCK {
-                let note = Event::note_on(i as i32, 0, 60, 0.8, -1);
-                let result = (vtbl.add_event)(list as *mut c_void, &note);
+                let mut note = make_note_on_event(i as i32, 0, 60, 0.8, -1);
+                let result = (vtbl.addEvent)(list as *mut IEventList, &mut note);
                 assert_eq!(result, K_RESULT_OK);
             }
 
             // One more should return K_RESULT_FALSE
-            let note = Event::note_on(999, 0, 60, 0.8, -1);
-            let result = (vtbl.add_event)(list as *mut c_void, &note);
+            let mut note = make_note_on_event(999, 0, 60, 0.8, -1);
+            let result = (vtbl.addEvent)(list as *mut IEventList, &mut note);
             assert_ne!(result, K_RESULT_OK);
 
             HostEventList::destroy(list);
@@ -359,7 +364,7 @@ mod tests {
 
         unsafe {
             let vtbl = &*(*list).vtbl;
-            let result = (vtbl.add_event)(list as *mut c_void, std::ptr::null());
+            let result = (vtbl.addEvent)(list as *mut IEventList, std::ptr::null_mut());
             assert_eq!(result, K_INVALID_ARGUMENT);
 
             HostEventList::destroy(list);
@@ -372,9 +377,9 @@ mod tests {
 
         unsafe {
             let vtbl = &*(*list).vtbl;
-            HostEventList::add(list, Event::note_on(0, 0, 60, 0.8, -1));
+            HostEventList::add(list, make_note_on_event(0, 0, 60, 0.8, -1));
 
-            let result = (vtbl.get_event)(list as *mut c_void, 0, std::ptr::null_mut());
+            let result = (vtbl.getEvent)(list as *mut IEventList, 0, std::ptr::null_mut());
             assert_eq!(result, K_INVALID_ARGUMENT);
 
             HostEventList::destroy(list);
@@ -389,20 +394,17 @@ mod tests {
             let vtbl = &*(*list).vtbl;
 
             // Null obj pointer
-            let result = (vtbl.query_interface)(
-                list as *mut c_void,
-                IEVENT_LIST_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                &IEVENT_LIST_IID as *const [u8; 16] as *const TUID,
                 std::ptr::null_mut(),
             );
             assert_eq!(result, K_INVALID_ARGUMENT);
 
             // Null iid pointer
             let mut obj: *mut c_void = std::ptr::null_mut();
-            let result = (vtbl.query_interface)(
-                list as *mut c_void,
-                std::ptr::null(),
-                &mut obj,
-            );
+            let result =
+                (vtbl.base.queryInterface)(list as *mut FUnknown, std::ptr::null(), &mut obj);
             assert_eq!(result, K_INVALID_ARGUMENT);
 
             HostEventList::destroy(list);
@@ -416,10 +418,10 @@ mod tests {
         unsafe {
             let vtbl = &*(*list).vtbl;
             // Static lifetime — add_ref/release should return 1
-            let count = (vtbl.add_ref)(list as *mut c_void);
+            let count = (vtbl.base.addRef)(list as *mut FUnknown);
             assert_eq!(count, 1);
 
-            let count = (vtbl.release)(list as *mut c_void);
+            let count = (vtbl.base.release)(list as *mut FUnknown);
             assert_eq!(count, 1);
 
             HostEventList::destroy(list);

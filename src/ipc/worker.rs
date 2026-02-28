@@ -12,7 +12,7 @@
 
 use crate::ipc::messages::*;
 use crate::ipc::shm::ShmAudioBuffer;
-use crate::vst3::com::Event;
+use crate::vst3::com::{IEventList, IParameterChanges, ProcessContext as VstProcessContext, make_note_off_event, make_note_on_event};
 use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::event_list::HostEventList;
 use crate::vst3::instance::Vst3Instance;
@@ -398,15 +398,15 @@ impl WorkerState {
             for evt in events {
                 let vst3_event = match &evt.event_type {
                     MidiEventType::NoteOn { pitch, velocity } => {
-                        Event::note_on(evt.sample_offset, evt.channel, *pitch, *velocity, -1)
+                        make_note_on_event(evt.sample_offset, evt.channel, *pitch, *velocity, -1)
                     }
                     MidiEventType::NoteOff { pitch, velocity } => {
-                        Event::note_off(evt.sample_offset, evt.channel, *pitch, *velocity, -1)
+                        make_note_off_event(evt.sample_offset, evt.channel, *pitch, *velocity, -1)
                     }
                 };
                 HostEventList::add(self.event_list, vst3_event);
             }
-            buffers.set_input_events(HostEventList::as_ptr(self.event_list));
+            buffers.set_input_events(HostEventList::as_ptr(self.event_list) as *mut IEventList);
         }
 
         // Set up parameter changes
@@ -420,7 +420,7 @@ impl WorkerState {
                     pc.value,
                 );
             }
-            buffers.set_input_parameter_changes(HostParameterChanges::as_ptr(self.param_changes));
+            buffers.set_input_parameter_changes(HostParameterChanges::as_ptr(self.param_changes) as *mut IParameterChanges);
         }
 
         // Set process context
@@ -431,7 +431,7 @@ impl WorkerState {
                 transport.time_sig_numerator,
                 transport.time_sig_denominator,
             );
-            buffers.set_process_context(ctx.as_ptr());
+            buffers.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
         }
 
         // Call VST3 process

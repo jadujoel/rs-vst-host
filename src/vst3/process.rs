@@ -8,7 +8,10 @@
 //!
 //! All memory is allocated once and reused across process calls for real-time safety.
 
-use crate::vst3::com::{AudioBusBuffers, K_REALTIME, K_SAMPLE_32, ProcessData};
+use crate::vst3::com::{
+    AudioBusBuffers, IEventList, IParameterChanges, K_REALTIME, K_SAMPLE_32, ProcessContext,
+    ProcessData,
+};
 
 /// Pre-allocated buffers for VST3 process calls.
 ///
@@ -61,29 +64,29 @@ impl ProcessBuffers {
             output_buffers,
             input_ptrs,
             output_ptrs,
-            input_bus: AudioBusBuffers {
-                num_channels: num_input_channels as i32,
-                silence_flags: 0,
-                channel_buffers_32: std::ptr::null_mut(),
+            input_bus: {
+                let mut bus: AudioBusBuffers = unsafe { std::mem::zeroed() };
+                bus.numChannels = num_input_channels as i32;
+                bus
             },
-            output_bus: AudioBusBuffers {
-                num_channels: num_output_channels as i32,
-                silence_flags: 0,
-                channel_buffers_32: std::ptr::null_mut(),
+            output_bus: {
+                let mut bus: AudioBusBuffers = unsafe { std::mem::zeroed() };
+                bus.numChannels = num_output_channels as i32;
+                bus
             },
             process_data: ProcessData {
-                process_mode: K_REALTIME,
-                symbolic_sample_size: K_SAMPLE_32,
-                num_samples: 0,
-                num_inputs: if num_input_channels > 0 { 1 } else { 0 },
-                num_outputs: if num_output_channels > 0 { 1 } else { 0 },
+                processMode: K_REALTIME,
+                symbolicSampleSize: K_SAMPLE_32,
+                numSamples: 0,
+                numInputs: if num_input_channels > 0 { 1 } else { 0 },
+                numOutputs: if num_output_channels > 0 { 1 } else { 0 },
                 inputs: std::ptr::null_mut(),
                 outputs: std::ptr::null_mut(),
-                input_parameter_changes: std::ptr::null_mut(),
-                output_parameter_changes: std::ptr::null_mut(),
-                input_events: std::ptr::null_mut(),
-                output_events: std::ptr::null_mut(),
-                process_context: std::ptr::null_mut(),
+                inputParameterChanges: std::ptr::null_mut(),
+                outputParameterChanges: std::ptr::null_mut(),
+                inputEvents: std::ptr::null_mut(),
+                outputEvents: std::ptr::null_mut(),
+                processContext: std::ptr::null_mut(),
             },
             num_input_channels,
             num_output_channels,
@@ -113,10 +116,10 @@ impl ProcessBuffers {
 
         // Point AudioBusBuffers to the pointer arrays
         if !self.input_ptrs.is_empty() {
-            self.input_bus.channel_buffers_32 = self.input_ptrs.as_mut_ptr();
+            self.input_bus.__field0.channelBuffers32 = self.input_ptrs.as_mut_ptr();
         }
         if !self.output_ptrs.is_empty() {
-            self.output_bus.channel_buffers_32 = self.output_ptrs.as_mut_ptr();
+            self.output_bus.__field0.channelBuffers32 = self.output_ptrs.as_mut_ptr();
         }
 
         // Point ProcessData to the bus structs
@@ -134,7 +137,7 @@ impl ProcessBuffers {
     /// after this call (via `input_buffer_mut`).
     pub fn prepare(&mut self, num_samples: usize) {
         let samples = num_samples.min(self.max_block_size);
-        self.process_data.num_samples = samples as i32;
+        self.process_data.numSamples = samples as i32;
 
         // Clear output buffers
         for buf in &mut self.output_buffers {
@@ -142,8 +145,8 @@ impl ProcessBuffers {
         }
 
         // Reset silence flags
-        self.input_bus.silence_flags = 0;
-        self.output_bus.silence_flags = 0;
+        self.input_bus.silenceFlags = 0;
+        self.output_bus.silenceFlags = 0;
 
         // Refresh self-referential pointers (process_data.inputs/outputs point
         // into this struct's own fields, so they become dangling after a move).
@@ -167,7 +170,7 @@ impl ProcessBuffers {
             return;
         }
 
-        let num_samples = self.process_data.num_samples as usize;
+        let num_samples = self.process_data.numSamples as usize;
         let channels_to_write = num_channels.min(self.num_input_channels);
 
         // Fast path: stereo — avoids inner loop and uses sequential reads
@@ -205,7 +208,7 @@ impl ProcessBuffers {
             return;
         }
 
-        let num_samples = self.process_data.num_samples as usize;
+        let num_samples = self.process_data.numSamples as usize;
         let channels_to_read = num_channels.min(self.num_output_channels);
 
         // Fast path: stereo output to stereo interleaved — avoids inner loop
@@ -239,7 +242,7 @@ impl ProcessBuffers {
 
     /// Get a mutable reference to an input channel buffer.
     pub fn input_buffer_mut(&mut self, channel: usize) -> Option<&mut [f32]> {
-        let samples = self.process_data.num_samples as usize;
+        let samples = self.process_data.numSamples as usize;
         self.input_buffers
             .get_mut(channel)
             .map(|buf| &mut buf[..samples])
@@ -248,7 +251,7 @@ impl ProcessBuffers {
     /// Get a reference to an output channel buffer.
     #[allow(dead_code)]
     pub fn output_buffer(&self, channel: usize) -> Option<&[f32]> {
-        let samples = self.process_data.num_samples as usize;
+        let samples = self.process_data.numSamples as usize;
         self.output_buffers.get(channel).map(|buf| &buf[..samples])
     }
 
@@ -276,23 +279,23 @@ impl ProcessBuffers {
     /// Set the input events pointer on the ProcessData.
     ///
     /// This should point to a valid IEventList COM object, or null.
-    pub fn set_input_events(&mut self, events: *mut std::ffi::c_void) {
-        self.process_data.input_events = events;
+    pub fn set_input_events(&mut self, events: *mut IEventList) {
+        self.process_data.inputEvents = events;
     }
 
     /// Set the input parameter changes pointer on the ProcessData.
     ///
     /// This should point to a valid IParameterChanges COM object, or null.
     #[allow(dead_code)]
-    pub fn set_input_parameter_changes(&mut self, changes: *mut std::ffi::c_void) {
-        self.process_data.input_parameter_changes = changes;
+    pub fn set_input_parameter_changes(&mut self, changes: *mut IParameterChanges) {
+        self.process_data.inputParameterChanges = changes;
     }
 
     /// Set the process context pointer on the ProcessData.
     ///
     /// This should point to a valid ProcessContext struct, or null.
-    pub fn set_process_context(&mut self, context: *mut std::ffi::c_void) {
-        self.process_data.process_context = context;
+    pub fn set_process_context(&mut self, context: *mut ProcessContext) {
+        self.process_data.processContext = context;
     }
 }
 
@@ -323,14 +326,14 @@ mod tests {
     fn test_prepare_sets_num_samples() {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
         bufs.prepare(128);
-        assert_eq!(bufs.process_data.num_samples, 128);
+        assert_eq!(bufs.process_data.numSamples, 128);
     }
 
     #[test]
     fn test_prepare_clamps_to_max() {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
         bufs.prepare(1024);
-        assert_eq!(bufs.process_data.num_samples, 512);
+        assert_eq!(bufs.process_data.numSamples, 512);
     }
 
     #[test]
@@ -401,11 +404,11 @@ mod tests {
         assert!(!ptr.is_null());
 
         unsafe {
-            assert_eq!((*ptr).num_samples, 256);
-            assert_eq!((*ptr).num_inputs, 1);
-            assert_eq!((*ptr).num_outputs, 1);
-            assert_eq!((*ptr).symbolic_sample_size, K_SAMPLE_32);
-            assert_eq!((*ptr).process_mode, K_REALTIME);
+            assert_eq!((*ptr).numSamples, 256);
+            assert_eq!((*ptr).numInputs, 1);
+            assert_eq!((*ptr).numOutputs, 1);
+            assert_eq!((*ptr).symbolicSampleSize, K_SAMPLE_32);
+            assert_eq!((*ptr).processMode, K_REALTIME);
         }
     }
 
@@ -429,34 +432,34 @@ mod tests {
     #[test]
     fn test_set_input_events() {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
-        assert!(bufs.process_data.input_events.is_null());
+        assert!(bufs.process_data.inputEvents.is_null());
 
-        let fake_ptr = 0x1234 as *mut std::ffi::c_void;
+        let fake_ptr = 0x1234 as *mut IEventList;
         bufs.set_input_events(fake_ptr);
-        assert_eq!(bufs.process_data.input_events, fake_ptr);
+        assert_eq!(bufs.process_data.inputEvents, fake_ptr);
 
         bufs.set_input_events(std::ptr::null_mut());
-        assert!(bufs.process_data.input_events.is_null());
+        assert!(bufs.process_data.inputEvents.is_null());
     }
 
     #[test]
     fn test_set_input_parameter_changes() {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
-        assert!(bufs.process_data.input_parameter_changes.is_null());
+        assert!(bufs.process_data.inputParameterChanges.is_null());
 
-        let fake_ptr = 0x5678 as *mut std::ffi::c_void;
+        let fake_ptr = 0x5678 as *mut IParameterChanges;
         bufs.set_input_parameter_changes(fake_ptr);
-        assert_eq!(bufs.process_data.input_parameter_changes, fake_ptr);
+        assert_eq!(bufs.process_data.inputParameterChanges, fake_ptr);
     }
 
     #[test]
     fn test_set_process_context() {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
-        assert!(bufs.process_data.process_context.is_null());
+        assert!(bufs.process_data.processContext.is_null());
 
-        let fake_ptr = 0xABCD as *mut std::ffi::c_void;
+        let fake_ptr = 0xABCD as *mut ProcessContext;
         bufs.set_process_context(fake_ptr);
-        assert_eq!(bufs.process_data.process_context, fake_ptr);
+        assert_eq!(bufs.process_data.processContext, fake_ptr);
     }
 
     #[test]
@@ -464,8 +467,8 @@ mod tests {
         let bufs = ProcessBuffers::new(0, 0, 512);
         assert_eq!(bufs.num_input_channels(), 0);
         assert_eq!(bufs.num_output_channels(), 0);
-        assert_eq!(bufs.process_data.num_inputs, 0);
-        assert_eq!(bufs.process_data.num_outputs, 0);
+        assert_eq!(bufs.process_data.numInputs, 0);
+        assert_eq!(bufs.process_data.numOutputs, 0);
     }
 
     #[test]
@@ -521,12 +524,12 @@ mod tests {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
 
         bufs.prepare(128);
-        assert_eq!(bufs.process_data.num_samples, 128);
+        assert_eq!(bufs.process_data.numSamples, 128);
 
         bufs.prepare(64);
-        assert_eq!(bufs.process_data.num_samples, 64);
+        assert_eq!(bufs.process_data.numSamples, 64);
 
         bufs.prepare(256);
-        assert_eq!(bufs.process_data.num_samples, 256);
+        assert_eq!(bufs.process_data.numSamples, 256);
     }
 }

@@ -11,19 +11,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
-/// IComponentHandler IID: {93A0BEA3-0BD0-45DB-8E89-0B0CC1E46AC6}
-#[cfg(not(target_os = "windows"))]
-pub const ICOMPONENT_HANDLER_IID: [u8; 16] = [
-    0x93, 0xA0, 0xBE, 0xA3, 0x0B, 0xD0, 0x45, 0xDB, 0x8E, 0x89, 0x0B, 0x0C, 0xC1, 0xE4, 0x6A,
-    0xC6,
-];
-
-#[cfg(target_os = "windows")]
-pub const ICOMPONENT_HANDLER_IID: [u8; 16] = [
-    0xA3, 0xBE, 0xA0, 0x93, 0xDB, 0x45, 0xD0, 0x0B, 0x8E, 0x89, 0x0B, 0x0C, 0xC1, 0xE4, 0x6A,
-    0xC6,
-];
-
 /// A parameter change notification from the plugin.
 #[derive(Debug, Clone)]
 pub struct ParamChange {
@@ -47,37 +34,17 @@ impl RestartFlags {
     pub const LATENCY_CHANGED: i32 = 1 << 3;
 }
 
-/// IComponentHandler vtable.
-///
-/// vtable layout:
-///   [0-2]  FUnknown: queryInterface, addRef, release
-///   [3]    beginEdit(id: ParamID) -> tresult
-///   [4]    performEdit(id: ParamID, valueNormalized: f64) -> tresult
-///   [5]    endEdit(id: ParamID) -> tresult
-///   [6]    restartComponent(flags: i32) -> tresult
-#[repr(C)]
-struct IComponentHandlerVtbl {
-    // FUnknown
-    query_interface:
-        unsafe extern "system" fn(this: *mut c_void, iid: *const u8, obj: *mut *mut c_void) -> i32,
-    add_ref: unsafe extern "system" fn(this: *mut c_void) -> u32,
-    release: unsafe extern "system" fn(this: *mut c_void) -> u32,
-    // IComponentHandler
-    begin_edit: unsafe extern "system" fn(this: *mut c_void, id: u32) -> i32,
-    perform_edit: unsafe extern "system" fn(this: *mut c_void, id: u32, value: f64) -> i32,
-    end_edit: unsafe extern "system" fn(this: *mut c_void, id: u32) -> i32,
-    restart_component: unsafe extern "system" fn(this: *mut c_void, flags: i32) -> i32,
-}
-
-/// Static vtable for IComponentHandler.
+/// Static vtable for IComponentHandler, using vst3-rs types.
 static COMPONENT_HANDLER_VTBL: IComponentHandlerVtbl = IComponentHandlerVtbl {
-    query_interface: handler_query_interface,
-    add_ref: handler_add_ref,
-    release: handler_release,
-    begin_edit: handler_begin_edit,
-    perform_edit: handler_perform_edit,
-    end_edit: handler_end_edit,
-    restart_component: handler_restart_component,
+    base: FUnknownVtbl {
+        queryInterface: handler_query_interface,
+        addRef: handler_add_ref,
+        release: handler_release,
+    },
+    beginEdit: handler_begin_edit,
+    performEdit: handler_perform_edit,
+    endEdit: handler_end_edit,
+    restartComponent: handler_restart_component,
 };
 
 /// Host-side IComponentHandler COM object.
@@ -153,10 +120,10 @@ impl HostComponentHandler {
 // ─── COM method implementations ───────────────────────────────────────────
 
 unsafe extern "system" fn handler_query_interface(
-    this: *mut c_void,
-    iid: *const u8,
+    this: *mut FUnknown,
+    iid: *const TUID,
     obj: *mut *mut c_void,
-) -> i32 {
+) -> tresult {
     if iid.is_null() || obj.is_null() {
         return K_NOT_IMPLEMENTED;
     }
@@ -166,7 +133,7 @@ unsafe extern "system" fn handler_query_interface(
     if iid_bytes == ICOMPONENT_HANDLER_IID || iid_bytes == FUNKNOWN_IID {
         unsafe {
             handler_add_ref(this);
-            *obj = this;
+            *obj = this as *mut c_void;
         }
         return K_RESULT_OK;
     }
@@ -175,12 +142,12 @@ unsafe extern "system" fn handler_query_interface(
     K_NOT_IMPLEMENTED
 }
 
-unsafe extern "system" fn handler_add_ref(this: *mut c_void) -> u32 {
+unsafe extern "system" fn handler_add_ref(this: *mut FUnknown) -> uint32 {
     let handler = this as *mut HostComponentHandler;
     unsafe { (*handler).ref_count.fetch_add(1, Ordering::Relaxed) + 1 }
 }
 
-unsafe extern "system" fn handler_release(this: *mut c_void) -> u32 {
+unsafe extern "system" fn handler_release(this: *mut FUnknown) -> uint32 {
     let handler = this as *mut HostComponentHandler;
     unsafe {
         let prev = (*handler).ref_count.fetch_sub(1, Ordering::Relaxed);
@@ -188,12 +155,19 @@ unsafe extern "system" fn handler_release(this: *mut c_void) -> u32 {
     }
 }
 
-unsafe extern "system" fn handler_begin_edit(_this: *mut c_void, id: u32) -> i32 {
+unsafe extern "system" fn handler_begin_edit(
+    _this: *mut IComponentHandler,
+    id: ParamID,
+) -> tresult {
     debug!(param_id = id, "Plugin: beginEdit");
     K_RESULT_OK
 }
 
-unsafe extern "system" fn handler_perform_edit(this: *mut c_void, id: u32, value: f64) -> i32 {
+unsafe extern "system" fn handler_perform_edit(
+    this: *mut IComponentHandler,
+    id: ParamID,
+    value: ParamValue,
+) -> tresult {
     let handler = this as *mut HostComponentHandler;
     unsafe {
         if let Ok(mut changes) = (*handler).pending_changes.try_lock() {
@@ -204,12 +178,18 @@ unsafe extern "system" fn handler_perform_edit(this: *mut c_void, id: u32, value
     K_RESULT_OK
 }
 
-unsafe extern "system" fn handler_end_edit(_this: *mut c_void, id: u32) -> i32 {
+unsafe extern "system" fn handler_end_edit(
+    _this: *mut IComponentHandler,
+    id: ParamID,
+) -> tresult {
     debug!(param_id = id, "Plugin: endEdit");
     K_RESULT_OK
 }
 
-unsafe extern "system" fn handler_restart_component(this: *mut c_void, flags: i32) -> i32 {
+unsafe extern "system" fn handler_restart_component(
+    this: *mut IComponentHandler,
+    flags: int32,
+) -> tresult {
     let handler = this as *mut HostComponentHandler;
     unsafe {
         (*handler)
@@ -243,9 +223,9 @@ mod tests {
             let vtbl = &*(*handler).vtbl;
             let mut obj: *mut c_void = std::ptr::null_mut();
 
-            let result = (vtbl.query_interface)(
-                handler as *mut c_void,
-                FUNKNOWN_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                handler as *mut FUnknown,
+                FUNKNOWN_IID.as_ptr() as *const TUID,
                 &mut obj,
             );
             assert_eq!(result, K_RESULT_OK);
@@ -262,9 +242,9 @@ mod tests {
             let vtbl = &*(*handler).vtbl;
             let mut obj: *mut c_void = std::ptr::null_mut();
 
-            let result = (vtbl.query_interface)(
-                handler as *mut c_void,
-                ICOMPONENT_HANDLER_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                handler as *mut FUnknown,
+                ICOMPONENT_HANDLER_IID.as_ptr() as *const TUID,
                 &mut obj,
             );
             assert_eq!(result, K_RESULT_OK);
@@ -281,9 +261,9 @@ mod tests {
             let vtbl = &*(*handler).vtbl;
             let mut obj: *mut c_void = std::ptr::null_mut();
 
-            let result = (vtbl.query_interface)(
-                handler as *mut c_void,
-                ICOMPONENT_IID.as_ptr(),
+            let result = (vtbl.base.queryInterface)(
+                handler as *mut FUnknown,
+                ICOMPONENT_IID.as_ptr() as *const TUID,
                 &mut obj,
             );
             assert_ne!(result, K_RESULT_OK);
@@ -299,9 +279,9 @@ mod tests {
         unsafe {
             let vtbl = &*(*handler).vtbl;
 
-            (vtbl.begin_edit)(handler as *mut c_void, 100);
-            (vtbl.perform_edit)(handler as *mut c_void, 100, 0.75);
-            (vtbl.end_edit)(handler as *mut c_void, 100);
+            (vtbl.beginEdit)(handler as *mut IComponentHandler, 100);
+            (vtbl.performEdit)(handler as *mut IComponentHandler, 100, 0.75);
+            (vtbl.endEdit)(handler as *mut IComponentHandler, 100);
 
             let changes = HostComponentHandler::drain_changes(handler);
             assert_eq!(changes.len(), 1);
@@ -322,8 +302,8 @@ mod tests {
         unsafe {
             let vtbl = &*(*handler).vtbl;
 
-            (vtbl.restart_component)(
-                handler as *mut c_void,
+            (vtbl.restartComponent)(
+                handler as *mut IComponentHandler,
                 RestartFlags::PARAM_VALUES_CHANGED,
             );
             let flags = HostComponentHandler::take_restart_flags(handler);
@@ -343,9 +323,9 @@ mod tests {
         unsafe {
             let vtbl = &*(*handler).vtbl;
 
-            (vtbl.perform_edit)(handler as *mut c_void, 1, 0.1);
-            (vtbl.perform_edit)(handler as *mut c_void, 2, 0.2);
-            (vtbl.perform_edit)(handler as *mut c_void, 1, 0.5);
+            (vtbl.performEdit)(handler as *mut IComponentHandler, 1, 0.1);
+            (vtbl.performEdit)(handler as *mut IComponentHandler, 2, 0.2);
+            (vtbl.performEdit)(handler as *mut IComponentHandler, 1, 0.5);
 
             let changes = HostComponentHandler::drain_changes(handler);
             assert_eq!(changes.len(), 3);
@@ -363,16 +343,16 @@ mod tests {
         unsafe {
             let vtbl = &*(*handler).vtbl;
 
-            let count = (vtbl.add_ref)(handler as *mut c_void);
+            let count = (vtbl.base.addRef)(handler as *mut FUnknown);
             assert_eq!(count, 2);
 
-            let count = (vtbl.add_ref)(handler as *mut c_void);
+            let count = (vtbl.base.addRef)(handler as *mut FUnknown);
             assert_eq!(count, 3);
 
-            let count = (vtbl.release)(handler as *mut c_void);
+            let count = (vtbl.base.release)(handler as *mut FUnknown);
             assert_eq!(count, 2);
 
-            let count = (vtbl.release)(handler as *mut c_void);
+            let count = (vtbl.base.release)(handler as *mut FUnknown);
             assert_eq!(count, 1);
 
             HostComponentHandler::destroy(handler);
@@ -398,7 +378,7 @@ mod tests {
                     for i in 0..100 {
                         let param_id = thread_id * 1000 + i;
                         let value = (i as f64) / 100.0;
-                        (vtbl.perform_edit)(handler as *mut c_void, param_id, value);
+                        (vtbl.performEdit)(handler as *mut IComponentHandler, param_id, value);
                     }
                 }
             });
@@ -437,14 +417,14 @@ mod tests {
             let vtbl = &*(*handler).vtbl;
 
             // Set PARAM_VALUES_CHANGED
-            (vtbl.restart_component)(
-                handler as *mut c_void,
+            (vtbl.restartComponent)(
+                handler as *mut IComponentHandler,
                 RestartFlags::PARAM_VALUES_CHANGED,
             );
 
             // OR with LATENCY_CHANGED
-            (vtbl.restart_component)(
-                handler as *mut c_void,
+            (vtbl.restartComponent)(
+                handler as *mut IComponentHandler,
                 RestartFlags::LATENCY_CHANGED,
             );
 

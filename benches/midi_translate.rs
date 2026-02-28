@@ -69,7 +69,7 @@ fn translate_unsupported_cc(bencher: Bencher) {
 #[divan::bench]
 fn event_note_on_construct(bencher: Bencher) {
     bencher.bench(|| {
-        Event::note_on(
+        rs_vst_host::vst3::com::make_note_on_event(
             divan::black_box(0),
             divan::black_box(0),
             divan::black_box(60),
@@ -82,7 +82,7 @@ fn event_note_on_construct(bencher: Bencher) {
 #[divan::bench]
 fn event_note_off_construct(bencher: Bencher) {
     bencher.bench(|| {
-        Event::note_off(
+        rs_vst_host::vst3::com::make_note_off_event(
             divan::black_box(0),
             divan::black_box(0),
             divan::black_box(60),
