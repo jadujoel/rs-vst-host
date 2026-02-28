@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.6] - 2026-02-28
+
+### Fixed
+- **Updated `test.bash` to run all tests**: Corrected stale test counts (579→687 lib, 564→671 ASan, 109→99 Miri Tree Borrows). Added `test_sandbox_sa_nodefer_flag_set` to ASan skip list (uses `sigaction` inspection incompatible with ASan). Added `cargo bench --no-run` step to verify all 11 benchmark files compile. Clippy now uses `-D warnings` for stricter lint checking.
+
 ## [0.19.5] - 2026-02-28
 
 ### Added

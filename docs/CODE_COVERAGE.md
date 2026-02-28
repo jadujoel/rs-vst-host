@@ -9,8 +9,8 @@ Last updated: 2026-02-28 (v0.19.5 — Headless GUI integration tests with screen
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified
 - **Last test run:** 2026-02-28 (687 tests, 0 errors, 0 ignored)
-- **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
-- **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
+- **Miri coverage:** 99 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
+- **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
 - **GUI integration tests:** 6 headless GUI tests with 12 PNG screenshots saved to `target/test-screenshots/`
 

@@ -31,27 +31,34 @@ run_step() {
 }
 
 echo -e "${BOLD}rs-vst-host — Full Test Suite${RESET}"
-echo "Running standard tests, Clippy, Miri (Tree Borrows + Stacked Borrows), and ASan..."
+echo "Running standard tests, Clippy, benchmarks, Miri (Tree Borrows + Stacked Borrows), and ASan..."
 
-# ── 1. Standard unit tests ──────────────────────────────────────────────────
+# ── 1. Standard unit & integration tests (lib target) ───────────────────────
 
-run_step "cargo test --lib (579 tests)" \
+run_step "cargo test --lib (687 tests)" \
     cargo test --lib
 
 # ── 2. Clippy lint check ────────────────────────────────────────────────────
 
-run_step "cargo clippy (lint check)" \
-    cargo clippy --lib
+run_step "cargo clippy (warnings deny)" \
+    cargo clippy --lib -- -D warnings
 
-# ── 3. Miri — Tree Borrows (all compatible modules) ────────────────────────
+# ── 3. Benchmarks compile check ─────────────────────────────────────────────
+#
+# Ensures all benchmarks compile correctly without actually running them.
 
-run_step "Miri — Tree Borrows (109 tests)" \
+run_step "cargo bench --no-run (compile check)" \
+    cargo bench --no-run
+
+# ── 4. Miri — Tree Borrows (all compatible modules) ─────────────────────────
+
+run_step "Miri — Tree Borrows (99 tests)" \
     env MIRIFLAGS="-Zmiri-tree-borrows" \
     cargo +nightly miri test --lib -- \
         "vst3::event_list" "vst3::param_changes" "vst3::process" \
         "vst3::types" "midi::translate" "miri_tests"
 
-# ── 4. Miri — Stacked Borrows (strict, excludes ProcessBuffers) ────────────
+# ── 5. Miri — Stacked Borrows (strict, excludes ProcessBuffers) ─────────────
 
 run_step "Miri — Stacked Borrows (70 tests)" \
     cargo +nightly miri test --lib -- \
@@ -62,16 +69,17 @@ run_step "Miri — Stacked Borrows (70 tests)" \
         "miri_tests::tests::miri_null" \
         "miri_tests::tests::miri_param"
 
-# ── 5. AddressSanitizer (all tests, skipping ASan-incompatible ones) ───────
+# ── 6. AddressSanitizer (all tests, skipping ASan-incompatible ones) ─────────
 #
 # ASan instruments the compiled native code and catches real hardware-level
 # memory errors: use-after-free, double-free, heap/stack buffer overflow,
 # memory leaks, and allocator mismatches.
 #
-# Tests using libc::raise (signal sandbox) or malloc_zone_check are skipped
-# because ASan's signal and malloc zone interception conflicts with them.
+# Tests using libc::raise (signal sandbox), sigaction inspection, or
+# malloc_zone_check are skipped because ASan's signal and malloc zone
+# interception conflicts with them.
 
-run_step "ASan — AddressSanitizer (564 tests)" \
+run_step "ASan — AddressSanitizer (671 tests)" \
     env RUSTFLAGS="-Z sanitizer=address" \
     cargo +nightly test --target aarch64-apple-darwin --lib -- \
         --skip test_heap_check_returns_true_in_clean_process \
@@ -88,9 +96,10 @@ run_step "ASan — AddressSanitizer (564 tests)" \
         --skip test_last_drop_crashed_set_on_sandbox_crash \
         --skip test_crash_flags_set_together_on_com_crash \
         --skip test_module_drop_skips_unload_after_instance_crash \
-        --skip test_check_heap_after_recovery_clean
+        --skip test_check_heap_after_recovery_clean \
+        --skip test_sandbox_sa_nodefer_flag_set
 
-# ── Summary ─────────────────────────────────────────────────────────────────
+# ── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"

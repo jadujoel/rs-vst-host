@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.19.6] - 2026-02-28 — Test script fix (no perf impact)
+
+### Summary
+
+Updated `test.bash` to run all tests correctly. No code changes to any library or binary targets — only the shell script and documentation were modified.
+
+**No benchmark regressions.**
+
 ## [0.19.5] - 2026-02-28 — Headless GUI tests (no perf impact)
 
 ### Summary
