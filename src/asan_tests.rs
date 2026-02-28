@@ -1633,7 +1633,7 @@ mod tests {
         // number and that the memory is sound (which is what ASan validates).
         let changes = unsafe { HostComponentHandler::drain_changes(handler) };
         assert!(
-            changes.len() > 0 && changes.len() <= 100,
+            !changes.is_empty() && changes.len() <= 100,
             "Expected 1..=100 changes, got {}",
             changes.len()
         );

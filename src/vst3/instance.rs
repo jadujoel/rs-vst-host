@@ -90,6 +90,11 @@ impl Vst3Instance {
     /// 1. Factory `createInstance` to get IComponent
     /// 2. `IComponent::initialize` with host context
     /// 3. QueryInterface for IAudioProcessor
+    ///
+    /// # Safety
+    ///
+    /// `factory` must be a valid COM pointer to an `IPluginFactory` obtained from
+    /// the VST3 module, and `factory_vtbl` must point to its vtable.
     pub unsafe fn create(
         factory: *mut c_void,
         factory_vtbl: &crate::vst3::module::IPluginFactoryVtbl,
@@ -232,10 +237,7 @@ impl Vst3Instance {
             let proc_vtbl = &*(*processor).vtbl;
             (proc_vtbl.can_process_sample_size)(processor as *mut c_void, K_SAMPLE_32)
         });
-        match result {
-            SandboxResult::Ok(K_RESULT_OK) => true,
-            _ => false,
-        }
+        matches!(result, SandboxResult::Ok(K_RESULT_OK))
     }
 
     /// Set bus arrangements (speaker configurations).
@@ -598,6 +600,11 @@ impl Vst3Instance {
             // Connect component ↔ controller via IConnectionPoint (best-effort)
             self.connect_component_controller(controller);
 
+            // Transfer component state to the controller (required for split-architecture
+            // plugins like JUCE-based ones where the controller needs the component's
+            // state before it can create editor views).
+            self.sync_component_state_to_controller(controller);
+
             self.cached_controller = controller;
             self.owns_separate_controller = true;
             self.controller_host_context = host_ctx;
@@ -669,6 +676,74 @@ impl Vst3Instance {
             // Release QI'd IConnectionPoint references
             (comp_cp_vtbl.release)(comp_cp);
             (ctrl_cp_vtbl.release)(ctrl_cp);
+        }
+    }
+
+    /// Transfer the component's state to a separate controller.
+    ///
+    /// Split-architecture plugins (e.g., JUCE-based) require this call so the
+    /// controller can initialize its internal state before creating editor views.
+    /// Without it, `createView("editor")` may return null.
+    fn sync_component_state_to_controller(
+        &self,
+        controller: *mut ComPtr<IEditControllerVtbl>,
+    ) {
+        use crate::vst3::ibstream::HostBStream;
+
+        unsafe {
+            let comp_vtbl = &*(*self.component).vtbl;
+
+            // 1. Get the component's state via IComponent::getState(stream)
+            let get_stream = HostBStream::new();
+            let get_result =
+                (comp_vtbl.get_state)(self.component as *mut c_void, HostBStream::as_ptr(get_stream));
+
+            if get_result != K_RESULT_OK {
+                debug!(
+                    plugin = %self.name,
+                    result = get_result,
+                    "IComponent::getState failed — skipping setComponentState"
+                );
+                HostBStream::destroy(get_stream);
+                return;
+            }
+
+            // 2. Extract the data and create a read stream for the controller
+            let state_data = HostBStream::take_data(get_stream);
+            HostBStream::destroy(get_stream);
+
+            if state_data.is_empty() {
+                debug!(plugin = %self.name, "Component state is empty — skipping setComponentState");
+                return;
+            }
+
+            let set_stream = HostBStream::from_data(state_data);
+
+            // 3. Pass to controller via IEditController::setComponentState(stream)
+            let ctrl_vtbl = &*(*controller).vtbl;
+            let set_result = (ctrl_vtbl.set_component_state)(
+                controller as *mut c_void,
+                HostBStream::as_ptr(set_stream),
+            );
+
+            HostBStream::destroy(set_stream);
+
+            match set_result {
+                0 => {
+                    debug!(plugin = %self.name, "setComponentState succeeded");
+                }
+                1 => {
+                    // kResultFalse — controller accepted but nothing to do
+                    debug!(plugin = %self.name, "setComponentState returned kResultFalse (OK)");
+                }
+                _ => {
+                    debug!(
+                        plugin = %self.name,
+                        result = set_result,
+                        "setComponentState returned non-OK (continuing anyway)"
+                    );
+                }
+            }
         }
     }
 
@@ -756,7 +831,7 @@ impl Vst3Instance {
         let handler = HostComponentHandler::new();
         let ctrl = controller as usize;
         // Safety: HostPlugFrame::as_ptr returns the raw COM pointer.
-        let handler_ptr = unsafe { HostComponentHandler::as_ptr(handler) };
+        let handler_ptr = HostComponentHandler::as_ptr(handler);
         let result = sandbox_call("set_component_handler", move || unsafe {
             let controller = ctrl as *mut ComPtr<IEditControllerVtbl>;
             let ctrl_vtbl = &*(*controller).vtbl;
@@ -829,9 +904,7 @@ impl Vst3Instance {
 
             // Call createView("editor")
             let view_name = b"editor\0";
-            let view_ptr = (ctrl_vtbl.create_view)(controller as *mut c_void, view_name.as_ptr());
-
-            view_ptr
+            (ctrl_vtbl.create_view)(controller as *mut c_void, view_name.as_ptr())
         });
 
         match result {
@@ -1427,8 +1500,7 @@ mod tests {
         if any_crash || crashed {
             // Objects intentionally leaked — verify they are still valid
             // (no crash/ASAN violation from accessing them).
-            unsafe {
-                let ctx_ptr = HostApplication::as_unknown(host_ctx);
+            let ctx_ptr = HostApplication::as_unknown(host_ctx);
                 assert!(
                     !ctx_ptr.is_null(),
                     "Leaked host_context should remain valid"
@@ -1438,7 +1510,6 @@ mod tests {
                     !handler_ptr.is_null(),
                     "Leaked component_handler should remain valid"
                 );
-            }
             // In production, these are intentionally leaked.
             // For the test, we clean up to avoid ASAN reports.
             unsafe {

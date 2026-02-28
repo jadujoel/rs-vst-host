@@ -2,7 +2,7 @@
 //!
 //! Provides the plugin browser, plugin rack, transport controls,
 //! parameter view, device selection, and session save/load in a
-//! Liquid Glass styled window. Integrates with the [`super::backend::HostBackend`]
+//! Styled window. Integrates with the [`super::backend::HostBackend`]
 //! for live audio processing and plugin management.
 
 use crate::gui::backend::{HostBackend, ParamSnapshot};
@@ -193,6 +193,7 @@ impl HostApp {
     }
 
     /// Create a new HostApp, optionally in safe mode (no malloc debug).
+    #[cfg(test)]
     pub fn with_safe_mode(safe_mode: bool) -> Self {
         Self::new(safe_mode, false)
     }
@@ -421,11 +422,7 @@ impl HostApp {
         } else {
             // Inactive: load from the slot's parameter cache
             if let Some(slot) = self.rack.get(idx) {
-                if self.param_snapshots.len() != slot.param_cache.len() {
-                    self.param_snapshots.clone_from(&slot.param_cache);
-                } else {
-                    self.param_snapshots.clone_from(&slot.param_cache);
-                }
+                self.param_snapshots.clone_from(&slot.param_cache);
             } else {
                 self.param_snapshots.clear();
             }
@@ -538,6 +535,11 @@ impl HostApp {
         let mut results = Vec::new();
         for module in &self.plugin_modules {
             for class in &module.classes {
+                // Only show Audio Module Class entries — hide Component Controller
+                // and Plugin Compatibility classes which are internal VST3 details.
+                if class.category != "Audio Module Class" {
+                    continue;
+                }
                 if filter.is_empty()
                     || class.name.to_lowercase().contains(&filter)
                     || class.category.to_lowercase().contains(&filter)
@@ -604,14 +606,10 @@ impl eframe::App for HostApp {
             self.heap_check_counter += 1;
             if self.heap_check_counter >= 60 {
                 self.heap_check_counter = 0;
-                if !crate::diagnostics::heap_check() {
-                    if !self.heap_corruption_detected {
-                        self.heap_corruption_detected = true;
-                        self.backend.heap_corruption_detected = true;
-                        tracing::error!(
-                            "Periodic heap check detected corruption (malloc_debug mode)"
-                        );
-                    }
+                if !crate::diagnostics::heap_check() && !self.heap_corruption_detected {
+                    self.heap_corruption_detected = true;
+                    self.backend.heap_corruption_detected = true;
+                    tracing::error!("Periodic heap check detected corruption (malloc_debug mode)");
                 }
             }
         }
@@ -1348,17 +1346,17 @@ impl HostApp {
                                     // Activate / Deactivate button
                                     if is_active {
                                         // Editor button (if plugin has an editor, and not in safe mode)
-                                        if has_editor && !self.safe_mode {
-                                            if ui
+                                        if has_editor
+                                            && !self.safe_mode
+                                            && ui
                                                 .add(
                                                     egui::Button::new("🎹")
                                                         .fill(egui::Color32::TRANSPARENT),
                                                 )
                                                 .on_hover_text("Open plugin editor")
                                                 .clicked()
-                                            {
-                                                open_editor = true;
-                                            }
+                                        {
+                                            open_editor = true;
                                         }
 
                                         if ui
@@ -1563,17 +1561,23 @@ mod tests {
 
     #[test]
     fn test_filtered_classes_empty_filter() {
-        let mut app = HostApp::default();
-        app.plugin_modules = vec![sample_module()];
+        let app = HostApp {
+            plugin_modules: vec![sample_module()],
+            ..Default::default()
+        };
         let results = app.filtered_classes();
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_filtered_classes_by_name() {
-        let mut app = HostApp::default();
-        app.plugin_modules = vec![sample_module()];
-        app.browser_filter.text = "synth".into();
+        let app = HostApp {
+            plugin_modules: vec![sample_module()],
+            browser_filter: BrowserFilter {
+                text: "synth".into(),
+            },
+            ..Default::default()
+        };
         let results = app.filtered_classes();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.name, "TestSynth");
@@ -1581,9 +1585,11 @@ mod tests {
 
     #[test]
     fn test_filtered_classes_by_subcategory() {
-        let mut app = HostApp::default();
-        app.plugin_modules = vec![sample_module()];
-        app.browser_filter.text = "eq".into();
+        let app = HostApp {
+            plugin_modules: vec![sample_module()],
+            browser_filter: BrowserFilter { text: "eq".into() },
+            ..Default::default()
+        };
         let results = app.filtered_classes();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.name, "TestEQ");
@@ -1591,9 +1597,13 @@ mod tests {
 
     #[test]
     fn test_filtered_classes_by_vendor() {
-        let mut app = HostApp::default();
-        app.plugin_modules = vec![sample_module()];
-        app.browser_filter.text = "othervendor".into();
+        let app = HostApp {
+            plugin_modules: vec![sample_module()],
+            browser_filter: BrowserFilter {
+                text: "othervendor".into(),
+            },
+            ..Default::default()
+        };
         let results = app.filtered_classes();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.name, "TestEQ");
@@ -1601,9 +1611,13 @@ mod tests {
 
     #[test]
     fn test_filtered_classes_factory_vendor_fallback() {
-        let mut app = HostApp::default();
-        app.plugin_modules = vec![sample_module()];
-        app.browser_filter.text = "testvendor".into();
+        let app = HostApp {
+            plugin_modules: vec![sample_module()],
+            browser_filter: BrowserFilter {
+                text: "testvendor".into(),
+            },
+            ..Default::default()
+        };
         let results = app.filtered_classes();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.name, "TestSynth");
@@ -1611,9 +1625,13 @@ mod tests {
 
     #[test]
     fn test_filtered_classes_no_match() {
-        let mut app = HostApp::default();
-        app.plugin_modules = vec![sample_module()];
-        app.browser_filter.text = "nonexistent".into();
+        let app = HostApp {
+            plugin_modules: vec![sample_module()],
+            browser_filter: BrowserFilter {
+                text: "nonexistent".into(),
+            },
+            ..Default::default()
+        };
         let results = app.filtered_classes();
         assert!(results.is_empty());
     }
@@ -1746,8 +1764,10 @@ mod tests {
         assert!(path.exists());
 
         // Create new app and load
-        let mut app2 = HostApp::default();
-        app2.session_path = path.to_string_lossy().to_string();
+        let mut app2 = HostApp {
+            session_path: path.to_string_lossy().to_string(),
+            ..Default::default()
+        };
         app2.load_session();
 
         assert_eq!(app2.rack.len(), 2);
@@ -1762,8 +1782,10 @@ mod tests {
 
     #[test]
     fn test_load_session_nonexistent() {
-        let mut app = HostApp::default();
-        app.session_path = "/nonexistent/path/session.json".into();
+        let mut app = HostApp {
+            session_path: "/nonexistent/path/session.json".into(),
+            ..Default::default()
+        };
         app.load_session();
         assert!(app.status_message.contains("failed"));
     }
@@ -1923,9 +1945,11 @@ mod tests {
 
     #[test]
     fn test_no_selection_clears_params() {
-        let mut app = HostApp::default();
-        app.param_snapshots = vec![make_snapshot(1, "X", 0.5)];
-        app.selected_slot = None;
+        let mut app = HostApp {
+            param_snapshots: vec![make_snapshot(1, "X", 0.5)],
+            selected_slot: None,
+            ..Default::default()
+        };
         app.refresh_params();
         assert!(app.param_snapshots.is_empty());
     }
@@ -2047,10 +2071,12 @@ mod tests {
 
     #[test]
     fn test_refresh_params_invalid_index() {
-        let mut app = HostApp::default();
         // Selected slot points beyond rack length
-        app.selected_slot = Some(5);
-        app.param_snapshots = vec![make_snapshot(1, "X", 0.5)];
+        let mut app = HostApp {
+            selected_slot: Some(5),
+            param_snapshots: vec![make_snapshot(1, "X", 0.5)],
+            ..Default::default()
+        };
         app.refresh_params();
         // Should clear because slot doesn't exist
         assert!(app.param_snapshots.is_empty());
@@ -2112,8 +2138,10 @@ mod tests {
         app.session_path = path.to_string_lossy().to_string();
         app.save_session();
 
-        let mut app2 = HostApp::default();
-        app2.session_path = path.to_string_lossy().to_string();
+        let mut app2 = HostApp {
+            session_path: path.to_string_lossy().to_string(),
+            ..Default::default()
+        };
         app2.load_session();
 
         // Transient fields reset on load

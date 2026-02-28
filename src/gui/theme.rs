@@ -1,4 +1,4 @@
-//! Liquid Glass theme for `egui` — glassmorphism-inspired styling.
+//! Theme for `egui` — glassmorphism-inspired styling.
 //!
 //! Configures colors, corner radii, shadows, and strokes to achieve
 //! the frosted-glass aesthetic described in the design document.
@@ -93,7 +93,7 @@ pub const PANEL_SHADOW: Shadow = Shadow {
 
 // ── Theme Application ───────────────────────────────────────────────────────
 
-/// Apply the Liquid Glass theme to an egui context.
+/// Apply the Glass theme to an egui context.
 pub fn apply(ctx: &egui::Context) {
     let mut style = Style::default();
 
@@ -251,6 +251,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_panel_shadow_nonzero_blur() {
         assert!(PANEL_SHADOW.blur > 0);
     }

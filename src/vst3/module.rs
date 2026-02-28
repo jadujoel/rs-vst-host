@@ -22,7 +22,7 @@ pub(crate) const K_RESULT_OK: i32 = 0;
 
 /// PFactoryInfo — matches the C struct layout from the VST3 SDK.
 #[repr(C)]
-pub(crate) struct RawFactoryInfo {
+pub struct RawFactoryInfo {
     vendor: [u8; 64],
     url: [u8; 256],
     email: [u8; 128],
@@ -31,7 +31,7 @@ pub(crate) struct RawFactoryInfo {
 
 /// PClassInfo — matches the C struct layout from the VST3 SDK.
 #[repr(C)]
-pub(crate) struct RawClassInfo {
+pub struct RawClassInfo {
     cid: [u8; 16],
     cardinality: i32,
     category: [u8; 32],
@@ -523,6 +523,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 }
 
 /// Convert a null-terminated UTF-16 buffer to a Rust `String`.
+#[allow(dead_code)]
 fn utf16_to_string(buf: &[u16]) -> String {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..end])

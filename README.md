@@ -133,6 +133,7 @@ src/
     ├── component_handler.rs # IComponentHandler COM for parameter notifications
     ├── event_list.rs    # IEventList COM implementation for MIDI events
     ├── host_context.rs  # IHostApplication COM implementation
+    ├── ibstream.rs  # IBStream COM implementation for plugin state transfer
     ├── instance.rs  # VST3 component lifecycle management (incl. editor view creation)
     ├── module.rs    # Dynamic library loading, IPluginFactory FFI
     ├── param_changes.rs # IParameterChanges + IParamValueQueue COM implementations
@@ -148,6 +149,22 @@ src/
 ### VST3 Interop
 
 This project uses **manual COM FFI** rather than the `vst3-sys` crate. All VST3 interface vtables are defined as `#[repr(C)]` structs with function pointers, matching the Steinberg SDK binary layout. This gives full control over the host–plugin boundary without external binding dependencies.
+
+### VST3 Plugin Class Types
+
+A VST3 module (`.vst3` bundle) can expose multiple COM classes through its `IPluginFactory`. The host only displays **Audio Module Class** entries in the plugin browser—the others are internal and used behind the scenes:
+
+| Class Category | Purpose |
+|---|---|
+| **Audio Module Class** | The main plugin class implementing `IComponent` (audio processor). This is what users select and load. It handles audio I/O, parameter state, and bus configuration. |
+| **Component Controller Class** | Implements `IEditController` (parameter UI + editor views). In *single-component* plugins, the audio component also implements this interface directly. In *split-architecture* plugins (common with JUCE-based plugins), it is a separate COM object. The host creates it automatically when needed for parameter introspection or opening the plugin editor. |
+| **Plugin Compatibility Class** | A compatibility shim that allows older VST2-era plugin IDs to be recognized and mapped to the VST3 version. DAWs use this for session recall when a user migrates from VST2 to VST3. It is never loaded directly. |
+
+When a split-architecture plugin is loaded, the host automatically:
+1. Queries the component for `IEditController` (single-component check)
+2. Falls back to `getControllerClassId()` → `factory.createInstance()` to create the separate controller
+3. Calls `setComponentState()` on the controller with the component’s state (required for JUCE plugins)
+4. Connects both via `IConnectionPoint` for bidirectional communication
 
 ### Audio Pipeline
 
@@ -261,7 +278,7 @@ cargo test --lib e2e_tests -- --test-threads=1
 
 Test screenshots end up in target/test-screenshots/
 
-621 tests (582 unit + 39 E2E integration) covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management (NSApplication initialization, AppKit event pumping, activation policy preservation), IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 622 tests with `--features debug-tools`. 39 of these are E2E integration tests that exercise real FabFilter VST3 plugins (Pro-MB and Pro-Q 4) covering the full pipeline: discovery, loading, metadata, instance creation, multi-block processing, parameter operations, editor queries, component handler installation, AudioEngine integration, scan-cache roundtrip, and multi-plugin lifecycle (loading multiple plugins simultaneously, random start/stop ordering, interleaved setup, stop-and-restart, duplicate instances, concurrent AudioEngine, rapid add/remove stress testing). 6 of the E2E tests are crash-resilience tests that verify the host survives plugin COM teardown crashes using subprocess isolation.
+726 tests (687 unit + 39 E2E integration) covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management (NSApplication initialization, AppKit event pumping, activation policy preservation), IPlugFrame COM, IBStream COM (state transfer for split-architecture plugins), CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 727 tests with `--features debug-tools`. 39 of these are E2E integration tests that exercise real FabFilter VST3 plugins (Pro-MB and Pro-Q 4) covering the full pipeline: discovery, loading, metadata, instance creation, multi-block processing, parameter operations, editor queries, component handler installation, AudioEngine integration, scan-cache roundtrip, and multi-plugin lifecycle (loading multiple plugins simultaneously, random start/stop ordering, interleaved setup, stop-and-restart, duplicate instances, concurrent AudioEngine, rapid add/remove stress testing). 6 of the E2E tests are crash-resilience tests that verify the host survives plugin COM teardown crashes using subprocess isolation.
 
 109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. 564 pass under [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) for native memory error detection. See [DYNAMIC_ANALYSIS.md](docs/DYNAMIC_ANALYSIS.md) for the full guide.
 

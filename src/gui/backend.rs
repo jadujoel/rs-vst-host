@@ -213,6 +213,12 @@ impl Drop for ActiveState {
     }
 }
 
+impl Default for HostBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HostBackend {
     /// Create a new backend, enumerating available devices.
     pub fn new() -> Self {

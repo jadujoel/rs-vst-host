@@ -1,6 +1,6 @@
 [package]
 name = "rs-vst-host"
-version = "0.19.7"
+version = "0.20.1"
 edition = "2024"
 
 [features]

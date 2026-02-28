@@ -16,7 +16,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::gui::app::{HostApp, PluginSlot};
+    use crate::gui::app::HostApp;
     use crate::gui::backend::ParamSnapshot;
     use crate::vst3::types::{PluginClassInfo, PluginModuleInfo};
     use std::path::PathBuf;
@@ -214,6 +214,7 @@ mod tests {
     }
 
     /// Barycentric point-in-triangle test.
+    #[allow(clippy::too_many_arguments)]
     fn point_in_triangle(
         px: f32,
         py: f32,

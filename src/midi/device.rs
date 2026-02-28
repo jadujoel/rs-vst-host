@@ -25,8 +25,8 @@ pub struct MidiDevice {
 impl MidiDevice {
     /// Create a new MIDI device manager.
     pub fn new() -> Result<Self, String> {
-        let midi_in =
-            MidiInput::new("rs-vst-host").map_err(|e| format!("Failed to create MIDI input: {}", e))?;
+        let midi_in = MidiInput::new("rs-vst-host")
+            .map_err(|e| format!("Failed to create MIDI input: {}", e))?;
         Ok(Self { midi_in })
     }
 
@@ -41,10 +41,7 @@ impl MidiDevice {
                     .midi_in
                     .port_name(port)
                     .unwrap_or_else(|_| format!("Port {}", i));
-                MidiPortInfo {
-                    name,
-                    index: i,
-                }
+                MidiPortInfo { name, index: i }
             })
             .collect()
     }
@@ -212,6 +209,12 @@ impl MidiReceiver {
         } else {
             false
         }
+    }
+}
+
+impl Default for MidiReceiver {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -84,7 +84,9 @@ impl AudioDevice {
         match name {
             Some(n) => {
                 let devices = self.host.output_devices().ok()?;
-                devices.into_iter().find(|d| d.name().ok().as_deref() == Some(n))
+                devices
+                    .into_iter()
+                    .find(|d| d.name().ok().as_deref() == Some(n))
             }
             None => self.default_output_device(),
         }
@@ -147,6 +149,12 @@ impl AudioDevice {
             .map_err(|e| format!("Failed to start stream: {}", e))?;
         debug!("Audio stream started");
         Ok(())
+    }
+}
+
+impl Default for AudioDevice {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

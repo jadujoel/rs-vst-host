@@ -55,6 +55,7 @@ pub struct PluginProcess {
     /// Pending parameter changes from the GUI thread.
     pending_param_changes: std::sync::Arc<std::sync::Mutex<Vec<(u32, f64)>>>,
     /// Cached plugin-initiated parameter changes.
+    #[allow(dead_code)]
     handler_changes: Vec<ParamChange>,
 }
 
@@ -68,6 +69,7 @@ impl PluginProcess {
     /// This creates a Unix socket, spawns the child process, waits for
     /// it to connect, then sends the LoadPlugin + Configure + Activate
     /// sequence.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         plugin_path: &Path,
         cid: &[u8; 16],
@@ -537,10 +539,7 @@ impl PluginProcess {
 
     /// Ping the worker process (health check).
     pub fn ping(&mut self) -> bool {
-        match self.send_receive(HostMessage::Ping) {
-            Ok(WorkerResponse::Pong) => true,
-            _ => false,
-        }
+        matches!(self.send_receive(HostMessage::Ping), Ok(WorkerResponse::Pong))
     }
 
     /// Get the child process PID.

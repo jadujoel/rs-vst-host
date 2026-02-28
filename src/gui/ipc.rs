@@ -143,6 +143,7 @@ pub enum GuiAction {
 
 /// State updates sent from the supervisor to the GUI process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum SupervisorUpdate {
     /// Full state sync — sent on initial connection and after major changes.
     FullState {
@@ -277,7 +278,7 @@ pub struct RackSlotState {
 }
 
 /// Serializable audio status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AudioStatusState {
     /// Sample rate in Hz.
     pub sample_rate: u32,
@@ -287,17 +288,6 @@ pub struct AudioStatusState {
     pub device_name: String,
     /// Whether the audio engine is running.
     pub running: bool,
-}
-
-impl Default for AudioStatusState {
-    fn default() -> Self {
-        Self {
-            sample_rate: 0,
-            buffer_size: 0,
-            device_name: String::new(),
-            running: false,
-        }
-    }
 }
 
 /// Serializable audio device info.

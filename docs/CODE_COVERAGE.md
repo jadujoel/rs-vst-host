@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.19.9 — IPluginFactory3 vtable fix).
+Last updated: 2026-02-28 (v0.20.1 — clippy clean, all 26 warnings fixed).
 
 ## Summary
 
-- **Total tests:** 720 (lib + binary)
+- **Total tests:** 726 (687 unit + 39 E2E)
 - **All passing:** ✅ (0 ignored)
-- **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
+- **Build warnings:** 0 (clippy `-D warnings` clean)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (712 tests, 0 errors, 0 ignored)
+- **Last test run:** 2026-02-28 (726 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 99 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -57,6 +57,7 @@ Last updated: 2026-02-28 (v0.19.9 — IPluginFactory3 vtable fix).
 | `src/gui/gui_worker.rs` | 17 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 9 | ⚠️ Partial | Platform constant, struct size, result constant, sandbox import, NSApplication init idempotency, pump_events main-thread guard, pump_platform_events no-panic; open/close/poll require real NSWindow + IPlugView |
 | `src/gui_tests.rs` | 6 | ✅ Full | Headless GUI integration: add plugin to rack with screenshot, open editor view and verify visible, full editor workflow (add→select→switch→deselect) with 9 screenshots, parameter types (automatable/bypass/read-only), multi-frame stability (10 frames), editor open without active plugin. CPU software-rasterized PNG screenshots saved to `target/test-screenshots/`. |
+| `src/vst3/ibstream.rs` | 6 | ✅ Full | IBStream COM implementation: create/destroy, write/read roundtrip, seek/tell, from_data, take_data, system heap verification |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
 

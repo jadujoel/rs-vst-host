@@ -349,9 +349,9 @@ mod tests {
             buffers.prepare(bs as usize);
             for ch in 0..instance.input_channels {
                 if let Some(buf) = buffers.input_buffer_mut(ch) {
-                    for i in 0..bs as usize {
+                    for (i, sample) in buf.iter_mut().enumerate().take(bs as usize) {
                         let phase = (block * bs as usize + i) as f64 / 48000.0 * 1000.0;
-                        buf[i] = (phase * std::f64::consts::TAU).sin() as f32 * 0.25;
+                        *sample = (phase * std::f64::consts::TAU).sin() as f32 * 0.25;
                     }
                 }
             }
@@ -383,9 +383,9 @@ mod tests {
             buffers.prepare(bs as usize);
             for ch in 0..instance.input_channels {
                 if let Some(buf) = buffers.input_buffer_mut(ch) {
-                    for i in 0..bs as usize {
+                    for (i, sample) in buf.iter_mut().enumerate().take(bs as usize) {
                         let t = (block * bs as usize + i) as f64 / 44100.0;
-                        buf[i] = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
+                        *sample = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
                     }
                 }
             }
@@ -714,9 +714,9 @@ mod tests {
             buffers.prepare(bs as usize);
             for ch in 0..instance.input_channels {
                 if let Some(buf) = buffers.input_buffer_mut(ch) {
-                    for i in 0..bs as usize {
+                    for (i, sample) in buf.iter_mut().enumerate().take(bs as usize) {
                         let phase = (block * bs as usize + i) as f64 / 48000.0 * 440.0;
-                        buf[i] = (phase * std::f64::consts::TAU).sin() as f32 * 0.25;
+                        *sample = (phase * std::f64::consts::TAU).sin() as f32 * 0.25;
                     }
                 }
             }
@@ -774,9 +774,9 @@ mod tests {
             buffers.prepare(bs as usize);
             for ch in 0..instance.input_channels {
                 if let Some(buf) = buffers.input_buffer_mut(ch) {
-                    for i in 0..bs as usize {
+                    for (i, sample) in buf.iter_mut().enumerate().take(bs as usize) {
                         let t = (block * bs as usize + i) as f64 / 44100.0;
-                        buf[i] = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
+                        *sample = (t * 440.0 * std::f64::consts::TAU).sin() as f32 * 0.5;
                     }
                 }
             }
@@ -1030,8 +1030,8 @@ mod tests {
             let (_module, mut instance) = create_instance_from_path(&pro_q4_path());
             let has_editor = instance.has_editor();
             assert!(!instance.is_crashed(), "Host should survive has_editor()");
-            // Prove we got a meaningful result (not a null/crash fallback)
-            assert!(has_editor || !has_editor, "has_editor returned a value");
+            // Prove has_editor completed without crash (result is valid either way).
+            let _ = has_editor;
         });
 
         let crashed = DEACTIVATION_CRASHED.with(|c| c.get()) || result.is_crashed();
@@ -1059,7 +1059,8 @@ mod tests {
             let (_module, mut instance) = create_instance_from_path(&pro_mb_path());
             let has_editor = instance.has_editor();
             assert!(!instance.is_crashed(), "Host should survive has_editor()");
-            assert!(has_editor || !has_editor, "has_editor returned a value");
+            // Prove has_editor completed without crash (result is valid either way).
+            let _ = has_editor;
         });
 
         let crashed = DEACTIVATION_CRASHED.with(|c| c.get()) || result.is_crashed();

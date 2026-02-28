@@ -345,8 +345,8 @@ fn signal_name(sig: i32) -> &'static str {
 ///
 /// * `context` — Description of the operation (for logging on crash).
 /// * `f` — The closure to execute. Should ideally only contain FFI/COM calls;
-///          avoid creating Rust objects with Drop impls inside the closure,
-///          as their destructors may be skipped on signal recovery.
+///   avoid creating Rust objects with Drop impls inside the closure,
+///   as their destructors may be skipped on signal recovery.
 ///
 /// # Thread safety
 ///
@@ -499,7 +499,7 @@ fn symbolicate_crash_backtrace() -> Vec<String> {
     let mut frames = Vec::with_capacity(addresses.len());
     for addr in &addresses {
         let mut resolved = false;
-        backtrace::resolve(*addr as *mut c_void, |symbol| {
+        backtrace::resolve(*addr, |symbol| {
             let name = symbol
                 .name()
                 .map(|n| n.to_string())
@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn test_panic_message_str_type() {
         let result = std::panic::catch_unwind(|| panic!("hello"));
-        let Err(e) = result else { unreachable!() };
+        let e = result.unwrap_err();
         let msg = panic_message(&e);
         assert_eq!(msg, "hello");
     }
@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn test_panic_message_string_type() {
         let result = std::panic::catch_unwind(|| panic!("{}", "world"));
-        let Err(e) = result else { unreachable!() };
+        let e = result.unwrap_err();
         let msg = panic_message(&e);
         assert_eq!(msg, "world");
     }
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn test_panic_message_unknown_type() {
         let result = std::panic::catch_unwind(|| panic!("{}", 42));
-        let Err(e) = result else { unreachable!() };
+        let e = result.unwrap_err();
         let msg = panic_message(&e);
         assert_eq!(msg, "42");
     }

@@ -395,6 +395,8 @@ Translucent panels are tuned for higher text contrast, keeping labels readable a
 
 The left sidebar shows all cached plugins. Use the **Scan Plugins** button to discover VST3 plugins, then filter the list by typing in the search box. Matches on plugin name, vendor, category, and subcategory. Click the **＋** button on any plugin to add it to the rack. The scan progress shows module count, class count, and any errors encountered.
 
+> **Note:** The plugin browser only shows **Audio Module Class** entries. VST3 bundles may also contain Component Controller and Plugin Compatibility classes — these are internal implementation details and are automatically filtered out.
+
 ### Plugin Rack
 
 The central panel displays loaded plugin slots as glass cards. Each slot shows the plugin name, vendor, and control buttons:

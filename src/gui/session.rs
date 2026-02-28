@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(session.transport.time_sig_den, 4);
         assert_eq!(session.rack.len(), 2);
         assert_eq!(session.rack[0].name, "TestSynth");
-        assert_eq!(session.rack[1].bypassed, true);
+        assert!(session.rack[1].bypassed);
         assert_eq!(session.audio_device, Some("Speakers".into()));
         assert_eq!(session.midi_port, None);
     }
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(restored_rack.len(), 2);
         assert_eq!(restored_rack[0].name, "TestSynth");
         assert_eq!(restored_rack[1].name, "TestEQ");
-        assert_eq!(restored_rack[1].bypassed, true);
+        assert!(restored_rack[1].bypassed);
     }
 
     #[test]

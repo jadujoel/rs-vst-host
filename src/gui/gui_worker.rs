@@ -368,6 +368,11 @@ impl GuiWorkerApp {
         let mut results = Vec::new();
         for (mi, module) in self.plugin_modules.iter().enumerate() {
             for (ci, class) in module.classes.iter().enumerate() {
+                // Only show Audio Module Class entries — hide Component Controller
+                // and Plugin Compatibility classes which are internal VST3 details.
+                if class.category != "Audio Module Class" {
+                    continue;
+                }
                 if filter.is_empty()
                     || class.name.to_lowercase().contains(&filter)
                     || class.category.to_lowercase().contains(&filter)
@@ -1105,17 +1110,15 @@ impl GuiWorkerApp {
                                     }
 
                                     if is_active {
-                                        if has_editor && !self.safe_mode {
-                                            if ui
-                                                .add(
-                                                    egui::Button::new("🎹")
-                                                        .fill(egui::Color32::TRANSPARENT),
-                                                )
-                                                .on_hover_text("Open plugin editor")
-                                                .clicked()
-                                            {
-                                                open_editor = true;
-                                            }
+                                        if has_editor && !self.safe_mode && ui
+                                            .add(
+                                                egui::Button::new("🎹")
+                                                    .fill(egui::Color32::TRANSPARENT),
+                                            )
+                                            .on_hover_text("Open plugin editor")
+                                            .clicked()
+                                        {
+                                            open_editor = true;
                                         }
 
                                         if ui

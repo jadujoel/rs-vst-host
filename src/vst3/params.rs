@@ -261,8 +261,8 @@ impl ParameterRegistry {
         }
 
         println!(
-            "  {:>6}  {:<30}  {:>8}  {:>8}  {:<8}  {}",
-            "ID", "Title", "Default", "Current", "Units", "Flags"
+            "  {:>6}  {:<30}  {:>8}  {:>8}  {:<8}  Flags",
+            "ID", "Title", "Default", "Current", "Units"
         );
         println!("  {:-<6}  {:-<30}  {:->8}  {:->8}  {:-<8}  {:-<10}", "", "", "", "", "", "");
 

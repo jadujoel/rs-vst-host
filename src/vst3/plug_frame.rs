@@ -64,6 +64,10 @@ impl HostPlugFrame {
     }
 
     /// Get the COM pointer suitable for passing to `IPlugView::setFrame()`.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must be a valid pointer returned by `HostPlugFrame::new()`.
     pub unsafe fn as_ptr(frame: *mut Self) -> *mut c_void {
         frame as *mut c_void
     }
@@ -72,6 +76,10 @@ impl HostPlugFrame {
     ///
     /// Returns `Some((width, height))` if the plugin requested a resize
     /// since the last call.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must be null or a valid pointer returned by `HostPlugFrame::new()`.
     pub unsafe fn take_pending_resize(frame: *mut Self) -> Option<(i32, i32)> {
         unsafe {
             if frame.is_null() {
@@ -87,6 +95,11 @@ impl HostPlugFrame {
     }
 
     /// Destroy a previously created HostPlugFrame.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must be a valid pointer returned by `HostPlugFrame::new()`
+    /// and must not be used after this call.
     pub unsafe fn destroy(frame: *mut Self) {
         unsafe { host_alloc::system_free(frame) };
     }

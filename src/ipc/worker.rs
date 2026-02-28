@@ -106,6 +106,7 @@ struct WorkerState {
 }
 
 /// Audio configuration received from the host.
+#[allow(dead_code)]
 struct WorkerConfig {
     sample_rate: f64,
     max_block_size: i32,

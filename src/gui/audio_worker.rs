@@ -845,6 +845,7 @@ fn handle_action(
 }
 
 /// Build a full state update for sending to the supervisor.
+#[allow(clippy::too_many_arguments)]
 fn build_full_state(
     plugin_modules: &[PluginModuleInfo],
     rack: &[RackSlotState],

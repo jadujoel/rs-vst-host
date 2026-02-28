@@ -248,7 +248,7 @@ impl EditorWindow {
                 macos::resize_window(&self.native_window, width as f64, height as f64);
 
                 let v = self.view as usize;
-                let result = sandbox_call("plugview_on_size", move || unsafe {
+                let result = sandbox_call("plugview_on_size", move || {
                     let view = v as *mut ComPtr<IPlugViewVtbl>;
                     let vtbl = &*(*view).vtbl;
                     let mut rect = ViewRect {
@@ -530,11 +530,17 @@ mod macos {
         }
     }
 
-    /// Show the native window.
+    /// Show the native window and bring it to the front.
     pub(super) unsafe fn show_window(native: &super::NativeWindow) {
         unsafe {
             let make_key: MsgSendVoidBool = std::mem::transmute(objc_msgSend as *const c_void);
             make_key(native.window, sel("makeKeyAndOrderFront:"), 0);
+
+            // Force the editor window to appear in front of the main window.
+            // makeKeyAndOrderFront: alone may not bring it visually above the
+            // egui/host window.
+            let order_front: MsgSendVoid = std::mem::transmute(objc_msgSend as *const c_void);
+            order_front(native.window, sel("orderFrontRegardless"));
         }
     }
 
@@ -673,7 +679,7 @@ mod macos {
                 init_cstr(
                     s,
                     sel("initWithCString:encoding:"),
-                    b"kCFRunLoopDefaultMode\0".as_ptr() as *const i8,
+                    c"kCFRunLoopDefaultMode".as_ptr(),
                     4, // NSUTF8StringEncoding
                 )
             };
@@ -735,7 +741,7 @@ mod tests {
         // integration by verifying the function signature and structure.
         // A real crash test with a bad pointer would require a signal test
         // similar to sandbox.rs tests.
-        use crate::vst3::sandbox::{SandboxResult, sandbox_call};
+        use crate::vst3::sandbox::sandbox_call;
 
         // Verify sandbox_call is accessible from the editor module
         let result = sandbox_call("editor_test", || 42);

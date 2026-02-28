@@ -4,6 +4,22 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.20.1] - 2026-02-28 — Clippy cleanup (no perf impact)
+
+### Summary
+
+Fixed all 26 remaining clippy warnings. Changes are purely code quality: unused import removal, `assert!` style fixes, struct initializer refactoring, iterator idioms in test code. No changes to any hot audio/IPC/rendering paths.
+
+**No benchmark regressions.**
+
+## [0.20.0] - 2026-02-28 — IBStream, editor fixes, lint cleanup (no perf impact)
+
+### Summary
+
+New IBStream COM implementation for plugin state transfer, editor z-order fix (`orderFrontRegardless`), plugin list filtering (Audio Module Class only), setComponentState for split-architecture plugins, and 30+ lint warning fixes. None of these changes touch hot audio/IPC/rendering paths — IBStream is used only during plugin initialization, and all other changes are GUI or code quality fixes.
+
+**No benchmark regressions.**
+
 ## [0.19.9] - 2026-02-28 — IPluginFactory3 vtable fix (no perf impact)
 
 ### Summary

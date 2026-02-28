@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.1] - 2026-02-28
+
+### Fixed
+- **All remaining clippy warnings** (26 errors under `-D warnings`): Codebase now passes `cargo clippy --lib --tests -- -D warnings` cleanly.
+  - Removed unused import `SandboxResult` in `src/gui/editor.rs`
+  - Removed unused import `PluginSlot` in `src/gui_tests.rs`
+  - Removed unnecessary `unsafe` block in `src/vst3/instance.rs` test
+  - Replaced 3 irrefutable `let Err(e) = result else { unreachable!() }` with `result.unwrap_err()` in `src/vst3/sandbox.rs`
+  - Replaced 2 `assert_eq!(x, true)` with `assert!(x)` in `src/gui/session.rs`
+  - Added `#[allow(clippy::assertions_on_constants)]` to theme constant test in `src/gui/theme.rs`
+  - Added `#[allow(clippy::too_many_arguments)]` to `point_in_triangle` in `src/gui_tests.rs`
+  - Replaced `changes.len() > 0` with `!changes.is_empty()` in `src/asan_tests.rs`
+  - Converted 4 needless range loops to `iter_mut().enumerate()` in `src/e2e_tests.rs`
+  - Refactored 12 `Default::default()` + field reassignment patterns to struct initializer syntax in `src/gui/app.rs`
+
+### Changed
+- Version bumped to 0.20.1
+- 726 tests passing (all green)
+
+## [0.20.0] - 2026-02-28
+
+### Added
+- **IBStream COM implementation** (`src/vst3/ibstream.rs`): Full `IBStream` interface for VST3 plugin state transfer — `read`, `write`, `seek`, `tell` over a `Vec<u8>` backing buffer. System-heap allocated via `host_alloc::system_alloc` for COM compatibility. `HostBStream::new()`, `from_data()`, `as_ptr()`, `take_data()`, `destroy()`. 6 new tests.
+- **Split-architecture controller state sync** (`src/vst3/instance.rs`): New `sync_component_state_to_controller()` method calls `IComponent::getState()` → `IEditController::setComponentState()` after controller initialization. This is required by the VST3 spec for split-component plugins (e.g., JUCE-based plugins like Monster) where the controller needs the component's state before it can create editor views.
+
+### Fixed
+- **Monster VST editor not opening**: JUCE-based plugins with separate component/controller architecture require `setComponentState()` to be called on the controller before `createView()` will succeed. Added IBStream implementation and state sync call to the plugin initialization flow.
+- **Editor window opens behind main window** (`src/gui/editor.rs`): Plugin editor windows now call `orderFrontRegardless` after `makeKeyAndOrderFront:` to ensure they appear in front of the main application window on macOS.
+- **Plugin list shows non-audio classes**: Both `app.rs` and `gui_worker.rs` now filter `filtered_classes()` to only show entries with `category == "Audio Module Class"`, hiding Component Controller and Plugin Compatibility classes that aren't directly loadable.
+- **30+ Clippy lint warnings**: Fixed all warnings across 15+ files — collapsed nested `if`s, removed identical branches, replaced manual Default impls with `#[derive(Default)]`, added `# Safety` docs to unsafe functions, used `matches!` macro, replaced `b"..."` literals with `c"..."`, removed unnecessary unsafe blocks and casts, suppressed false positives with targeted `#[allow]` attributes.
+- **Tautological boolean assertions** (`src/e2e_tests.rs`): Replaced `assert!(x || !x)` with `let _ = x;` in 2 E2E tests.
+
+### Changed
+- Version bumped to 0.20.0
+- 726 tests passing (687 unit + 39 E2E)
+
 ## [0.19.9] - 2026-02-28
 
 ### Fixed

@@ -1,4 +1,4 @@
-//! GUI module — Liquid Glass style interface using `egui` + `eframe`.
+//! GUI module — Interface using `egui` + `eframe`.
 //!
 //! This module provides a graphical user interface for the VST3 host with:
 //! - Plugin browser panel for scanning and loading plugins
