@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.22.1] - 2026-02-28 — GUI Window Close Fix (no perf impact)
+
+### Summary
+
+Fixed GUI window close causing reopen. Changes are limited to `gui_worker.rs` (send `GuiAction::Shutdown` on close) and `supervisor.rs` (`check_gui_exit` grace period). No changes to any audio processing, IPC, or COM hot paths.
+
+**No benchmark regressions.**
+
 ## [0.22.0] - 2026-02-28 — Modern UI Redesign (no perf impact)
 
 ### Summary

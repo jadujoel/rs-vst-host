@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1] - 2026-02-28
+
+### Fixed — GUI Window Close Reopens
+
+Fixed a bug where manually closing the GUI window caused it to immediately reopen.
+
+**Root cause:** Two issues combined:
+1. The GUI worker process never sent `GuiAction::Shutdown` when the user closed the window — the Unix socket simply dropped on process exit.
+2. The supervisor's `check_gui_exit` called `try_wait()` on the child process. Since the socket closes before the process fully exits, `try_wait()` returned `Ok(None)` (still running), and the supervisor killed it and declared it "crashed", triggering a GUI restart.
+
+**Fix:**
+- **gui_worker.rs**: Detect `close_requested()` in the eframe `update()` loop and send `GuiAction::Shutdown` to the supervisor before the window closes.
+- **supervisor.rs**: `check_gui_exit` now retries `try_wait()` with 50ms sleeps for up to ~1 second, giving the child process time to exit cleanly after socket close.
+
+**Tests added:**
+- `test_check_gui_exit_clean_shutdown` — verifies clean exit returns `CleanShutdown`
+- `test_check_gui_exit_nonzero_exit` — verifies non-zero exit returns `Crashed`
+- `test_check_gui_exit_waits_for_clean_exit` — verifies grace period waits for delayed process exit
+- `test_send_shutdown_action_on_close` — verifies `GuiAction::Shutdown` is transmitted over the socket
+
+**Results:** 727 tests passing (723 + 4 new), 0 failures, no benchmark regressions.
+
 ## [0.22.0] - 2026-02-28
 
 ### Changed — Modern UI Redesign

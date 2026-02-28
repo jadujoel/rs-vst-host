@@ -408,6 +408,15 @@ impl eframe::App for GuiWorkerApp {
             self.theme_applied = true;
         }
 
+        // Detect window close and send Shutdown to supervisor so it
+        // doesn't interpret the disconnect as a crash and relaunch.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            info!("Window close requested — sending Shutdown to supervisor");
+            self.send_action(GuiAction::Shutdown);
+            // Allow the message to be transmitted before dropping the socket
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
         // Poll for supervisor updates
         self.poll_updates();
 
@@ -1110,13 +1119,15 @@ impl GuiWorkerApp {
                                     }
 
                                     if is_active {
-                                        if has_editor && !self.safe_mode && ui
-                                            .add(
-                                                egui::Button::new("🎹")
-                                                    .fill(egui::Color32::TRANSPARENT),
-                                            )
-                                            .on_hover_text("Open plugin editor")
-                                            .clicked()
+                                        if has_editor
+                                            && !self.safe_mode
+                                            && ui
+                                                .add(
+                                                    egui::Button::new("🎹")
+                                                        .fill(egui::Color32::TRANSPARENT),
+                                                )
+                                                .on_hover_text("Open plugin editor")
+                                                .clicked()
                                         {
                                             open_editor = true;
                                         }
@@ -1656,5 +1667,26 @@ mod tests {
         assert!(!app.has_editor);
         assert!(!app.audio_status.running);
         assert!(app.status_message.contains("Audio crashed"));
+    }
+
+    #[test]
+    fn test_send_shutdown_action_on_close() {
+        // Verify that GuiAction::Shutdown can be sent and received over the socket,
+        // which is what happens when the window close is detected.
+        let (s1, s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        s2.set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .ok();
+        let mut app = GuiWorkerApp::new(s1);
+
+        // Simulate what happens when close_requested() is detected
+        app.send_action(GuiAction::Shutdown);
+
+        // The supervisor should receive the Shutdown action
+        let mut reader = s2;
+        let result = decode::<GuiAction>(&mut reader).expect("decode");
+        match result {
+            Some(GuiAction::Shutdown) => {} // expected
+            other => panic!("Expected Shutdown, got {:?}", other),
+        }
     }
 }

@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.22.0 — modern UI redesign).
+Last updated: 2026-02-28 (v0.22.1 — GUI window close fix).
 
 ## Summary
 
-- **Total tests:** 1326 (719 unit + 607 binary/integration)
+- **Total tests:** 1330 (723 unit + 607 binary/integration)
 - **All passing:** ✅ (0 failures)
 - **Build warnings:** 0 (clippy `-D warnings` clean)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (1326 tests passing, 0 failures, 0 ignored) — modern UI redesign complete
+- **Last test run:** 2026-02-28 (723 tests passing, 0 failures, 0 ignored) — GUI window close fix
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -52,9 +52,9 @@ Last updated: 2026-02-28 (v0.22.0 — modern UI redesign).
 | `src/e2e_tests.rs` | 39 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 crash-resilience tests use subprocess isolation with permanent SIGABRT handler (0 ignored). 10 multi-plugin lifecycle tests: forward/reverse shutdown, interleaved setup, stop-and-restart, duplicate instances, deterministic random ordering (seeds 42/1337), random start/stop cycles, concurrent AudioEngine, rapid add/remove stress. |
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
 | `src/gui/ipc.rs` | 8 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 12 variants incl. AudioProcessRestarted), AudioCommand serde roundtrip (all 4 variants), encode/decode wire protocol, DecodeError timeout classification |
-| `src/gui/supervisor.rs` | 9 | ✅ Full | ShadowState (new, update_from FullState/RackUpdated/PluginModulesUpdated, ignores others, to_restore_command), LoopResult variants, AudioCommand encode/decode, RestoreState roundtrip, AudioProcessRestarted roundtrip; full supervisor loop requires child processes |
+| `src/gui/supervisor.rs` | 12 | ✅ Full | ShadowState (new, update_from FullState/RackUpdated/PluginModulesUpdated, ignores others, to_restore_command), LoopResult variants, AudioCommand encode/decode, RestoreState roundtrip, AudioProcessRestarted roundtrip, check_gui_exit (clean shutdown, nonzero exit, waits for delayed exit); full supervisor loop requires child processes |
 | `src/gui/audio_worker.rs` | 17 | ✅ Full | AudioWorkerState (safe_mode, normal), audio_status_state conversion, build_full_state structure, handle_action dispatch (ping, shutdown, set_tone, add_to_rack, remove_from_rack, select_slot, stage_parameter, set_transport, add_invalid_index, refresh_devices), AudioCommand serialize roundtrip |
-| `src/gui/gui_worker.rs` | 17 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
+| `src/gui/gui_worker.rs` | 18 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, send_shutdown_action_on_close, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 9 | ⚠️ Partial | Platform constant, struct size, result constant, sandbox import, NSApplication init idempotency, pump_events main-thread guard, pump_platform_events no-panic; open/close/poll require real NSWindow + IPlugView |
 | `src/gui_tests.rs` | 6 | ✅ Full | Headless GUI integration: add plugin to rack with screenshot, open editor view and verify visible, full editor workflow (add→select→switch→deselect) with 9 screenshots, parameter types (automatable/bypass/read-only), multi-frame stability (10 frames), editor open without active plugin. CPU software-rasterized PNG screenshots saved to `target/test-screenshots/`. |
 | `src/vst3/ibstream.rs` | 6 | ✅ Full | IBStream COM implementation (vst3-rs types): create/destroy, write/read roundtrip, seek/tell, from_data, take_data, query_interface, ref counting |

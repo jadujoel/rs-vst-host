@@ -746,18 +746,37 @@ fn try_restart_audio_worker(
 // ── Helper functions ────────────────────────────────────────────────────
 
 /// Check the GUI child process exit status.
+///
+/// When the user closes the window, the eframe event loop ends and the
+/// process begins shutting down. The socket may close (causing the
+/// supervisor to detect EOF) *before* the process has fully exited.
+/// We therefore give the child a short grace period to exit cleanly
+/// before declaring it crashed.
 fn check_gui_exit(child: &mut Child) -> LoopResult {
-    match child.try_wait() {
-        Ok(Some(status)) if status.success() => LoopResult::CleanShutdown,
-        Ok(Some(status)) => LoopResult::Crashed(format!("GUI exited with {}", status)),
-        Ok(None) => {
-            // Child is still running but socket closed — kill it
-            let _ = child.kill();
-            let _ = child.wait();
-            LoopResult::Crashed("GUI socket closed unexpectedly".into())
+    // Give the child a brief grace period to finish exiting.
+    // The socket can close before the process exits when the user
+    // closes the window normally.
+    for _ in 0..20 {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                return LoopResult::CleanShutdown;
+            }
+            Ok(Some(status)) => {
+                return LoopResult::Crashed(format!("GUI exited with {}", status));
+            }
+            Ok(None) => {
+                // Still running — wait a bit
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return LoopResult::Crashed(format!("wait error: {}", e));
+            }
         }
-        Err(e) => LoopResult::Crashed(format!("wait error: {}", e)),
     }
+    // Child still hasn't exited after ~1s — treat as crashed
+    let _ = child.kill();
+    let _ = child.wait();
+    LoopResult::Crashed("GUI socket closed unexpectedly and process did not exit".into())
 }
 
 /// Send an `AudioCommand` to the audio worker.
@@ -1015,5 +1034,57 @@ mod tests {
         let decoded: SupervisorUpdate = serde_json::from_str(&json).expect("deserialize");
         let json2 = serde_json::to_string(&decoded).expect("re-serialize");
         assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn test_check_gui_exit_clean_shutdown() {
+        // Spawn a child that exits successfully
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn true");
+        // Wait for it to finish
+        let _ = child.wait();
+        let result = check_gui_exit(&mut child);
+        match result {
+            LoopResult::CleanShutdown => {}
+            LoopResult::Crashed(msg) => panic!("Expected CleanShutdown, got Crashed: {}", msg),
+        }
+    }
+
+    #[test]
+    fn test_check_gui_exit_nonzero_exit() {
+        // Spawn a child that exits with failure
+        let mut child = std::process::Command::new("false")
+            .spawn()
+            .expect("spawn false");
+        // Wait for it to finish
+        let _ = child.wait();
+        let result = check_gui_exit(&mut child);
+        match result {
+            LoopResult::Crashed(msg) => {
+                assert!(
+                    msg.contains("GUI exited with"),
+                    "Expected 'GUI exited with' in: {}",
+                    msg
+                );
+            }
+            LoopResult::CleanShutdown => panic!("Expected Crashed, got CleanShutdown"),
+        }
+    }
+
+    #[test]
+    fn test_check_gui_exit_waits_for_clean_exit() {
+        // Spawn a child that sleeps briefly then exits cleanly.
+        // This tests that check_gui_exit waits instead of immediately
+        // declaring a crash when the process hasn't exited yet.
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.1")
+            .spawn()
+            .expect("spawn sleep");
+        let result = check_gui_exit(&mut child);
+        match result {
+            LoopResult::CleanShutdown => {}
+            LoopResult::Crashed(msg) => panic!("Expected CleanShutdown, got Crashed: {}", msg),
+        }
     }
 }
