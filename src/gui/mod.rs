@@ -31,6 +31,7 @@ pub mod routing;
 pub mod session;
 pub mod supervisor;
 pub mod theme;
+pub mod undo;
 
 /// Launch the GUI in-process (legacy mode). Blocks until window is closed.
 pub use app::launch;

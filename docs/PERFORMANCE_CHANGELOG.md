@@ -4,6 +4,18 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.25.0] - 2026-02-28 — Undo/Redo System (no perf impact)
+
+### Summary
+
+Phase 8.4 implementation: full undo/redo system with command pattern, parameter coalescing, GUI buttons, and keyboard shortcuts. New `gui/undo.rs` module with `UndoableAction` enum (7 variants), `UndoStack` with configurable max depth and coalescing window. Integrated into HostApp for rack operations, parameter changes, and transport changes.
+
+**Changes to hot paths:** None. The undo system is purely control-plane code — `UndoStack::push()` is called from GUI event handlers (button clicks, slider releases, keyboard shortcuts), never from the audio callback. Parameter coalescing uses `std::time::Instant` comparisons, which are negligible. No changes to the audio `process()` loop, IPC messages, or shared memory buffers.
+
+**New modules:** `gui/undo.rs` (in-memory undo/redo stacks, not on any hot path).
+
+**No benchmark regressions.**
+
 ## [0.24.0] - 2026-02-28 — Preset Buttons & Multi-Plugin Routing (no perf impact)
 
 ### Summary

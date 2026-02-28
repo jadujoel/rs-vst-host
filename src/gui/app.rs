@@ -9,6 +9,7 @@ use crate::audio::graph::AudioGraph;
 use crate::gui::backend::{HostBackend, ParamSnapshot};
 use crate::gui::session::Session;
 use crate::gui::theme;
+use crate::gui::undo::{UndoStack, UndoableAction};
 use crate::vst3::{cache, presets, scanner, types::PluginClassInfo, types::PluginModuleInfo};
 
 use eframe::egui;
@@ -165,6 +166,8 @@ pub struct HostApp {
     pub routing_graph: AudioGraph,
     /// Whether the advanced routing editor is visible (vs simple rack view).
     pub show_routing_editor: bool,
+    /// Undo/redo stack for reversible actions.
+    pub undo_stack: UndoStack,
 }
 
 impl HostApp {
@@ -233,6 +236,7 @@ impl HostApp {
             current_preset_name: None,
             routing_graph: AudioGraph::new(),
             show_routing_editor: false,
+            undo_stack: UndoStack::new(),
         }
     }
 
@@ -298,7 +302,7 @@ impl HostApp {
         );
     }
 
-    /// Add a plugin class to the rack.
+    /// Add a plugin class to the rack (with undo tracking).
     pub fn add_to_rack(&mut self, module: &PluginModuleInfo, class: &PluginClassInfo) {
         let vendor = class
             .vendor
@@ -309,7 +313,7 @@ impl HostApp {
 
         let slot = PluginSlot {
             name: class.name.clone(),
-            vendor,
+            vendor: vendor.clone(),
             category: class.category.clone(),
             path: module.path.clone(),
             cid: class.cid,
@@ -323,6 +327,17 @@ impl HostApp {
         let slot_index = self.rack.len();
         self.status_message = format!("Added '{}' to the rack.", slot.name);
         let slot_name = slot.name.clone();
+
+        // Record undo action
+        self.undo_stack.push(UndoableAction::AddPlugin {
+            slot_index,
+            name: slot.name.clone(),
+            vendor: slot.vendor.clone(),
+            category: slot.category.clone(),
+            path: slot.path.clone(),
+            cid: slot.cid,
+        });
+
         self.rack.push(slot);
 
         // Update routing graph — add plugin node to the serial chain
@@ -330,10 +345,24 @@ impl HostApp {
         tracing::debug!(slot_index, name = %slot_name, "Added plugin to rack and routing graph");
     }
 
-    /// Remove a plugin slot by index.
+    /// Remove a plugin slot by index (with undo tracking).
     pub fn remove_from_rack(&mut self, index: usize) {
         if index < self.rack.len() {
-            let name = self.rack[index].name.clone();
+            let slot = &self.rack[index];
+            let name = slot.name.clone();
+
+            // Record undo action (capture slot state for restore)
+            self.undo_stack.push(UndoableAction::RemovePlugin {
+                slot_index: index,
+                name: slot.name.clone(),
+                vendor: slot.vendor.clone(),
+                category: slot.category.clone(),
+                path: slot.path.clone(),
+                cid: slot.cid,
+                param_cache: slot.param_cache.clone(),
+                component_state: slot.component_state.clone(),
+                controller_state: slot.controller_state.clone(),
+            });
 
             // If the removed slot was active, deactivate it
             if self.backend.active_slot_index() == Some(index) {
@@ -501,13 +530,23 @@ impl HostApp {
         }
     }
 
-    /// Sync GUI transport state changes to the audio engine.
+    /// Sync GUI transport state changes to the audio engine (with undo tracking).
     pub fn sync_transport(&mut self) {
         if !self.backend.is_active() {
+            // Still update prev values to avoid spurious undo entries when activating
+            self.prev_tempo = self.transport.tempo;
+            self.prev_time_sig_num = self.transport.time_sig_num;
+            self.prev_time_sig_den = self.transport.time_sig_den;
+            self.prev_playing = self.transport.playing;
             return;
         }
 
         if self.transport.tempo != self.prev_tempo {
+            // Record undo for tempo change
+            self.undo_stack.push(UndoableAction::SetTempo {
+                old_bpm: self.prev_tempo,
+                new_bpm: self.transport.tempo,
+            });
             self.backend.set_tempo(self.transport.tempo);
             self.prev_tempo = self.transport.tempo;
         }
@@ -515,6 +554,13 @@ impl HostApp {
         if self.transport.time_sig_num != self.prev_time_sig_num
             || self.transport.time_sig_den != self.prev_time_sig_den
         {
+            // Record undo for time signature change
+            self.undo_stack.push(UndoableAction::SetTimeSignature {
+                old_numerator: self.prev_time_sig_num,
+                old_denominator: self.prev_time_sig_den,
+                new_numerator: self.transport.time_sig_num,
+                new_denominator: self.transport.time_sig_den,
+            });
             self.backend
                 .set_time_signature(self.transport.time_sig_num, self.transport.time_sig_den);
             self.prev_time_sig_num = self.transport.time_sig_num;
@@ -779,6 +825,217 @@ impl HostApp {
         }
         results
     }
+
+    // ── Undo/Redo ─────────────────────────────────────────────────────
+
+    /// Perform an undo operation.
+    ///
+    /// Pops the most recent action from the undo stack and applies its
+    /// inverse to the application state.
+    pub fn perform_undo(&mut self) {
+        let action = match self.undo_stack.undo() {
+            Some(a) => a,
+            None => return,
+        };
+        let desc = action.description();
+        self.apply_undo_action(&action, false);
+        self.status_message = format!("↩ Undo: {}", desc);
+    }
+
+    /// Perform a redo operation.
+    ///
+    /// Pops the most recent undone action from the redo stack and
+    /// re-applies it to the application state.
+    pub fn perform_redo(&mut self) {
+        let action = match self.undo_stack.redo() {
+            Some(a) => a,
+            None => return,
+        };
+        let desc = action.description();
+        self.apply_undo_action(&action, true);
+        self.status_message = format!("↪ Redo: {}", desc);
+    }
+
+    /// Apply an undo or redo action to the application state.
+    ///
+    /// When `is_redo` is false, the action's *inverse* is applied (undo).
+    /// When `is_redo` is true, the action itself is re-applied (redo).
+    fn apply_undo_action(&mut self, action: &UndoableAction, is_redo: bool) {
+        // For undo, we need to reverse the action.
+        // For redo, we re-apply the action as-is.
+        match action {
+            UndoableAction::SetParameter {
+                slot_index: _,
+                param_id,
+                old_value,
+                new_value,
+                ..
+            } => {
+                let target = if is_redo { *new_value } else { *old_value };
+                let is_active = self.backend.is_active();
+                if is_active {
+                    if let Err(e) = self.backend.set_parameter(*param_id, target) {
+                        tracing::warn!(param_id, error = %e, "undo/redo param set failed");
+                    }
+                }
+            }
+
+            UndoableAction::AddPlugin {
+                slot_index,
+                name,
+                vendor,
+                category,
+                path,
+                cid,
+            } => {
+                if is_redo {
+                    // Re-add the plugin at the original index
+                    let slot = PluginSlot {
+                        name: name.clone(),
+                        vendor: vendor.clone(),
+                        category: category.clone(),
+                        path: path.clone(),
+                        cid: *cid,
+                        bypassed: false,
+                        param_cache: Vec::new(),
+                        staged_changes: Vec::new(),
+                        component_state: None,
+                        controller_state: None,
+                    };
+                    let insert_idx = (*slot_index).min(self.rack.len());
+                    self.rack.insert(insert_idx, slot);
+                    self.sync_routing_graph();
+                } else {
+                    // Undo add = remove without pushing to undo stack
+                    let remove_idx = (*slot_index).min(self.rack.len().saturating_sub(1));
+                    if remove_idx < self.rack.len() {
+                        if self.backend.active_slot_index() == Some(remove_idx) {
+                            self.backend.deactivate_plugin();
+                            self.param_snapshots.clear();
+                        }
+                        self.rack.remove(remove_idx);
+                        if self.selected_slot == Some(remove_idx) {
+                            self.selected_slot = None;
+                            self.param_snapshots.clear();
+                        } else if let Some(sel) = self.selected_slot {
+                            if sel > remove_idx {
+                                self.selected_slot = Some(sel - 1);
+                            }
+                        }
+                        self.sync_routing_graph();
+                    }
+                }
+            }
+
+            UndoableAction::RemovePlugin {
+                slot_index,
+                name,
+                vendor,
+                category,
+                path,
+                cid,
+                param_cache,
+                component_state,
+                controller_state,
+            } => {
+                if is_redo {
+                    // Re-remove the plugin
+                    let remove_idx = (*slot_index).min(self.rack.len().saturating_sub(1));
+                    if remove_idx < self.rack.len() {
+                        if self.backend.active_slot_index() == Some(remove_idx) {
+                            self.backend.deactivate_plugin();
+                            self.param_snapshots.clear();
+                        }
+                        self.rack.remove(remove_idx);
+                        if self.selected_slot == Some(remove_idx) {
+                            self.selected_slot = None;
+                            self.param_snapshots.clear();
+                        } else if let Some(sel) = self.selected_slot {
+                            if sel > remove_idx {
+                                self.selected_slot = Some(sel - 1);
+                            }
+                        }
+                        self.sync_routing_graph();
+                    }
+                } else {
+                    // Undo remove = re-insert the plugin with its saved state
+                    let slot = PluginSlot {
+                        name: name.clone(),
+                        vendor: vendor.clone(),
+                        category: category.clone(),
+                        path: path.clone(),
+                        cid: *cid,
+                        bypassed: false,
+                        param_cache: param_cache.clone(),
+                        staged_changes: Vec::new(),
+                        component_state: component_state.clone(),
+                        controller_state: controller_state.clone(),
+                    };
+                    let insert_idx = (*slot_index).min(self.rack.len());
+                    self.rack.insert(insert_idx, slot);
+                    self.sync_routing_graph();
+                }
+            }
+
+            UndoableAction::ReorderPlugin {
+                old_index,
+                new_index,
+            } => {
+                let (from, to) = if is_redo {
+                    (*old_index, *new_index)
+                } else {
+                    (*new_index, *old_index)
+                };
+                if from < self.rack.len() {
+                    let slot = self.rack.remove(from);
+                    let to_clamped = to.min(self.rack.len());
+                    self.rack.insert(to_clamped, slot);
+                    self.sync_routing_graph();
+                }
+            }
+
+            UndoableAction::LoadPreset {
+                old_component_state,
+                old_controller_state,
+                new_component_state,
+                new_controller_state,
+                ..
+            } => {
+                let (comp, ctrl) = if is_redo {
+                    (new_component_state, new_controller_state)
+                } else {
+                    (old_component_state, old_controller_state)
+                };
+                if let Some(data) = comp {
+                    self.backend.set_component_state(data);
+                }
+                if let Some(data) = ctrl {
+                    self.backend.set_controller_state(data);
+                }
+                self.param_snapshots = self.backend.active_param_snapshots();
+            }
+
+            UndoableAction::SetTempo { old_bpm, new_bpm } => {
+                let target = if is_redo { *new_bpm } else { *old_bpm };
+                self.transport.tempo = target;
+            }
+
+            UndoableAction::SetTimeSignature {
+                old_numerator,
+                old_denominator,
+                new_numerator,
+                new_denominator,
+            } => {
+                if is_redo {
+                    self.transport.time_sig_num = *new_numerator;
+                    self.transport.time_sig_den = *new_denominator;
+                } else {
+                    self.transport.time_sig_num = *old_numerator;
+                    self.transport.time_sig_den = *old_denominator;
+                }
+            }
+        }
+    }
 }
 
 // ── eframe::App Implementation ──────────────────────────────────────────────
@@ -837,11 +1094,29 @@ impl eframe::App for HostApp {
         self.backend.poll_editors();
 
         // Keyboard shortcuts
+        let mut undo_requested = false;
+        let mut redo_requested = false;
         ctx.input(|input| {
             if input.key_pressed(egui::Key::Space) {
                 self.transport.playing = !self.transport.playing;
             }
+            // Cmd+Z / Ctrl+Z → Undo
+            if input.modifiers.command && !input.modifiers.shift && input.key_pressed(egui::Key::Z)
+            {
+                undo_requested = true;
+            }
+            // Cmd+Shift+Z / Ctrl+Shift+Z → Redo
+            if input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::Z) {
+                redo_requested = true;
+            }
         });
+
+        if undo_requested {
+            self.perform_undo();
+        }
+        if redo_requested {
+            self.perform_redo();
+        }
 
         // — Heap Corruption Warning Banner (persistent, shown at top) —
         if self.heap_corruption_detected {
@@ -1089,6 +1364,10 @@ impl HostApp {
 
     /// Render the bottom bar with tabbed views: Transport, Devices, Session.
     pub(crate) fn show_bottom_bar(&mut self, ui: &mut egui::Ui) {
+        // Deferred undo/redo actions (avoid borrow issues)
+        let mut do_undo = false;
+        let mut do_redo = false;
+
         // Tab selector row with styled tabs
         ui.horizontal(|ui| {
             for (tab, label) in [
@@ -1118,6 +1397,55 @@ impl HostApp {
                 }
             }
 
+            // Undo/Redo buttons
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            let undo_color = if self.undo_stack.can_undo() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_DISABLED
+            };
+            let undo_btn = egui::Button::new(egui::RichText::new("↩").color(undo_color).size(14.0))
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+            let undo_tooltip = self
+                .undo_stack
+                .undo_description()
+                .map(|d| format!("Undo: {} (⌘Z)", d))
+                .unwrap_or_else(|| "Nothing to undo".into());
+            if ui
+                .add_enabled(self.undo_stack.can_undo(), undo_btn)
+                .on_hover_text(&undo_tooltip)
+                .clicked()
+            {
+                do_undo = true;
+            }
+
+            let redo_color = if self.undo_stack.can_redo() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_DISABLED
+            };
+            let redo_btn = egui::Button::new(egui::RichText::new("↪").color(redo_color).size(14.0))
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+            let redo_tooltip = self
+                .undo_stack
+                .redo_description()
+                .map(|d| format!("Redo: {} (⌘⇧Z)", d))
+                .unwrap_or_else(|| "Nothing to redo".into());
+            if ui
+                .add_enabled(self.undo_stack.can_redo(), redo_btn)
+                .on_hover_text(&redo_tooltip)
+                .clicked()
+            {
+                do_redo = true;
+            }
+
             // Status at the right edge
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
@@ -1127,6 +1455,14 @@ impl HostApp {
                 );
             });
         });
+
+        // Apply deferred undo/redo
+        if do_undo {
+            self.perform_undo();
+        }
+        if do_redo {
+            self.perform_redo();
+        }
 
         // Thin separator
         let sep_rect = ui.available_rect_before_wrap();
@@ -1799,6 +2135,23 @@ impl HostApp {
 
         // Apply deferred parameter changes
         for (id, value) in param_changes {
+            // Find old value and param name for undo tracking
+            let (old_value, param_name) = self
+                .param_snapshots
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| (s.value, s.title.clone()))
+                .unwrap_or((0.0, format!("Param {}", id)));
+
+            // Record undo action (coalescing handles slider drags)
+            self.undo_stack.push(UndoableAction::SetParameter {
+                slot_index: idx,
+                param_id: id,
+                old_value,
+                new_value: value,
+                param_name,
+            });
+
             if is_active {
                 // Live: push to audio thread
                 match self.backend.set_parameter(id, value) {
@@ -2620,12 +2973,17 @@ mod tests {
         app.transport.tempo = 140.0;
         app.transport.playing = true;
 
-        // Sync should NOT update prev values (no active plugin)
+        // Sync should update prev values (to avoid spurious undo entries
+        // when a plugin is later activated) but NOT push undo entries
         app.sync_transport();
 
-        // prev values unchanged because no active plugin
-        assert_eq!(app.prev_tempo, 120.0);
-        assert!(!app.prev_playing);
+        // prev values updated to match transport (no undo entries created)
+        assert_eq!(app.prev_tempo, 140.0);
+        assert!(app.prev_playing);
+        assert!(
+            !app.undo_stack.can_undo(),
+            "No undo entries without active plugin"
+        );
     }
 
     #[test]
@@ -2986,5 +3344,160 @@ mod tests {
     fn test_new_has_no_custom_paths() {
         let app = HostApp::new(false, false);
         assert!(app.custom_paths.is_empty());
+    }
+
+    // ── Undo/Redo integration tests ─────────────────────────────────
+
+    #[test]
+    fn test_undo_stack_initially_empty() {
+        let app = HostApp::default();
+        assert!(!app.undo_stack.can_undo());
+        assert!(!app.undo_stack.can_redo());
+    }
+
+    #[test]
+    fn test_add_to_rack_creates_undo_entry() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        let class = &module.classes[0];
+        app.add_to_rack(&module, class);
+
+        assert!(app.undo_stack.can_undo(), "Add should create undo entry");
+        assert_eq!(app.rack.len(), 1);
+    }
+
+    #[test]
+    fn test_undo_add_to_rack() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        let class = &module.classes[0];
+        app.add_to_rack(&module, class);
+        assert_eq!(app.rack.len(), 1);
+
+        // Undo the add
+        app.perform_undo();
+        assert_eq!(app.rack.len(), 0, "Undo should remove the plugin");
+    }
+
+    #[test]
+    fn test_redo_add_to_rack() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        let class = &module.classes[0];
+        app.add_to_rack(&module, class);
+
+        app.perform_undo();
+        assert_eq!(app.rack.len(), 0);
+
+        app.perform_redo();
+        assert_eq!(app.rack.len(), 1, "Redo should re-add the plugin");
+        assert_eq!(app.rack[0].name, "TestSynth");
+    }
+
+    #[test]
+    fn test_remove_from_rack_creates_undo_entry() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        assert!(app.undo_stack.can_undo());
+
+        // Clear the add undo entry to isolate the remove test
+        app.undo_stack.clear();
+
+        app.remove_from_rack(0);
+        assert_eq!(app.rack.len(), 0);
+        assert!(app.undo_stack.can_undo(), "Remove should create undo entry");
+    }
+
+    #[test]
+    fn test_undo_remove_from_rack() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.undo_stack.clear(); // clear add entry
+
+        app.remove_from_rack(0);
+        assert_eq!(app.rack.len(), 0);
+
+        app.perform_undo();
+        assert_eq!(app.rack.len(), 1, "Undo remove should restore plugin");
+        assert_eq!(app.rack[0].name, "TestSynth");
+    }
+
+    #[test]
+    fn test_undo_redo_multiple_operations() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+
+        // Add two plugins
+        app.add_to_rack(&module, &module.classes[0]);
+        app.add_to_rack(&module, &module.classes[1]);
+        assert_eq!(app.rack.len(), 2);
+
+        // Undo both adds
+        app.perform_undo();
+        assert_eq!(app.rack.len(), 1);
+        app.perform_undo();
+        assert_eq!(app.rack.len(), 0);
+
+        // Redo both
+        app.perform_redo();
+        assert_eq!(app.rack.len(), 1);
+        app.perform_redo();
+        assert_eq!(app.rack.len(), 2);
+    }
+
+    #[test]
+    fn test_new_action_clears_redo_in_app() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+
+        app.add_to_rack(&module, &module.classes[0]);
+        app.perform_undo();
+        assert!(app.undo_stack.can_redo());
+
+        // New action should clear redo
+        app.add_to_rack(&module, &module.classes[1]);
+        assert!(!app.undo_stack.can_redo());
+    }
+
+    #[test]
+    fn test_perform_undo_no_op_when_empty() {
+        let mut app = HostApp::default();
+        app.perform_undo(); // Should not panic
+        assert!(app.status_message.contains("No plugins cached") || !app.status_message.is_empty());
+    }
+
+    #[test]
+    fn test_perform_redo_no_op_when_empty() {
+        let mut app = HostApp::default();
+        app.perform_redo(); // Should not panic
+    }
+
+    #[test]
+    fn test_undo_status_message() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+
+        app.perform_undo();
+        assert!(
+            app.status_message.starts_with("↩ Undo:"),
+            "Status should indicate undo action"
+        );
+    }
+
+    #[test]
+    fn test_redo_status_message() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+
+        app.perform_undo();
+        app.perform_redo();
+        assert!(
+            app.status_message.starts_with("↪ Redo:"),
+            "Status should indicate redo action"
+        );
     }
 }

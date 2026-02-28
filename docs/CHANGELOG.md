@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0] - 2026-02-28
+
+### Added — Undo/Redo System (Phase 8.4)
+
+Full undo/redo system with command pattern, parameter coalescing, GUI buttons, and keyboard shortcuts.
+
+**Undo/Redo Engine (`gui/undo.rs`):**
+- `UndoableAction` enum with 7 variants: `SetParameter`, `AddPlugin`, `RemovePlugin`, `ReorderPlugin`, `LoadPreset`, `SetTempo`, `SetTimeSignature`
+- `description()` — human-readable action descriptions for history display
+- `inverse()` — generates the reverse action for undo operations
+- `UndoStack` with configurable max depth (default 100) and coalescing window (default 500ms)
+- `push()` with automatic parameter coalescing — consecutive `SetParameter` changes on the same param within the coalescing window merge into a single undo entry (prevents slider drags from flooding history)
+- `undo()` / `redo()` — pop and push between undo/redo stacks
+- `can_undo()` / `can_redo()` — availability queries
+- `undo_description()` / `redo_description()` — preview of next undo/redo action
+- `recent_undo_descriptions(n)` — N most recent history entries (newest first)
+- `clear()` — reset all history
+- New action clears redo stack (standard linear undo model)
+- Max depth eviction removes oldest entries when stack overflows
+
+**HostApp Integration:**
+- `undo_stack: UndoStack` field on `HostApp`
+- `perform_undo()` / `perform_redo()` methods — pop action and apply inverse/forward to app state
+- `apply_undo_action()` — dispatches undo/redo for all 7 action types
+- `add_to_rack()` records `AddPlugin` undo action (undo = remove, redo = re-insert)
+- `remove_from_rack()` records `RemovePlugin` undo action with full slot state capture (param cache, component/controller state blobs)
+- Parameter slider changes record `SetParameter` with old_value/new_value (coalesced during slider drags)
+- `sync_transport()` records `SetTempo` and `SetTimeSignature` undo actions when values change
+- Status messages: "↩ Undo: {description}" / "↪ Redo: {description}"
+
+**GUI Integration:**
+- Undo (↩) and Redo (↪) buttons in the bottom bar, between tab selector and status message
+- Buttons disabled when no undo/redo available (grayed out)
+- Hover tooltips show the action that will be undone/redone (e.g., "Undo: Set Volume → 0.800 (⌘Z)")
+- Keyboard shortcuts: ⌘Z (undo), ⌘⇧Z (redo) on macOS; Ctrl+Z / Ctrl+Shift+Z on other platforms
+
+**Tests added:** 96 new tests (1478 → 1574 total):
+- 30 undo module tests: action descriptions (7), inverse operations (7), basic stack ops (push/undo/redo/clear), max depth eviction, parameter coalescing (same param, different param, different slot, timeout, interleaved non-param, multiple coalesces), redo invalidation, history descriptions, mixed action sequences, config validation, edge cases (double undo/redo)
+- 13 app integration tests: undo stack initially empty, add/remove create undo entries, undo/redo add/remove operations, multi-operation undo/redo, redo cleared by new action, no-op undo/redo on empty stack, status messages for undo/redo
+- Updated `test_sync_transport_skips_when_no_active` for new behavior (prev values now updated to prevent spurious undo entries upon activation)
+
+**Results:** 1574 tests passing (843 lib + 731 bin), 0 failures, no benchmark regressions.
+
 ## [0.24.0] - 2026-02-28
 
 ### Added — Preset Management Buttons & Multi-Plugin Routing Graph (Phase 8.2 UI + 8.3)

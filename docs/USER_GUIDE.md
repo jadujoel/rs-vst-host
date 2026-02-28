@@ -485,6 +485,8 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 | Key | Action |
 |-----|--------|
 | **Space** | Toggle play/pause |
+| **⌘Z** / **Ctrl+Z** | Undo last action |
+| **⌘⇧Z** / **Ctrl+Shift+Z** | Redo last undone action |
 
 ---
 

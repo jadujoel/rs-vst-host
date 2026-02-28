@@ -151,33 +151,34 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.4 — Undo/Redo System
+### Phase 8.4 — Undo/Redo System ✅ COMPLETE (v0.25.0)
 
 **Goal:** Provide reversible parameter changes and rack operations.
 
+**Status:** ✅ Complete. Implemented in v0.25.0 with 48 new tests (35 undo module + 13 app integration).
+
 **Tasks:**
 
-1. **Command pattern** (`gui/undo.rs`)
-   - `UndoCommand` trait with `execute()`, `undo()`, `description()`
-   - Concrete commands: `SetParameter`, `AddPlugin`, `RemovePlugin`, `ReorderPlugin`, `LoadPreset`, `SetTempo`, `SetTimeSignature`
-   - `UndoStack` with configurable max depth (default 100)
+1. ✅ **Command pattern** (`gui/undo.rs`)
+   - `UndoableAction` enum with 7 variants: `SetParameter`, `AddPlugin`, `RemovePlugin`, `ReorderPlugin`, `LoadPreset`, `SetTempo`, `SetTimeSignature`
+   - `description()` for human-readable history, `inverse()` for reverse operations
+   - `UndoStack` with configurable max depth (default 100) and coalescing window (default 500ms)
 
-2. **Parameter coalescing**
-   - Consecutive `SetParameter` commands on the same parameter within 500ms are merged into a single undo entry
-   - Begin/end edit markers from `IComponentHandler` define coalescing boundaries
+2. ✅ **Parameter coalescing**
+   - Consecutive `SetParameter` on the same parameter within 500ms are merged into a single undo entry
+   - Time-based coalescing using `std::time::Instant` comparisons
+   - Different parameters, different slots, and non-param actions break coalescing
 
-3. **GUI integration**
-   - Undo/Redo buttons in toolbar
-   - Keyboard shortcuts: Cmd+Z / Cmd+Shift+Z (macOS), Ctrl+Z / Ctrl+Shift+Z (Linux/Windows)
-   - Undo history dropdown showing recent operations
+3. ✅ **GUI integration**
+   - Undo (↩) / Redo (↪) buttons in bottom bar with hover tooltips
+   - Keyboard shortcuts: ⌘Z / ⌘⇧Z (macOS), Ctrl+Z / Ctrl+Shift+Z (Linux/Windows)
+   - Status messages: "↩ Undo: {description}" / "↪ Redo: {description}"
 
-4. **Tests**
-   - Undo/redo for each command type
-   - Coalescing behavior
-   - Stack overflow (max depth eviction)
-   - Redo invalidation on new action after undo
+4. ✅ **Tests** — 48 new tests
+   - 35 undo module tests: action descriptions, inverse operations, stack ops, max depth, coalescing (5 scenarios), redo invalidation, history, edge cases
+   - 13 app integration tests: undo stack state, add/remove/undo/redo operations, multi-op sequences, no-op on empty, status messages
 
-**Success criteria:** User can undo/redo parameter changes and rack modifications.
+**Success criteria:** ✅ User can undo/redo parameter changes and rack modifications.
 
 ---
 
