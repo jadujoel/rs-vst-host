@@ -39,15 +39,18 @@ use tracing::{debug, error, info, warn};
 /// * `socket_path` — Path to the Unix domain socket for IPC with the supervisor.
 /// * `safe_mode` — If true, no plugins loaded from cache on startup.
 /// * `malloc_debug` — If true, enable periodic heap checks.
+/// * `paths` — If non-empty, only these paths are scanned (defaults excluded).
 pub fn launch_audio_worker(
     socket_path: &str,
     safe_mode: bool,
     _malloc_debug: bool,
+    paths: Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     let _span = tracing::info_span!("audio_worker").entered();
     info!(
         socket = %socket_path,
         safe_mode,
+        custom_paths = !paths.is_empty(),
         "Audio worker starting"
     );
 
@@ -60,7 +63,7 @@ pub fn launch_audio_worker(
     info!("Connected to supervisor");
 
     // Build initial state
-    let mut state = AudioWorkerState::new(safe_mode);
+    let mut state = AudioWorkerState::new(safe_mode, paths);
 
     // Enter message loop
     let result = run_audio_loop(&stream, &mut state, safe_mode);
@@ -92,11 +95,13 @@ struct AudioWorkerState {
     transport: TransportUpdate,
     /// Session file path.
     session_path: String,
+    /// Custom scan paths (exclusive — when non-empty, defaults are skipped).
+    custom_paths: Vec<PathBuf>,
 }
 
 impl AudioWorkerState {
     /// Create a new audio worker state with default configuration.
-    fn new(safe_mode: bool) -> Self {
+    fn new(safe_mode: bool, custom_paths: Vec<PathBuf>) -> Self {
         let backend = HostBackend::new();
         let plugin_modules: Vec<PluginModuleInfo> = if safe_mode {
             Vec::new()
@@ -136,6 +141,7 @@ impl AudioWorkerState {
                 time_sig_den: 4,
             },
             session_path,
+            custom_paths,
         }
     }
 }
@@ -170,6 +176,7 @@ fn run_audio_loop(
                         &mut state.tone_enabled,
                         &mut state.transport,
                         safe_mode,
+                        &state.custom_paths,
                     );
 
                     for update in responses {
@@ -338,6 +345,7 @@ fn handle_action(
     tone_enabled: &mut bool,
     transport: &mut TransportUpdate,
     safe_mode: bool,
+    custom_paths: &[PathBuf],
 ) -> Vec<SupervisorUpdate> {
     match action {
         GuiAction::Ping => vec![SupervisorUpdate::Pong],
@@ -347,7 +355,11 @@ fn handle_action(
         GuiAction::ScanPlugins => {
             *status_message = "Scanning for plugins…".into();
 
-            let search_paths = scanner::default_vst3_paths();
+            let search_paths = if custom_paths.is_empty() {
+                scanner::default_vst3_paths()
+            } else {
+                custom_paths.to_vec()
+            };
             let bundles = scanner::discover_bundles(&search_paths);
 
             let mut modules: Vec<PluginModuleInfo> = Vec::new();
@@ -907,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_audio_worker_state_default() {
-        let state = AudioWorkerState::new(true);
+        let state = AudioWorkerState::new(true, Vec::new());
         assert!(state.plugin_modules.is_empty());
         assert!(state.rack.is_empty());
         assert_eq!(state.selected_slot, None);
@@ -918,10 +930,26 @@ mod tests {
 
     #[test]
     fn test_audio_worker_state_normal() {
-        let state = AudioWorkerState::new(false);
+        let state = AudioWorkerState::new(false, Vec::new());
         // Modules may or may not exist depending on cache
         assert!(state.rack.is_empty());
         assert_eq!(state.selected_slot, None);
+        assert!(state.custom_paths.is_empty());
+    }
+
+    #[test]
+    fn test_audio_worker_state_with_custom_paths() {
+        let paths = vec![PathBuf::from("/custom/vst3"), PathBuf::from("./local")];
+        let state = AudioWorkerState::new(false, paths.clone());
+        assert_eq!(state.custom_paths, paths);
+    }
+
+    #[test]
+    fn test_audio_worker_state_custom_paths_safe_mode() {
+        let paths = vec![PathBuf::from("/custom/vst3")];
+        let state = AudioWorkerState::new(true, paths.clone());
+        assert!(state.plugin_modules.is_empty()); // safe mode = no cache
+        assert_eq!(state.custom_paths, paths);
     }
 
     #[test]
@@ -1006,6 +1034,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert_eq!(result.len(), 1);
         matches!(&result[0], SupervisorUpdate::Pong);
@@ -1038,6 +1067,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert_eq!(result.len(), 1);
         matches!(&result[0], SupervisorUpdate::ShutdownAck);
@@ -1070,6 +1100,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert!(result.is_empty());
         assert!(tone);
@@ -1119,6 +1150,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert_eq!(rack.len(), 1);
         assert_eq!(rack[0].name, "TestPlugin");
@@ -1163,6 +1195,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert!(rack.is_empty());
         assert_eq!(selected, None);
@@ -1214,6 +1247,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert_eq!(selected, Some(0));
         assert_eq!(params.len(), 1);
@@ -1270,6 +1304,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert_eq!(rack[0].staged_changes.len(), 1);
         assert_eq!(rack[0].staged_changes[0], (1, 0.8));
@@ -1308,6 +1343,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert!(transport.playing);
         assert_eq!(transport.tempo, 140.0);
@@ -1345,6 +1381,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert!(rack.is_empty());
         assert_eq!(result.len(), 1);
@@ -1377,6 +1414,7 @@ mod tests {
             &mut tone,
             &mut transport,
             false,
+            &[],
         );
         assert!(!result.is_empty());
         assert!(status.contains("Devices refreshed"));

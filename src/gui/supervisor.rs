@@ -59,15 +59,22 @@ const RAPID_RESTART_WINDOW: Duration = Duration::from_secs(30);
 /// # Arguments
 /// * `safe_mode` — if true, no plugins loaded from cache on startup
 /// * `malloc_debug` — if true, enable periodic heap checks
-pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()> {
+/// * `paths` — if non-empty, only these paths are used for plugin scanning (defaults excluded)
+pub fn run_supervisor(
+    safe_mode: bool,
+    malloc_debug: bool,
+    paths: Vec<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let _span = tracing::info_span!("gui_supervisor").entered();
     info!(
-        "Starting GUI supervisor (safe_mode={}, malloc_debug={})",
-        safe_mode, malloc_debug
+        "Starting GUI supervisor (safe_mode={}, malloc_debug={}, custom_paths={})",
+        safe_mode,
+        malloc_debug,
+        !paths.is_empty()
     );
 
     // ── Spawn audio worker ──────────────────────────────────────────────
-    let mut audio_ctx = AudioWorkerContext::spawn(safe_mode, malloc_debug)?;
+    let mut audio_ctx = AudioWorkerContext::spawn(safe_mode, malloc_debug, &paths)?;
 
     // ── Shadow state for crash recovery ─────────────────────────────────
     let mut shadow = ShadowState::new(safe_mode);
@@ -175,16 +182,12 @@ pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()>
         info!("GUI process connected");
 
         // Request full state from audio worker and forward to GUI
-        if let Err(e) =
-            send_audio_command(&audio_ctx.stream, &AudioCommand::RequestFullState)
-        {
+        if let Err(e) = send_audio_command(&audio_ctx.stream, &AudioCommand::RequestFullState) {
             warn!(error = %e, "Failed to request full state from audio worker");
         }
 
         // Read back the full state from audio worker and forward to GUI
-        if let Ok(Some(full_state)) =
-            decode::<SupervisorUpdate>(&mut audio_ctx.reader())
-        {
+        if let Ok(Some(full_state)) = decode::<SupervisorUpdate>(&mut audio_ctx.reader()) {
             shadow.update_from(&full_state);
             if let Err(e) = send_gui_update(&gui_stream, &full_state) {
                 warn!(error = %e, "Failed to send initial state to GUI");
@@ -201,6 +204,7 @@ pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()>
             &mut audio_first_restart_time,
             safe_mode,
             malloc_debug,
+            &paths,
         );
 
         // Clean up GUI socket
@@ -247,11 +251,13 @@ struct AudioWorkerContext {
 
 impl AudioWorkerContext {
     /// Spawn a new audio worker child process and connect via Unix socket.
-    fn spawn(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<Self> {
-        let socket_path = std::env::temp_dir().join(format!(
-            "rs-vst-host-audio-{}.sock",
-            std::process::id()
-        ));
+    fn spawn(
+        safe_mode: bool,
+        malloc_debug: bool,
+        paths: &[std::path::PathBuf],
+    ) -> anyhow::Result<Self> {
+        let socket_path =
+            std::env::temp_dir().join(format!("rs-vst-host-audio-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket_path);
 
         let listener = UnixListener::bind(&socket_path).map_err(|e| {
@@ -267,6 +273,12 @@ impl AudioWorkerContext {
         cmd.arg("audio-worker")
             .arg("--socket")
             .arg(socket_path.to_str().unwrap_or(""));
+        if !paths.is_empty() {
+            cmd.arg("--paths");
+            for p in paths {
+                cmd.arg(p);
+            }
+        }
         if safe_mode {
             cmd.arg("--safe-mode");
         }
@@ -307,10 +319,7 @@ impl AudioWorkerContext {
                     }
                     Err(e) => {
                         let _ = std::fs::remove_file(&socket_path);
-                        return Err(anyhow::anyhow!(
-                            "Audio worker accept failed: {}",
-                            e
-                        ));
+                        return Err(anyhow::anyhow!("Audio worker accept failed: {}", e));
                     }
                 }
             }
@@ -460,8 +469,11 @@ fn run_relay_loop(
     audio_first_restart_time: &mut std::time::Instant,
     safe_mode: bool,
     malloc_debug: bool,
+    paths: &[std::path::PathBuf],
 ) -> LoopResult {
-    let mut gui_reader = gui_stream.try_clone().expect("clone GUI stream for reading");
+    let mut gui_reader = gui_stream
+        .try_clone()
+        .expect("clone GUI stream for reading");
     gui_reader
         .set_read_timeout(Some(Duration::from_millis(25)))
         .ok();
@@ -523,6 +535,7 @@ fn run_relay_loop(
                     audio_first_restart_time,
                     safe_mode,
                     malloc_debug,
+                    paths,
                 ) {
                     Ok(new_reader) => {
                         audio_reader = new_reader;
@@ -563,6 +576,7 @@ fn run_relay_loop(
                             audio_first_restart_time,
                             safe_mode,
                             malloc_debug,
+                            paths,
                         ) {
                             Ok(new_reader) => {
                                 audio_reader = new_reader;
@@ -620,6 +634,7 @@ fn run_relay_loop(
                     audio_first_restart_time,
                     safe_mode,
                     malloc_debug,
+                    paths,
                 ) {
                     Ok(new_reader) => {
                         audio_reader = new_reader;
@@ -657,6 +672,7 @@ fn try_restart_audio_worker(
     first_restart_time: &mut std::time::Instant,
     safe_mode: bool,
     malloc_debug: bool,
+    paths: &[std::path::PathBuf],
 ) -> anyhow::Result<std::os::unix::net::UnixStream> {
     // Check rapid restart limit
     *restart_count += 1;
@@ -688,7 +704,7 @@ fn try_restart_audio_worker(
     std::thread::sleep(Duration::from_millis(500));
 
     // Spawn new audio worker
-    let new_ctx = AudioWorkerContext::spawn(safe_mode, malloc_debug)?;
+    let new_ctx = AudioWorkerContext::spawn(safe_mode, malloc_debug, paths)?;
     let new_reader = new_ctx.reader();
 
     // Replace the context

@@ -36,6 +36,10 @@ pub use app::launch;
 
 /// Launch the GUI in a supervised child process (crash-resilient mode).
 /// The supervisor manages audio/plugins and relaunches the GUI on crash.
-pub fn launch_supervised(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()> {
-    supervisor::run_supervisor(safe_mode, malloc_debug)
+pub fn launch_supervised(
+    safe_mode: bool,
+    malloc_debug: bool,
+    paths: Vec<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    supervisor::run_supervisor(safe_mode, malloc_debug, paths)
 }

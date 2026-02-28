@@ -11,30 +11,39 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 /// Scan VST3 plugin directories, load modules, and cache metadata.
-pub fn scan(extra_paths: Vec<PathBuf>) -> anyhow::Result<()> {
+///
+/// When `explicit_paths` is non-empty, ONLY those paths are used for scanning
+/// (default system paths and persistent config paths are excluded).
+pub fn scan(explicit_paths: Vec<PathBuf>) -> anyhow::Result<()> {
     println!("Scanning for VST3 plugins...\n");
 
-    // Build search paths: defaults + persistent config + CLI one-time paths
-    let mut search_paths = scanner::default_vst3_paths();
+    let search_paths = if explicit_paths.is_empty() {
+        // No --paths provided: use defaults + persistent config
+        let mut paths = scanner::default_vst3_paths();
 
-    // Load persistent extra paths from config
-    match config::load() {
-        Ok(cfg) => {
-            if !cfg.extra_scan_paths.is_empty() {
-                println!("Persistent scan paths (from config):");
-                for p in &cfg.extra_scan_paths {
-                    println!("  + {}", p.display());
+        // Load persistent extra paths from config
+        match config::load() {
+            Ok(cfg) => {
+                if !cfg.extra_scan_paths.is_empty() {
+                    println!("Persistent scan paths (from config):");
+                    for p in &cfg.extra_scan_paths {
+                        println!("  + {}", p.display());
+                    }
+                    println!();
+                    paths.extend(cfg.extra_scan_paths);
                 }
-                println!();
-                search_paths.extend(cfg.extra_scan_paths);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load config, skipping persistent paths");
             }
         }
-        Err(e) => {
-            warn!(error = %e, "Failed to load config, skipping persistent paths");
-        }
-    }
 
-    search_paths.extend(extra_paths);
+        paths
+    } else {
+        // --paths provided: use ONLY those paths (exclusive mode)
+        println!("Using only explicitly provided paths (defaults excluded).\n");
+        explicit_paths
+    };
 
     println!("Search paths:");
     for p in &search_paths {

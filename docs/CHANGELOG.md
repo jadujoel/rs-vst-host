@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.8] - 2026-02-28
+
+### Changed
+- **Exclusive `--paths` flag**: When `--paths` is provided to `scan` or `gui`, ONLY the specified paths are used for plugin scanning — default system paths and persistent config paths are excluded. This allows targeted scanning of specific directories (e.g., `cargo run -- scan --paths ./vsts`).
+  - Added `--paths` to the `gui` command — custom paths are propagated through the supervisor to the audio worker child process
+  - Added `--paths` to the internal `audio-worker` command for process isolation support
+  - All three scan callsites updated: CLI `scan`, in-process `HostApp::scan_plugins`, and supervised `audio_worker::handle_action`
+  - Supports multiple paths: `--paths ./vsts /other/dir`
+  - 9 new tests (4 CLI parsing + 3 HostApp + 2 AudioWorkerState), 712 tests passing
+
 ## [0.19.7] - 2026-02-28
 
 ### Added

@@ -34,6 +34,9 @@ cargo build --release
 # Scan for installed VST3 plugins
 cargo run -- scan
 
+# Scan only specific directories (skip default system paths)
+cargo run -- scan --paths ./vsts /other/dir
+
 # Add a custom directory to scan permanently
 cargo run -- scan-paths add /path/to/my/plugins
 
@@ -57,13 +60,16 @@ cargo run -- midi-ports
 
 # Launch the graphical interface
 cargo run -- gui
+
+# Launch GUI scanning only specific plugin directories
+cargo run -- gui --paths ./vsts
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `scan [--paths <DIR>...]` | Discover VST3 plugins and cache metadata |
+| `scan [--paths <DIR>...]` | Discover VST3 plugins and cache metadata. When `--paths` is used, only those directories are scanned (defaults excluded) |
 | `scan-paths add <DIR>` | Add a directory to the persistent scan path list |
 | `scan-paths remove <DIR>` | Remove a directory from the persistent scan path list |
 | `scan-paths list` | Show all persistent scan paths |
@@ -71,7 +77,7 @@ cargo run -- gui
 | `run <PLUGIN> [OPTIONS]` | Load a plugin and process audio in real time |
 | `devices` | List available audio output devices |
 | `midi-ports` | List available MIDI input ports |
-| `gui [--safe-mode] [--malloc-debug] [--in-process]` | Launch the graphical user interface |
+| `gui [--paths <DIR>...] [--safe-mode] [--malloc-debug] [--in-process]` | Launch the graphical user interface |
 
 ### `run` Options
 

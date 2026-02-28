@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.19.5 — Headless GUI integration tests with screenshot capture).
+Last updated: 2026-02-28 (v0.19.8 — Exclusive --paths flag).
 
 ## Summary
 
-- **Total tests:** 687 (581 lib + 106 binary)
+- **Total tests:** 712 (lib + binary)
 - **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (687 tests, 0 errors, 0 ignored)
+- **Last test run:** 2026-02-28 (712 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 99 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -25,7 +25,7 @@ Last updated: 2026-02-28 (v0.19.5 — Headless GUI integration tests with screen
 | `src/vst3/param_changes.rs` | 16 | ✅ Full | COM vtable ops, queue overflow (MAX_PARAM_QUEUES/MAX_POINTS_PER_PARAM), QI, null safety |
 | `src/vst3/params.rs` | 14 | ⚠️ Partial | Utility functions (utf16, truncate) + ParameterEntry types; from_controller requires live plugin |
 | `src/vst3/event_list.rs` | 14 | ✅ Full | COM vtable, add/get/clear, overflow (MAX_EVENTS_PER_BLOCK), null pointers, QI |
-| `src/app/cli.rs` | 18 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, `audio-worker`, `audio-worker` with flags, required/optional args, invalid input rejection |
+| `src/app/cli.rs` | 22 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, `gui --paths`, `audio-worker`, `audio-worker` with flags and paths, `scan --paths` exclusive mode, required/optional args, invalid input rejection |
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
 | `src/vst3/host_context.rs` | 13 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety, system heap verification |\n| `src/vst3/host_alloc.rs` | 8 | ✅ Full | system_alloc/system_free lifecycle, null safety, system malloc zone verification (macOS), drop semantics, alignment, stress test (100 allocs), Box-is-not-system-zone (mimalloc validation) |
 | `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |

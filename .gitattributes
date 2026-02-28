@@ -1,0 +1,6 @@
+# Audio
+*.wav filter=lfs diff=lfs merge=lfs -text
+*.flac filter=lfs diff=lfs merge=lfs -text
+
+# Extensionless binary artifacts folder
+plugins/** filter=lfs diff=lfs merge=lfs -text

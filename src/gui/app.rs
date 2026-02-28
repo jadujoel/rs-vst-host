@@ -125,11 +125,21 @@ pub struct HostApp {
     prev_time_sig_den: u32,
     /// Previous playing state.
     prev_playing: bool,
+    /// Custom scan paths (exclusive — when non-empty, defaults are skipped).
+    pub custom_paths: Vec<PathBuf>,
 }
 
 impl HostApp {
     /// Create a new HostApp with configuration options.
     pub fn new(safe_mode: bool, malloc_debug: bool) -> Self {
+        Self::with_paths(safe_mode, malloc_debug, Vec::new())
+    }
+
+    /// Create a new HostApp with configuration options and custom scan paths.
+    ///
+    /// When `custom_paths` is non-empty, only those paths are used for scanning
+    /// (default system paths and persistent config paths are excluded).
+    pub fn with_paths(safe_mode: bool, malloc_debug: bool, custom_paths: Vec<PathBuf>) -> Self {
         // Attempt to load cached plugins (unless safe mode)
         let plugin_modules = if safe_mode {
             Vec::new()
@@ -178,6 +188,7 @@ impl HostApp {
             malloc_debug,
             heap_check_counter: 0,
             heap_corruption_detected: false,
+            custom_paths,
         }
     }
 
@@ -198,7 +209,11 @@ impl HostApp {
     pub fn scan_plugins(&mut self) {
         self.status_message = "Scanning for plugins…".into();
 
-        let search_paths = scanner::default_vst3_paths();
+        let search_paths = if self.custom_paths.is_empty() {
+            scanner::default_vst3_paths()
+        } else {
+            self.custom_paths.clone()
+        };
         let bundles = scanner::discover_bundles(&search_paths);
 
         let mut modules: Vec<PluginModuleInfo> = Vec::new();
@@ -1397,7 +1412,10 @@ impl HostApp {
 ///
 /// When `safe_mode` is true, plugin editors are disabled (only parameter
 /// sliders are shown) to avoid potential crashes from misbehaving plugins.
-pub fn launch(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()> {
+///
+/// When `paths` is non-empty, only those paths are scanned for plugins
+/// (default system paths are excluded).
+pub fn launch(safe_mode: bool, malloc_debug: bool, paths: Vec<PathBuf>) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -1409,7 +1427,13 @@ pub fn launch(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()> {
     eframe::run_native(
         "rs-vst-host",
         options,
-        Box::new(move |_cc| Ok(Box::new(HostApp::new(safe_mode, malloc_debug)))),
+        Box::new(move |_cc| {
+            Ok(Box::new(HostApp::with_paths(
+                safe_mode,
+                malloc_debug,
+                paths,
+            )))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("GUI error: {}", e))
 }
@@ -2134,5 +2158,26 @@ mod tests {
         let app = HostApp::with_safe_mode(true);
         assert!(app.safe_mode);
         assert!(!app.malloc_debug);
+    }
+
+    #[test]
+    fn test_with_paths_stores_custom_paths() {
+        let paths = vec![PathBuf::from("/custom/vst3"), PathBuf::from("./local")];
+        let app = HostApp::with_paths(false, false, paths.clone());
+        assert_eq!(app.custom_paths, paths);
+        assert!(!app.safe_mode);
+        assert!(!app.malloc_debug);
+    }
+
+    #[test]
+    fn test_with_paths_empty_has_no_custom_paths() {
+        let app = HostApp::with_paths(false, false, Vec::new());
+        assert!(app.custom_paths.is_empty());
+    }
+
+    #[test]
+    fn test_new_has_no_custom_paths() {
+        let app = HostApp::new(false, false);
+        assert!(app.custom_paths.is_empty());
     }
 }

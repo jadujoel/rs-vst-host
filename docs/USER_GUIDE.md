@@ -97,14 +97,15 @@ rs-vst-host scan [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-p, --paths <DIR>...` | Additional directories to search for plugins (one-time, not persisted; can be repeated) |
+| `-p, --paths <DIR>...` | Directories to scan for plugins. When provided, ONLY these paths are used (default system paths and persistent config paths are excluded) |
 
 **What it does:**
 
-1. Builds a list of search directories (platform defaults + any extra paths you provide).
-2. Recursively discovers all `.vst3` bundles in those directories.
-3. Loads each bundle and reads its plugin factory metadata (class names, categories, vendor info).
-4. Saves the results to a JSON cache file so `list` can display them instantly.
+1. If `--paths` is provided, uses ONLY those directories (defaults and persistent config paths are excluded).
+2. If `--paths` is not provided, builds a list from platform defaults + persistent config paths.
+3. Recursively discovers all `.vst3` bundles in the resolved directories.
+4. Loads each bundle and reads its plugin factory metadata (class names, categories, vendor info).
+5. Saves the results to a JSON cache file so `list` can display them instantly.
 
 **Example output:**
 
@@ -343,6 +344,7 @@ rs-vst-host gui
 
 | Option | Description |
 |--------|-------------|
+| `-p, --paths <DIR>...` | Directories to scan for plugins. When provided, ONLY these paths are used (default system paths excluded) |
 | `--safe-mode` | Disable plugin editor windows (parameter-only mode) |
 | `--malloc-debug` | Enable heap integrity checking and print malloc debug instructions |
 | `--in-process` | Run the GUI in the same process as audio (legacy mode; disables crash isolation) |

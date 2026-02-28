@@ -74,6 +74,7 @@ fn main() -> anyhow::Result<()> {
         Command::Devices => app::commands::devices()?,
         Command::MidiPorts => app::commands::midi_ports()?,
         Command::Gui {
+            paths,
             safe_mode,
             malloc_debug,
             in_process,
@@ -84,11 +85,11 @@ fn main() -> anyhow::Result<()> {
             if in_process {
                 // Legacy mode: GUI runs in the same process as audio/plugins.
                 // A plugin crash can corrupt the entire process.
-                gui::launch(safe_mode, malloc_debug)?;
+                gui::launch(safe_mode, malloc_debug, paths)?;
             } else {
                 // Default: GUI runs in a separate child process.
                 // The supervisor manages audio/plugins and relaunches the GUI on crash.
-                gui::launch_supervised(safe_mode, malloc_debug)?;
+                gui::launch_supervised(safe_mode, malloc_debug, paths)?;
             }
         }
         Command::Worker { socket } => {
@@ -103,10 +104,11 @@ fn main() -> anyhow::Result<()> {
         }
         Command::AudioWorker {
             socket,
+            paths,
             safe_mode,
             malloc_debug,
         } => {
-            gui::audio_worker::launch_audio_worker(&socket, safe_mode, malloc_debug)?;
+            gui::audio_worker::launch_audio_worker(&socket, safe_mode, malloc_debug, paths)?;
         }
     }
 

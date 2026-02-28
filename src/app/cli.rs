@@ -13,8 +13,9 @@ pub struct Cli {
 pub enum Command {
     /// Scan for VST3 plugins and cache metadata.
     Scan {
-        /// Additional directories to scan for plugins (one-time, not persisted).
-        #[arg(short, long)]
+        /// Directories to scan for plugins. When provided, ONLY these paths are
+        /// used (default system paths and persistent config paths are excluded).
+        #[arg(short, long, num_args = 1..)]
         paths: Vec<PathBuf>,
     },
     /// Manage persistent plugin scan paths.
@@ -62,6 +63,11 @@ pub enum Command {
     MidiPorts,
     /// Launch the graphical user interface.
     Gui {
+        /// Directories to scan for plugins. When provided, ONLY these paths are
+        /// used (default system paths and persistent config paths are excluded).
+        #[arg(short, long, num_args = 1..)]
+        paths: Vec<PathBuf>,
+
         /// Launch in safe mode with no plugins loaded from cache.
         #[arg(long)]
         safe_mode: bool,
@@ -107,6 +113,10 @@ pub enum Command {
         /// Path to the Unix domain socket for IPC with the supervisor.
         #[arg(long)]
         socket: String,
+
+        /// Custom plugin scan paths (exclusive — skips defaults).
+        #[arg(short, long, num_args = 1..)]
+        paths: Vec<PathBuf>,
 
         /// Launch in safe mode.
         #[arg(long)]
@@ -332,10 +342,12 @@ mod tests {
         match cli.command {
             Command::AudioWorker {
                 socket,
+                paths,
                 safe_mode,
                 malloc_debug,
             } => {
                 assert_eq!(socket, "/tmp/audio.sock");
+                assert!(paths.is_empty());
                 assert!(!safe_mode);
                 assert!(!malloc_debug);
             }
@@ -357,10 +369,12 @@ mod tests {
         match cli.command {
             Command::AudioWorker {
                 socket,
+                paths,
                 safe_mode,
                 malloc_debug,
             } => {
                 assert_eq!(socket, "/tmp/audio.sock");
+                assert!(paths.is_empty());
                 assert!(safe_mode);
                 assert!(malloc_debug);
             }
@@ -419,5 +433,79 @@ mod tests {
     fn test_parse_scan_paths_no_action_fails() {
         let result = Cli::try_parse_from(["rs-vst-host", "scan-paths"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_gui_with_paths() {
+        let cli = Cli::try_parse_from([
+            "rs-vst-host",
+            "gui",
+            "--paths",
+            "/custom/vst3",
+            "/another/path",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Gui { paths, .. } => {
+                assert_eq!(paths.len(), 2);
+                assert_eq!(paths[0], PathBuf::from("/custom/vst3"));
+                assert_eq!(paths[1], PathBuf::from("/another/path"));
+            }
+            _ => panic!("Expected Gui command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_gui_without_paths_has_empty_vec() {
+        let cli = Cli::try_parse_from(["rs-vst-host", "gui"]).unwrap();
+        match cli.command {
+            Command::Gui { paths, .. } => {
+                assert!(paths.is_empty());
+            }
+            _ => panic!("Expected Gui command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_audio_worker_with_paths() {
+        let cli = Cli::try_parse_from([
+            "rs-vst-host",
+            "audio-worker",
+            "--socket",
+            "/tmp/audio.sock",
+            "--paths",
+            "/custom/vst3",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::AudioWorker {
+                socket,
+                paths,
+                safe_mode,
+                malloc_debug,
+            } => {
+                assert_eq!(socket, "/tmp/audio.sock");
+                assert_eq!(paths.len(), 1);
+                assert_eq!(paths[0], PathBuf::from("/custom/vst3"));
+                assert!(!safe_mode);
+                assert!(!malloc_debug);
+            }
+            _ => panic!("Expected AudioWorker command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scan_exclusive_paths() {
+        // When --paths is provided, it should be the only paths used
+        let cli = Cli::try_parse_from(["rs-vst-host", "scan", "--paths", "./vsts", "/other/dir"])
+            .unwrap();
+        match cli.command {
+            Command::Scan { paths } => {
+                assert_eq!(paths.len(), 2);
+                assert_eq!(paths[0], PathBuf::from("./vsts"));
+                assert_eq!(paths[1], PathBuf::from("/other/dir"));
+            }
+            _ => panic!("Expected Scan command"),
+        }
     }
 }

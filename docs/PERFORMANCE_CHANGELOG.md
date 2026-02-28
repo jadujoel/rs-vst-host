@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.19.8] - 2026-02-28 — Exclusive --paths flag (no perf impact)
+
+### Summary
+
+Behavior change: `--paths` now exclusively replaces default scan paths instead of appending to them. `--paths` added to `gui` and `audio-worker` commands. No changes to any hot audio/IPC/rendering paths — only CLI argument threading and path resolution logic modified.
+
+**No benchmark regressions.**
+
 ## [0.19.6] - 2026-02-28 — Test script fix (no perf impact)
 
 ### Summary
