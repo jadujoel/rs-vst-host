@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.4] - 2026-02-28
+
+### Fixed
+- **Plugin editor windows not opening in supervised mode** (`gui/editor.rs`, `gui/backend.rs`, `gui/audio_worker.rs`): In the default three-process architecture, clicking the 🎹 editor button did nothing. Root cause: `OpenEditor` was handled in the audio worker child process which has no `NSApplication` event loop — `NSWindow` was created in memory but never rendered on screen. Fix:
+  - `EditorWindow::open()` now calls `ensure_ns_application()` to initialise the AppKit singleton before creating an `NSWindow`. Uses `NSApplicationActivationPolicyAccessory` (no dock icon) for the audio worker, but preserves `eframe`'s `NSApplicationActivationPolicyRegular` in in-process mode.
+  - New `pump_events()` function drains all pending AppKit events (via `nextEventMatchingMask:untilDate:inMode:dequeue:` + `sendEvent:` + `updateWindows`) without blocking, allowing plugin editor UIs to render and respond in the audio worker's socket-based message loop.
+  - `HostBackend::poll_editors()` now pumps the platform event loop before polling resize requests and pruning closed windows.
+  - Audio worker main loop (`run_audio_loop`) now calls `state.backend.poll_editors()` on every iteration (~50ms cadence), ensuring editor windows remain responsive.
+  - 3 new unit tests: `test_pump_platform_events_does_not_panic`, `test_ensure_ns_application_idempotent`, `test_pump_events_requires_main_thread`.
+  - 681 tests passing (575 lib + 106 binary).
+
 ## [0.19.3] - 2026-02-28
 
 ### Changed

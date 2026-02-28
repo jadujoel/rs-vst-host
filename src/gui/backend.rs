@@ -858,6 +858,14 @@ impl HostBackend {
 
     /// Poll all open editor windows for resize requests and prune closed ones.
     pub fn poll_editors(&mut self) {
+        // Pump the platform event loop so editor windows can render.
+        // In the in-process GUI mode, eframe handles this via its own run loop.
+        // In the supervised audio worker, there is no GUI event loop, so we
+        // must explicitly pump AppKit events here.
+        if !self.editor_windows.is_empty() {
+            EditorWindow::pump_platform_events();
+        }
+
         // Poll for resize requests
         for window in &mut self.editor_windows {
             window.poll_resize();

@@ -1,1 +1,1 @@
-./target/release/rs-vst-host gui
+cargo run --release -- gui

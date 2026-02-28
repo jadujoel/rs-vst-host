@@ -350,6 +350,9 @@ When a plugin provides a native editor view (most commercial plugins do), click 
 - Supports resize requests from the plugin via the IPlugFrame protocol
 - Auto-closes when the plugin is deactivated or removed from the rack
 - Can be disabled entirely by launching with `--safe-mode`
+- Works in both supervised (default) and in-process (`--in-process`) modes
+
+In supervised mode (default), the editor window is hosted by the audio worker process. The audio worker initialises `NSApplication` and pumps the AppKit event loop on demand so the plugin UI renders and responds to user interaction.
 
 > **Note:** If a plugin's editor causes instability, use `--safe-mode` to access parameters via sliders only.
 

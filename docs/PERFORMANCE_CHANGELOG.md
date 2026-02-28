@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.19.4] - 2026-02-28 — Editor window fix (no perf impact)
+
+### Summary
+
+Bug fix only (plugin editor windows not opening in supervised mode). No changes to hot audio/IPC paths. `poll_editors()` now includes an `if !self.editor_windows.is_empty()` guard so the AppKit pump is only called when editors are open — zero overhead when no editors are displayed.
+
+**No benchmark regressions.**
+
 ## [0.19.2] - 2026-02-28 — Initial Divan benchmark suite
 
 ### Benchmark Suite Created

@@ -263,7 +263,12 @@ fn run_audio_loop(
             }
         }
 
-        // 2. Check for plugin crashes
+        // 2. Poll editor windows — pump the macOS event loop so plugin
+        //    editor UIs render and respond to input. Also handles resize
+        //    requests and prunes closed windows.
+        state.backend.poll_editors();
+
+        // 3. Check for plugin crashes
         if state.backend.is_crashed() {
             let active_name = state
                 .backend
@@ -297,7 +302,7 @@ fn run_audio_loop(
             }
         }
 
-        // 3. Periodically refresh parameters for active plugin
+        // 4. Periodically refresh parameters for active plugin
         if state.backend.is_active() {
             if let Some(idx) = state.selected_slot {
                 let is_active = state.backend.active_slot_index() == Some(idx);
@@ -884,10 +889,7 @@ fn audio_status_state(status: &AudioStatus) -> AudioStatusState {
 }
 
 /// Send a supervisor update to the supervisor via the socket.
-fn send_update(
-    stream: &UnixStream,
-    update: &SupervisorUpdate,
-) -> Result<(), String> {
+fn send_update(stream: &UnixStream, update: &SupervisorUpdate) -> Result<(), String> {
     let data = encode(update)?;
     let mut writer = stream;
     writer

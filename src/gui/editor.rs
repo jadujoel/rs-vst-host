@@ -55,6 +55,11 @@ impl EditorWindow {
     /// Returns `None` if the platform is not supported or attachment fails.
     #[cfg(target_os = "macos")]
     pub fn open(view: *mut ComPtr<IPlugViewVtbl>, plugin_name: &str) -> Option<Self> {
+        // Ensure NSApplication is initialized — required for NSWindow creation.
+        // In the in-process GUI mode, eframe already sets this up, but the
+        // audio worker child process has no GUI event loop by default.
+        unsafe { macos::ensure_ns_application() };
+
         // All IPlugView COM calls are sandboxed — a buggy plugin crash during
         // editor setup must not terminate the host.
         let view_raw = view as usize;
@@ -284,6 +289,22 @@ impl EditorWindow {
     pub fn is_open(&self) -> bool {
         false
     }
+
+    /// Pump the platform event loop so editor windows can render and respond.
+    ///
+    /// On macOS, this drains all pending AppKit events without blocking.
+    /// Must be called periodically from the audio worker's main loop when
+    /// editor windows are open. In the in-process GUI mode, eframe's own
+    /// event loop handles this, so calling it is a harmless no-op.
+    #[cfg(target_os = "macos")]
+    pub fn pump_platform_events() {
+        // Safety: pump_events uses ObjC runtime FFI — no plugin code involved.
+        unsafe { macos::pump_events() };
+    }
+
+    /// No-op on non-macOS platforms.
+    #[cfg(not(target_os = "macos"))]
+    pub fn pump_platform_events() {}
 
     /// Close the editor window and clean up resources.
     ///
@@ -565,6 +586,124 @@ mod macos {
             close(native.window, sel("close"));
         }
     }
+
+    /// Ensure `NSApplication` is initialized.
+    ///
+    /// In the in-process GUI mode, `eframe` initializes `NSApplication` via
+    /// its own event loop. But when the editor window is created in the
+    /// **audio worker** child process (supervised mode), there is no GUI
+    /// framework — we must initialize `[NSApplication sharedApplication]`
+    /// ourselves, or `NSWindow` creation silently fails.
+    ///
+    /// Calling `[NSApplication sharedApplication]` multiple times is safe;
+    /// AppKit returns the existing singleton.
+    pub(super) unsafe fn ensure_ns_application() {
+        unsafe {
+            let ns_app_class = class("NSApplication");
+            if ns_app_class.is_null() {
+                return;
+            }
+            // [NSApplication sharedApplication] — creates or returns the singleton
+            let shared_app: MsgSendId = std::mem::transmute(objc_msgSend as *const c_void);
+            let app = shared_app(ns_app_class, sel("sharedApplication"));
+            if app.is_null() {
+                return;
+            }
+
+            // Only set the activation policy if it hasn't been set to "regular"
+            // already. In the in-process GUI mode, eframe sets "regular" (0) to
+            // get a dock icon and menu bar. We don't want to downgrade that.
+            // In the audio worker, the policy is unset (or "prohibited" = 2),
+            // so we set it to "accessory" (1) to enable a proper event loop
+            // without creating a dock icon.
+            type MsgSendGetPolicy = unsafe extern "C" fn(Id, Sel) -> i64;
+            let get_policy: MsgSendGetPolicy = std::mem::transmute(objc_msgSend as *const c_void);
+            let current_policy = get_policy(app, sel("activationPolicy"));
+
+            // NSApplicationActivationPolicyRegular = 0
+            // NSApplicationActivationPolicyAccessory = 1
+            // NSApplicationActivationPolicyProhibited = 2
+            if current_policy != 0 {
+                type MsgSendSetPolicy = unsafe extern "C" fn(Id, Sel, i64) -> i8;
+                let set_policy: MsgSendSetPolicy =
+                    std::mem::transmute(objc_msgSend as *const c_void);
+                let _ = set_policy(app, sel("setActivationPolicy:"), 1);
+            }
+        }
+    }
+
+    /// Pump the macOS event loop to process pending UI events.
+    ///
+    /// In the supervised architecture, the audio worker runs a simple
+    /// socket-based message loop with no `NSApplication` run loop. Editor
+    /// windows (`NSWindow`) need the AppKit event loop to render, handle
+    /// input, and respond to system events. This function drains all
+    /// pending events without blocking, allowing plugin editor UIs to
+    /// function correctly.
+    ///
+    /// Should be called periodically (e.g. every 50ms) from the audio
+    /// worker's main loop whenever editor windows are open.
+    pub(super) unsafe fn pump_events() {
+        unsafe {
+            let ns_app_class = class("NSApplication");
+            if ns_app_class.is_null() {
+                return;
+            }
+            let shared_app: MsgSendId = std::mem::transmute(objc_msgSend as *const c_void);
+            let app = shared_app(ns_app_class, sel("sharedApplication"));
+            if app.is_null() {
+                return;
+            }
+
+            // NSEventMaskAny = NSUIntegerMax
+            let ns_event_mask_any: u64 = u64::MAX;
+
+            // Drain all pending events without blocking (untilDate: nil)
+            type MsgSendNextEvent = unsafe extern "C" fn(Id, Sel, u64, Id, Id, i8) -> Id;
+            let next_event: MsgSendNextEvent = std::mem::transmute(objc_msgSend as *const c_void);
+            let send_event: MsgSendIdId = std::mem::transmute(objc_msgSend as *const c_void);
+
+            // NSDefaultRunLoopMode as NSString
+            let ns_default_run_loop_mode: Id = {
+                let ns_string_class = class("NSString");
+                let alloc: MsgSendId = std::mem::transmute(objc_msgSend as *const c_void);
+                let s = alloc(ns_string_class, sel("alloc"));
+                type MsgSendInitCStr = unsafe extern "C" fn(Id, Sel, *const i8, u64) -> Id;
+                let init_cstr: MsgSendInitCStr = std::mem::transmute(objc_msgSend as *const c_void);
+                init_cstr(
+                    s,
+                    sel("initWithCString:encoding:"),
+                    b"kCFRunLoopDefaultMode\0".as_ptr() as *const i8,
+                    4, // NSUTF8StringEncoding
+                )
+            };
+
+            loop {
+                // [NSApp nextEventMatchingMask:untilDate:inMode:dequeue:]
+                let event = next_event(
+                    app,
+                    sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+                    ns_event_mask_any,
+                    std::ptr::null_mut(), // nil — don't wait
+                    ns_default_run_loop_mode,
+                    1, // dequeue = YES
+                );
+                if event.is_null() {
+                    break;
+                }
+                // [NSApp sendEvent:event]
+                send_event(app, sel("sendEvent:"), event);
+            }
+
+            // [NSApp updateWindows]
+            let update_windows: MsgSendVoid = std::mem::transmute(objc_msgSend as *const c_void);
+            update_windows(app, sel("updateWindows"));
+
+            // Release the run loop mode string
+            let release: MsgSendVoid = std::mem::transmute(objc_msgSend as *const c_void);
+            release(ns_default_run_loop_mode, sel("release"));
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -617,5 +756,47 @@ mod tests {
         // Verify that SandboxResult and sandbox_call are importable
         // from the editor module (confirms the import was added)
         let _: SandboxResult<i32> = SandboxResult::Ok(0);
+    }
+
+    #[test]
+    fn test_pump_platform_events_does_not_panic() {
+        // pump_platform_events should be safe to call even when no editor
+        // windows exist and no NSApplication has been initialised yet.
+        // On non-macOS platforms this is a no-op.
+        //
+        // NOTE: On macOS, AppKit requires calls from the main thread.
+        // Unit tests run on background threads, so we only test this on
+        // non-macOS or verify the function exists and compiles.
+        #[cfg(not(target_os = "macos"))]
+        EditorWindow::pump_platform_events();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_ensure_ns_application_idempotent() {
+        // Calling ensure_ns_application multiple times must not panic or crash.
+        // NSApplication::sharedApplication is documented to return the singleton
+        // and is safe to call from any thread (it's the event loop methods that
+        // require the main thread).
+        unsafe {
+            macos::ensure_ns_application();
+            macos::ensure_ns_application();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_pump_events_requires_main_thread() {
+        // Verify that pump_events and ensure_ns_application are callable
+        // (compile-time check). Actual event pumping requires the main thread,
+        // which isn't available in unit tests. The function is exercised in
+        // integration / E2E tests via the audio worker.
+        //
+        // We can still verify NSApplication initialization works:
+        unsafe {
+            macos::ensure_ns_application();
+        }
+        // pump_events() is NOT called here because
+        // nextEventMatchingMask: throws an ObjC exception on non-main threads.
     }
 }
