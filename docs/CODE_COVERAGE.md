@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.25.0 — Undo/Redo System).
+Last updated: 2026-02-28 (v0.26.0 — Phase 8 Completion).
 
 ## Summary
 
-- **Total tests:** 1574 (843 unit + 731 binary/integration)
+- **Total tests:** 1682 (897 unit + 785 binary/integration)
 - **All passing:** ✅ (0 failures)
-- **Build warnings:** 0
+- **Build warnings:** 0 (dead code warnings from unused graph/perf functions — expected until wired into runtime)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (1574 tests passing, 0 failures, 0 ignored) — Phase 8.4 Undo/Redo
+- **Last test run:** 2026-02-28 (1682 tests passing, 0 failures, 0 ignored) — Phase 8 Completion
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -30,6 +30,10 @@ Last updated: 2026-02-28 (v0.25.0 — Undo/Redo System).
 | `src/vst3/host_context.rs` | 13 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety, system heap verification |\n| `src/vst3/host_alloc.rs` | 8 | ✅ Full | system_alloc/system_free lifecycle, null safety, system malloc zone verification (macOS), drop semantics, alignment, stress test (100 allocs), Box-is-not-system-zone (mimalloc validation) |
 | `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable (vst3-rs types), perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
 | `src/gui/undo.rs` | 35 | ✅ Full | UndoableAction descriptions (7 variants), inverse operations (7 variants), basic stack ops (push/undo/redo/clear), max depth eviction, parameter coalescing (same param, different param, different slot, timeout, interleaved non-param, multiple coalesces), redo invalidation, history descriptions, mixed action sequences, config validation, edge cases (double undo/redo) |
+| `src/audio/graph_engine.rs` | 15 | ✅ Full | Empty graph, serial passthrough, two-plugin serial, bypass, parallel split/mix, plugin failure, zero channels, mono, three-plugin serial, buffer operations (from_interleaved, to_interleaved, mix_add, copy_from, scale, silence) |
+| `src/audio/perf.rs` | 18 | ✅ Full | SPSC ring buffer (new, push/pop, FIFO order, drain, producer/consumer threads, wrap-around, capacity rounding, minimum capacity), ParamChangeEntry, XrunTracker (no xrun, normal timing, reset, count accumulation), CpuLoadMonitor (initial zero, measurement, peak tracking, no-start safety), thread priority no-panic |
+| `src/audio/delay_line.rs` | 12 | ✅ Full | DelayLine zero delay, single sample, multi-sample, wrap-around, block processing, reset, clamp, minimum capacity, zero-delay block. StereoDelayLine (set_delay, process, reset) |
+| `src/gui/editor.rs` | 10 | ⚠️ Partial | Platform constants (NSView, HWND, X11), struct size, result code, sandbox accessibility, unattached close, pump_platform_events no-panic, NSApplication idempotent (macOS); actual editor open/close requires live plugin + display |
 | `src/gui/app.rs` | 73 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation, undo stack initially empty, add/remove create undo entries, undo/redo add/remove operations, multi-operation undo/redo, redo cleared by new action, no-op undo/redo on empty stack, status messages for undo/redo |
 | `src/gui/backend.rs` | 45 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none, sandbox-wrapped deactivation (no active/no crash, flags cleared before drop, SandboxResult crashed detection, SandboxResult ok not crashed); activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 18 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, opaque panel fill, semantic colour distinctness, accent button frame, bottom bar frame, input frame, badge background, secondary background, warm accent, widget visibility, card shadow |

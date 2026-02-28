@@ -480,6 +480,31 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
   - Accent-colored I/O nodes, green plugin nodes
   - Node positions laid out left-to-right
 
+### Drag-and-Drop Rack Reordering
+
+Plugin rack slots can be reordered by dragging:
+
+1. **Grab the grip handle** (⠿ icon) on any rack slot
+2. **Drag up or down** — an accent-colored insertion marker shows where the slot will land
+3. **Release** to drop — the slot is moved, the routing graph is updated, and an undo action is recorded
+4. **Undo** (⌘Z) to revert the reorder
+
+### Performance Monitoring
+
+The host includes infrastructure for monitoring audio performance:
+
+- **Xrun detection** — Tracks buffer underruns by analyzing audio callback timing
+- **CPU load** — Measures plugin processing time as a percentage of the audio budget with exponential moving average smoothing
+- **Real-time thread priority** — Automatically sets audio thread to high priority (macOS: `QOS_CLASS_USER_INTERACTIVE`, Linux: `SCHED_FIFO`)
+
+### Building & Distribution
+
+**macOS .app bundle:**
+```sh
+./scripts/bundle-macos.sh --release
+open "target/release/RS VST Host.app"
+```
+
 ### Keyboard Shortcuts
 
 | Key | Action |

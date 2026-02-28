@@ -319,6 +319,149 @@ impl Vst3Instance {
         }
     }
 
+    /// Set bus arrangements with a fallback chain for maximum compatibility.
+    ///
+    /// Tries each arrangement in order: stereo → mono → default (empty call).
+    /// Returns the number of output channels that succeeded, or an error if
+    /// all arrangements failed due to a crash.
+    ///
+    /// Speaker arrangement constants:
+    /// - Stereo: 0x03 (kSpeakerL | kSpeakerR)
+    /// - Mono: 0x01 (kSpeakerL)
+    pub fn set_bus_arrangements_with_fallback(
+        &mut self,
+        desired_input_channels: usize,
+        desired_output_channels: usize,
+    ) -> Result<usize, Vst3Error> {
+        // Speaker arrangement constants
+        const SPEAKER_STEREO: u64 = 0x03; // L + R
+        const SPEAKER_MONO: u64 = 0x01; // L only
+
+        // Build fallback chain based on desired channels
+        let arrangements: Vec<(u64, u64, usize)> = if desired_output_channels >= 2 {
+            vec![
+                (
+                    if desired_input_channels > 0 {
+                        SPEAKER_STEREO
+                    } else {
+                        0
+                    },
+                    SPEAKER_STEREO,
+                    2,
+                ),
+                (
+                    if desired_input_channels > 0 {
+                        SPEAKER_MONO
+                    } else {
+                        0
+                    },
+                    SPEAKER_MONO,
+                    1,
+                ),
+            ]
+        } else {
+            vec![(
+                if desired_input_channels > 0 {
+                    SPEAKER_MONO
+                } else {
+                    0
+                },
+                SPEAKER_MONO,
+                1,
+            )]
+        };
+
+        for (input_arr, output_arr, out_ch) in &arrangements {
+            match self.try_bus_arrangement(*input_arr, *output_arr) {
+                Ok(true) => {
+                    info!(
+                        plugin = %self.name,
+                        output_channels = out_ch,
+                        "Bus arrangement accepted"
+                    );
+                    self.output_channels = *out_ch;
+                    if desired_input_channels > 0 {
+                        self.input_channels = if *input_arr == SPEAKER_STEREO { 2 } else { 1 };
+                    }
+                    return Ok(*out_ch);
+                }
+                Ok(false) => {
+                    debug!(
+                        plugin = %self.name,
+                        output_channels = out_ch,
+                        "Bus arrangement rejected, trying fallback"
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e), // Crashed — no point trying more
+            }
+        }
+
+        // All arrangements rejected — proceed with defaults and activate buses
+        warn!(
+            plugin = %self.name,
+            "All bus arrangements rejected — using plugin defaults"
+        );
+        // Just activate the buses with whatever the plugin defaults to
+        if let Err(e) = self.set_bus_arrangements(
+            if desired_input_channels > 0 {
+                SPEAKER_STEREO
+            } else {
+                0
+            },
+            SPEAKER_STEREO,
+        ) {
+            return Err(e);
+        }
+        Ok(desired_output_channels)
+    }
+
+    /// Try a specific bus arrangement, returning whether it was accepted.
+    fn try_bus_arrangement(&mut self, input_arr: u64, output_arr: u64) -> Result<bool, Vst3Error> {
+        if self.crashed {
+            return Err(Vst3Error::Factory("Plugin has crashed".to_string()));
+        }
+
+        let proc = self.processor as usize;
+        let in_ch = self.input_channels;
+
+        let result = sandbox_call("try_bus_arrangement", move || unsafe {
+            let processor = proc as *mut IAudioProcessor;
+            let proc_vtbl = &*(*processor).vtbl;
+
+            let mut inputs = [input_arr];
+            let mut outputs = [output_arr];
+            let num_ins = if in_ch > 0 { 1 } else { 0 };
+
+            (proc_vtbl.setBusArrangements)(
+                processor,
+                inputs.as_mut_ptr(),
+                num_ins,
+                outputs.as_mut_ptr(),
+                1,
+            )
+        });
+
+        match result {
+            SandboxResult::Ok(K_RESULT_OK) => Ok(true),
+            SandboxResult::Ok(_) => Ok(false),
+            SandboxResult::Crashed(crash) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' crashed during bus arrangement probe ({})",
+                    self.name, crash.signal_name
+                )))
+            }
+            SandboxResult::Panicked(msg) => {
+                self.crashed = true;
+                Err(Vst3Error::Factory(format!(
+                    "Plugin '{}' panicked during bus arrangement probe: {}",
+                    self.name, msg
+                )))
+            }
+        }
+    }
+
     /// Configure the processing setup (sample rate, block size, etc.).
     pub fn setup_processing(
         &mut self,

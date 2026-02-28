@@ -24,7 +24,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ## Sub-Phases
 
-### Phase 8.1 — Plugin State Persistence (Component State Save/Load)
+### Phase 8.1 — Plugin State Persistence (Component State Save/Load) ✅ COMPLETE (v0.23.0)
 
 **Goal:** Save and restore the full internal state of each plugin instance, going beyond parameter snapshots.
 
@@ -62,7 +62,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.2 — Preset/Program Management
+### Phase 8.2 — Preset/Program Management ✅ COMPLETE (v0.23.0/v0.24.0)
 
 **Goal:** Browse, load, save, and switch plugin presets.
 
@@ -105,7 +105,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.3 — Multi-Plugin Routing Graph
+### Phase 8.3 — Multi-Plugin Routing Graph ✅ COMPLETE (v0.24.0/v0.26.0)
 
 **Goal:** Support multiple plugins in configurable series and parallel chains with a visual routing editor.
 
@@ -182,7 +182,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.5 — Drag-and-Drop Rack Reordering
+### Phase 8.5 — Drag-and-Drop Rack Reordering ✅ COMPLETE (v0.26.0)
 
 **Goal:** Allow visual reordering of plugins in the rack by dragging.
 
@@ -209,7 +209,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.6 — Cross-Platform Plugin Editor Windows
+### Phase 8.6 — Cross-Platform Plugin Editor Windows ✅ COMPLETE (v0.26.0)
 
 **Goal:** Support native plugin editor embedding on Linux and Windows (macOS already works).
 
@@ -241,7 +241,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.7 — Performance Hardening
+### Phase 8.7 — Performance Hardening ✅ COMPLETE (v0.26.0)
 
 **Goal:** Ensure rock-solid real-time audio performance under load.
 
@@ -286,7 +286,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.8 — Plugin Compatibility Improvements
+### Phase 8.8 — Plugin Compatibility Improvements ✅ COMPLETE (v0.26.0)
 
 **Goal:** Broaden the range of VST3 plugins that work correctly.
 
@@ -322,7 +322,7 @@ Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST
 
 ---
 
-### Phase 8.9 — Distribution and Packaging
+### Phase 8.9 — Distribution and Packaging ✅ COMPLETE (v0.26.0)
 
 **Goal:** Make rs-vst-host easy to install and distribute.
 

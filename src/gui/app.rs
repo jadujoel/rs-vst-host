@@ -75,6 +75,19 @@ pub struct BrowserFilter {
     pub text: String,
 }
 
+/// Drag-and-drop reorder state machine for rack slots.
+#[derive(Debug, Clone, Default)]
+pub struct DragReorderState {
+    /// Whether a drag is currently in progress.
+    pub dragging: bool,
+    /// The rack slot index being dragged.
+    pub source_index: Option<usize>,
+    /// The target insertion index (where the slot will be dropped).
+    pub target_index: Option<usize>,
+    /// Current drag offset from the original position.
+    pub drag_offset: f32,
+}
+
 /// Which bottom-bar tab is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BottomTab {
@@ -168,6 +181,8 @@ pub struct HostApp {
     pub show_routing_editor: bool,
     /// Undo/redo stack for reversible actions.
     pub undo_stack: UndoStack,
+    /// Drag-and-drop state for rack reordering.
+    pub drag_state: DragReorderState,
 }
 
 impl HostApp {
@@ -237,6 +252,7 @@ impl HostApp {
             routing_graph: AudioGraph::new(),
             show_routing_editor: false,
             undo_stack: UndoStack::new(),
+            drag_state: DragReorderState::default(),
         }
     }
 
@@ -2325,16 +2341,41 @@ impl HostApp {
             return;
         }
 
-        // Standard rack list view
+        // Standard rack list view with drag-and-drop reordering
+        let mut reorder_action: Option<(usize, usize)> = None;
+        let drag_source = self.drag_state.source_index;
+        let is_dragging = self.drag_state.dragging;
+
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 for (i, slot) in self.rack.iter_mut().enumerate() {
                     let is_selected = selected_slot == Some(i);
                     let is_active = active_slot == Some(i);
+                    let is_drag_source = is_dragging && drag_source == Some(i);
+                    let is_drag_target = is_dragging
+                        && self.drag_state.target_index == Some(i)
+                        && drag_source != Some(i);
+
+                    // Insertion marker above this slot (when dragging)
+                    if is_drag_target && drag_source.map_or(true, |s| s > i) {
+                        ui.horizontal(|ui| {
+                            let rect = egui::Rect::from_min_size(
+                                ui.cursor().min,
+                                egui::vec2(ui.available_width(), 3.0),
+                            );
+                            ui.painter().rect_filled(rect, 2.0, theme::ACCENT);
+                            ui.allocate_space(egui::vec2(ui.available_width(), 3.0));
+                        });
+                    }
 
                     // Cards with distinct visual states
-                    let (card_fill, card_stroke) = if is_active {
+                    let (card_fill, card_stroke) = if is_drag_source {
+                        (
+                            egui::Color32::from_rgba_premultiplied(40, 40, 50, 140),
+                            egui::Stroke::new(1.5, theme::ACCENT),
+                        )
+                    } else if is_active {
                         (
                             egui::Color32::from_rgb(22, 38, 28),
                             egui::Stroke::new(1.5, theme::SUCCESS),
@@ -2360,9 +2401,28 @@ impl HostApp {
                         stroke: card_stroke,
                     };
 
-                    frame.show(ui, |ui| {
+                    let frame_response = frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            // Slot number badge — colored circle
+                            // Drag handle (grip icon)
+                            let grip = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new("⠿")
+                                        .color(theme::TEXT_DISABLED)
+                                        .size(16.0),
+                                )
+                                .sense(egui::Sense::drag()),
+                            );
+
+                            // Handle drag start
+                            if grip.drag_started() {
+                                self.drag_state.dragging = true;
+                                self.drag_state.source_index = Some(i);
+                                self.drag_state.target_index = Some(i);
+                            }
+
+                            ui.add_space(4.0);
+
+                            // Slot number badge
                             let badge_color = if is_active {
                                 theme::SUCCESS
                             } else {
@@ -2431,7 +2491,7 @@ impl HostApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    // Remove button — subtle red on hover
+                                    // Remove button
                                     let remove_btn = egui::Button::new(
                                         egui::RichText::new("✕")
                                             .color(theme::TEXT_DISABLED)
@@ -2514,10 +2574,59 @@ impl HostApp {
                             );
                         });
                     });
+
+                    // Track which slot the cursor is hovering over during drag
+                    if is_dragging && frame_response.response.hovered() {
+                        self.drag_state.target_index = Some(i);
+                    }
+
+                    // Insertion marker below this slot (when dragging)
+                    if is_drag_target && drag_source.map_or(true, |s| s <= i) {
+                        ui.horizontal(|ui| {
+                            let rect = egui::Rect::from_min_size(
+                                ui.cursor().min,
+                                egui::vec2(ui.available_width(), 3.0),
+                            );
+                            ui.painter().rect_filled(rect, 2.0, theme::ACCENT);
+                            ui.allocate_space(egui::vec2(ui.available_width(), 3.0));
+                        });
+                    }
                 }
             });
 
+        // Handle drag release
+        if is_dragging {
+            let released = ui.input(|i| i.pointer.any_released());
+            if released {
+                if let (Some(src), Some(tgt)) =
+                    (self.drag_state.source_index, self.drag_state.target_index)
+                {
+                    if src != tgt {
+                        reorder_action = Some((src, tgt));
+                    }
+                }
+                self.drag_state = DragReorderState::default();
+            }
+        }
+
         self.selected_slot = new_selected;
+
+        // Apply drag-and-drop reorder
+        if let Some((from, to)) = reorder_action {
+            let slot = self.rack.remove(from);
+            let to_clamped = to.min(self.rack.len());
+            self.rack.insert(to_clamped, slot);
+            self.sync_routing_graph();
+            self.undo_stack.push(UndoableAction::ReorderPlugin {
+                old_index: from,
+                new_index: to_clamped,
+            });
+            self.status_message = format!("↕ Moved slot {} → {}", from + 1, to_clamped + 1);
+            // Update selected slot to follow the moved item
+            if self.selected_slot == Some(from) {
+                self.selected_slot = Some(to_clamped);
+            }
+        }
 
         if let Some(idx) = remove_index {
             self.remove_from_rack(idx);

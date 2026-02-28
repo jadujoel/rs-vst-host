@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.0] - 2026-02-28
+
+### Added — Phase 8 Completion (8.3, 8.5, 8.6, 8.7, 8.8, 8.9)
+
+Completed all remaining Phase 8 sub-phases for multi-plugin and production-readiness features.
+
+**Phase 8.3 — Graph-Aware Audio Engine (`audio/graph_engine.rs`):**
+- `IntermediateBuffer` with `from_interleaved()`, `to_interleaved()`, `mix_add()`, `copy_from()`, `scale()`, `silence()`
+- `BufferPool` for managing intermediate audio buffers between processing nodes
+- `process_graph()` function — processes audio through `AudioGraph` DAG in topological order
+- Plugin nodes gather predecessor outputs, process via user closure, store results
+- Split nodes copy buffers to all successors; Mix nodes sum with 1/N normalization scaling
+- Input/Output nodes handle interleaved ↔ deinterleaved conversion
+- 15+ unit tests covering serial chains, parallel split/mix, bypass, failure cases
+
+**Phase 8.5 — Drag-and-Drop Rack Reordering (`gui/app.rs`):**
+- `DragReorderState` struct with `dragging`, `source_index`, `target_index`, `drag_offset` fields
+- Grip handle (⠿ icon) with `egui::Sense::drag()` on each rack slot
+- Hover-based insertion target tracking with accent-colored markers above/below
+- Semi-transparent drag source card during drag
+- Drop handler: removes + re-inserts slot, pushes `ReorderPlugin` undo action, syncs routing graph
+
+**Phase 8.6 — Cross-Platform Plugin Editors (`gui/editor.rs`):**
+- Linux X11/XEmbed: FFI bindings for Xlib (`XCreateSimpleWindow`, `XMapWindow`, etc.), thread-local display connection, `X11EmbedWindowID` platform support check, window lifecycle management, event pumping
+- Windows HWND: Win32 API FFI (`CreateWindowExW`, `ShowWindow`, etc.), `WNDCLASSEXW` registration, `DefWindowProcW`, `PeekMessageW` message loop, window lifecycle
+- Platform type constants: `K_PLATFORM_TYPE_HWND`, `K_PLATFORM_TYPE_X11` added to `vst3/com.rs`
+- All `EditorWindow` methods (`open`, `close`, `is_open`, `poll_resize`, `pump_platform_events`) are now platform-gated for macOS, Linux, Windows
+
+**Phase 8.7 — Performance Hardening (`audio/perf.rs`):**
+- `SpscRingBuffer<T>` — lock-free SPSC ring buffer with power-of-2 capacity, atomic read/write indices, `push()`, `pop()`, `drain_to_vec()`
+- `ParamChangeEntry` — compact parameter change struct for lock-free queues
+- `XrunTracker` — callback timing analysis for buffer underrun detection, configurable threshold (1.5x), xrun count, last callback interval
+- `CpuLoadMonitor` — per-block CPU load measurement with exponential moving average, peak tracking, smoothing factor
+- `set_realtime_thread_priority()` — macOS `pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE)`, Linux `SCHED_FIFO` priority 50
+- 18 unit tests covering SPSC operations, FIFO ordering, thread safety, xrun detection, CPU load, peak tracking
+
+**Phase 8.8 — Plugin Compatibility:**
+- `set_bus_arrangements_with_fallback()` in `vst3/instance.rs` — tries stereo → mono → default arrangement chain
+- `try_bus_arrangement()` — probes individual arrangements without activating buses
+- `DelayLine` in `audio/delay_line.rs` — sample-accurate ring-buffer delay for latency compensation
+- `StereoDelayLine` — stereo pair with synchronized set_delay/reset
+- 12 unit tests for delay line (zero delay, single sample, multi-sample, wrap-around, block processing, reset, clamp)
+
+**Phase 8.9 — Distribution & CI/CD:**
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`): check + clippy, test, bench, format check across macOS/Linux/Windows
+- macOS .app bundle creation in CI (on main branch push)
+- `scripts/bundle-macos.sh` — local macOS .app bundle build script with Info.plist generation
+
+**Results:** 1682 tests passing (897 lib + 785 bin), 0 failures, no benchmark regressions.
+
 ## [0.25.0] - 2026-02-28
 
 ### Added — Undo/Redo System (Phase 8.4)

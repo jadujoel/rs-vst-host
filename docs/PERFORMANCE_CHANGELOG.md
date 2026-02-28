@@ -4,6 +4,25 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.26.0] - 2026-02-28 — Phase 8 Completion (no perf impact)
+
+### Summary
+
+Completed all remaining Phase 8 sub-phases: graph-aware audio engine, drag-and-drop rack reordering, cross-platform plugin editors, performance hardening infrastructure, plugin compatibility improvements, CI/CD and distribution.
+
+**Changes to hot paths:** None yet. The new modules (`graph_engine.rs`, `perf.rs`, `delay_line.rs`) provide building blocks for future audio path integration but are not yet wired into the audio callback. The `SpscRingBuffer`, `XrunTracker`, and `CpuLoadMonitor` in `perf.rs` are designed for real-time use (lock-free, no allocation) but currently only exercised in unit tests.
+
+**New modules:**
+- `audio/graph_engine.rs` — graph-aware multi-plugin processing (not yet in audio callback)
+- `audio/perf.rs` — SPSC ring buffer, xrun detection, CPU load monitoring (infrastructure)
+- `audio/delay_line.rs` — latency compensation delay lines (infrastructure)
+- `gui/editor.rs` — expanded with Linux X11 and Windows HWND support (platform-gated)
+- `vst3/instance.rs` — bus arrangement fallback chain (called during plugin setup, not audio callback)
+- `.github/workflows/ci.yml` — CI pipeline (no runtime impact)
+- `scripts/bundle-macos.sh` — packaging script (no runtime impact)
+
+**No benchmark regressions.**
+
 ## [0.25.0] - 2026-02-28 — Undo/Redo System (no perf impact)
 
 ### Summary

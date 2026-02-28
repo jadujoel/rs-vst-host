@@ -6,7 +6,11 @@
 //!
 //! On macOS, uses Objective-C runtime FFI to create NSWindow + NSView.
 
-use crate::vst3::com::{FIDString, FUnknown, IPlugFrame, IPlugView, K_PLATFORM_TYPE_NSVIEW, ViewRect, view_rect_height, view_rect_width};
+#[allow(unused_imports)]
+use crate::vst3::com::{
+    FIDString, FUnknown, IPlugFrame, IPlugView, K_PLATFORM_TYPE_HWND, K_PLATFORM_TYPE_NSVIEW,
+    K_PLATFORM_TYPE_X11, ViewRect, view_rect_height, view_rect_width,
+};
 use crate::vst3::plug_frame::HostPlugFrame;
 use crate::vst3::sandbox::{SandboxResult, sandbox_call};
 use std::ffi::c_void;
@@ -42,9 +46,23 @@ struct NativeWindow {
     view: *mut c_void,
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct NativeWindow {
-    // Stub for non-macOS platforms
+    /// X11 display pointer.
+    display: *mut c_void,
+    /// X11 window ID (XID).
+    window_id: u64,
+}
+
+#[cfg(target_os = "windows")]
+struct NativeWindow {
+    /// Win32 HWND handle.
+    hwnd: *mut c_void,
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+struct NativeWindow {
+    // Stub for unsupported platforms
     _placeholder: (),
 }
 
@@ -70,10 +88,7 @@ impl EditorWindow {
             sandbox_call("plugview_is_platform_supported", move || unsafe {
                 let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                (vtbl.isPlatformTypeSupported)(
-                    view,
-                    K_PLATFORM_TYPE_NSVIEW.as_ptr() as FIDString,
-                )
+                (vtbl.isPlatformTypeSupported)(view, K_PLATFORM_TYPE_NSVIEW.as_ptr() as FIDString)
             })
         };
         match platform_ok {
@@ -96,14 +111,24 @@ impl EditorWindow {
             sandbox_call("plugview_get_size", move || unsafe {
                 let view = v as *mut IPlugView;
                 let vtbl = &*(*view).vtbl;
-                let mut rect = ViewRect { left: 0, top: 0, right: 0, bottom: 0 };
+                let mut rect = ViewRect {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
                 let result = (vtbl.getSize)(view, &mut rect);
                 (result, rect)
             })
         };
         let (width, height) = match size_result {
-            SandboxResult::Ok((K_RESULT_OK, rect)) if view_rect_width(&rect) > 0 && view_rect_height(&rect) > 0 => {
-                (view_rect_width(&rect) as f64, view_rect_height(&rect) as f64)
+            SandboxResult::Ok((K_RESULT_OK, rect))
+                if view_rect_width(&rect) > 0 && view_rect_height(&rect) > 0 =>
+            {
+                (
+                    view_rect_width(&rect) as f64,
+                    view_rect_height(&rect) as f64,
+                )
             }
             SandboxResult::Crashed(_) | SandboxResult::Panicked(_) => {
                 warn!(plugin = %plugin_name, "Plugin crashed during getSize");
@@ -209,8 +234,261 @@ impl EditorWindow {
         })
     }
 
-    /// Stub for non-macOS platforms.
-    #[cfg(not(target_os = "macos"))]
+    /// Open a plugin editor window on Linux via X11/XEmbed.
+    ///
+    /// Creates an X11 window, attaches the IPlugView, and maps the window.
+    /// Requires an X11 display connection.
+    #[cfg(target_os = "linux")]
+    pub fn open(view: *mut IPlugView, plugin_name: &str) -> Option<Self> {
+        let view_raw = view as usize;
+
+        // Check X11 platform support (sandboxed)
+        let platform_ok = {
+            let v = view_raw;
+            sandbox_call("plugview_is_platform_supported_x11", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                (vtbl.isPlatformTypeSupported)(view, K_PLATFORM_TYPE_X11.as_ptr() as FIDString)
+            })
+        };
+        match platform_ok {
+            SandboxResult::Ok(K_RESULT_OK) => {}
+            SandboxResult::Ok(_) => {
+                warn!(plugin = %plugin_name, "Plugin does not support X11EmbedWindowID editor");
+                Self::release_view_safe(view, plugin_name);
+                return None;
+            }
+            _ => {
+                warn!(plugin = %plugin_name, "Plugin crashed checking X11 platform support");
+                return None;
+            }
+        }
+
+        // Get preferred editor size (sandboxed)
+        let size_result = {
+            let v = view_raw;
+            sandbox_call("plugview_get_size_x11", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                let mut rect = ViewRect {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                let result = (vtbl.getSize)(view, &mut rect);
+                (result, rect)
+            })
+        };
+        let (width, height) = match size_result {
+            SandboxResult::Ok((K_RESULT_OK, rect))
+                if view_rect_width(&rect) > 0 && view_rect_height(&rect) > 0 =>
+            {
+                (
+                    view_rect_width(&rect) as u32,
+                    view_rect_height(&rect) as u32,
+                )
+            }
+            SandboxResult::Crashed(_) | SandboxResult::Panicked(_) => {
+                warn!(plugin = %plugin_name, "Plugin crashed during getSize (X11)");
+                return None;
+            }
+            _ => (800, 600),
+        };
+
+        // Create X11 window via xcb/xlib
+        let native_window = unsafe { linux::create_window(plugin_name, width, height)? };
+
+        // Create and install IPlugFrame (sandboxed)
+        let plug_frame = HostPlugFrame::new();
+        {
+            let v = view_raw;
+            let frame_ptr = unsafe { HostPlugFrame::as_ptr(plug_frame) as *mut IPlugFrame };
+            let set_frame_result = sandbox_call("plugview_set_frame_x11", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                (vtbl.setFrame)(view, frame_ptr)
+            });
+            match set_frame_result {
+                SandboxResult::Crashed(_) | SandboxResult::Panicked(_) => {
+                    warn!(plugin = %plugin_name, "Plugin crashed during setFrame (X11)");
+                    unsafe {
+                        linux::close_window(&native_window);
+                        HostPlugFrame::destroy(plug_frame);
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        // Attach view to the X11 window (sandboxed)
+        // X11EmbedWindowID expects the parent window XID as a pointer-sized value
+        let xid = native_window.window_id as usize as *mut c_void;
+        let attach_result = {
+            let v = view_raw;
+            sandbox_call("plugview_attached_x11", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                (vtbl.attached)(view, xid, K_PLATFORM_TYPE_X11.as_ptr() as FIDString)
+            })
+        };
+
+        match attach_result {
+            SandboxResult::Ok(K_RESULT_OK) => {}
+            SandboxResult::Ok(r) => {
+                warn!(plugin = %plugin_name, result = r, "IPlugView::attached failed (X11)");
+                unsafe {
+                    linux::close_window(&native_window);
+                    HostPlugFrame::destroy(plug_frame);
+                }
+                Self::release_view_safe(view, plugin_name);
+                return None;
+            }
+            _ => {
+                warn!(plugin = %plugin_name, "Plugin crashed during IPlugView::attached (X11)");
+                unsafe {
+                    linux::close_window(&native_window);
+                    HostPlugFrame::destroy(plug_frame);
+                }
+                return None;
+            }
+        }
+
+        unsafe { linux::show_window(&native_window) };
+
+        info!(plugin = %plugin_name, width, height, "Plugin editor window opened (X11)");
+
+        Some(EditorWindow {
+            view,
+            plug_frame,
+            native_window,
+            plugin_name: plugin_name.to_string(),
+            attached: true,
+        })
+    }
+
+    /// Open a plugin editor window on Windows via HWND.
+    #[cfg(target_os = "windows")]
+    pub fn open(view: *mut IPlugView, plugin_name: &str) -> Option<Self> {
+        let view_raw = view as usize;
+
+        // Check HWND platform support (sandboxed)
+        let platform_ok = {
+            let v = view_raw;
+            sandbox_call("plugview_is_platform_supported_hwnd", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                (vtbl.isPlatformTypeSupported)(view, K_PLATFORM_TYPE_HWND.as_ptr() as FIDString)
+            })
+        };
+        match platform_ok {
+            SandboxResult::Ok(K_RESULT_OK) => {}
+            SandboxResult::Ok(_) => {
+                warn!(plugin = %plugin_name, "Plugin does not support HWND editor");
+                Self::release_view_safe(view, plugin_name);
+                return None;
+            }
+            _ => {
+                warn!(plugin = %plugin_name, "Plugin crashed checking HWND platform support");
+                return None;
+            }
+        }
+
+        // Get preferred size (sandboxed)
+        let size_result = {
+            let v = view_raw;
+            sandbox_call("plugview_get_size_hwnd", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                let mut rect = ViewRect {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                let result = (vtbl.getSize)(view, &mut rect);
+                (result, rect)
+            })
+        };
+        let (width, height) = match size_result {
+            SandboxResult::Ok((K_RESULT_OK, rect))
+                if view_rect_width(&rect) > 0 && view_rect_height(&rect) > 0 =>
+            {
+                (
+                    view_rect_width(&rect) as u32,
+                    view_rect_height(&rect) as u32,
+                )
+            }
+            SandboxResult::Crashed(_) | SandboxResult::Panicked(_) => {
+                warn!(plugin = %plugin_name, "Plugin crashed during getSize (HWND)");
+                return None;
+            }
+            _ => (800, 600),
+        };
+
+        // Create Win32 window
+        let native_window = unsafe { windows::create_window(plugin_name, width, height)? };
+
+        // Create and install IPlugFrame (sandboxed)
+        let plug_frame = HostPlugFrame::new();
+        {
+            let v = view_raw;
+            let frame_ptr = unsafe { HostPlugFrame::as_ptr(plug_frame) as *mut IPlugFrame };
+            let _ = sandbox_call("plugview_set_frame_hwnd", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                (vtbl.setFrame)(view, frame_ptr)
+            });
+        }
+
+        // Attach view to the HWND (sandboxed)
+        let hwnd = native_window.hwnd;
+        let attach_result = {
+            let v = view_raw;
+            sandbox_call("plugview_attached_hwnd", move || unsafe {
+                let view = v as *mut IPlugView;
+                let vtbl = &*(*view).vtbl;
+                (vtbl.attached)(view, hwnd, K_PLATFORM_TYPE_HWND.as_ptr() as FIDString)
+            })
+        };
+
+        match attach_result {
+            SandboxResult::Ok(K_RESULT_OK) => {}
+            SandboxResult::Ok(r) => {
+                warn!(plugin = %plugin_name, result = r, "IPlugView::attached failed (HWND)");
+                unsafe {
+                    windows::close_window(&native_window);
+                    HostPlugFrame::destroy(plug_frame);
+                }
+                Self::release_view_safe(view, plugin_name);
+                return None;
+            }
+            _ => {
+                warn!(plugin = %plugin_name, "Plugin crashed during IPlugView::attached (HWND)");
+                unsafe {
+                    windows::close_window(&native_window);
+                    HostPlugFrame::destroy(plug_frame);
+                }
+                return None;
+            }
+        }
+
+        unsafe { windows::show_window(&native_window) };
+
+        info!(plugin = %plugin_name, width, height, "Plugin editor window opened (HWND)");
+
+        Some(EditorWindow {
+            view,
+            plug_frame,
+            native_window,
+            plugin_name: plugin_name.to_string(),
+            attached: true,
+        })
+    }
+
+    /// Stub for unsupported platforms.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     pub fn open(view: *mut IPlugView, plugin_name: &str) -> Option<Self> {
         warn!(plugin = %plugin_name, "Plugin editor windows not supported on this platform");
         Self::release_view_safe(view, plugin_name);
@@ -246,6 +524,12 @@ impl EditorWindow {
             if let Some((width, height)) = HostPlugFrame::take_pending_resize(self.plug_frame) {
                 #[cfg(target_os = "macos")]
                 macos::resize_window(&self.native_window, width as f64, height as f64);
+
+                #[cfg(target_os = "linux")]
+                linux::resize_window(&self.native_window, width as u32, height as u32);
+
+                #[cfg(target_os = "windows")]
+                windows::resize_window(&self.native_window, width as u32, height as u32);
 
                 let v = self.view as usize;
                 let result = sandbox_call("plugview_on_size", move || {
@@ -285,7 +569,17 @@ impl EditorWindow {
         self.attached && macos::is_window_visible(&self.native_window)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    pub fn is_open(&self) -> bool {
+        self.attached && linux::is_window_visible(&self.native_window)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn is_open(&self) -> bool {
+        self.attached && windows::is_window_visible(&self.native_window)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     pub fn is_open(&self) -> bool {
         false
     }
@@ -293,17 +587,30 @@ impl EditorWindow {
     /// Pump the platform event loop so editor windows can render and respond.
     ///
     /// On macOS, this drains all pending AppKit events without blocking.
+    /// On Linux, this drains pending X11 events.
+    /// On Windows, this processes the Win32 message queue.
     /// Must be called periodically from the audio worker's main loop when
-    /// editor windows are open. In the in-process GUI mode, eframe's own
-    /// event loop handles this, so calling it is a harmless no-op.
+    /// editor windows are open.
     #[cfg(target_os = "macos")]
     pub fn pump_platform_events() {
         // Safety: pump_events uses ObjC runtime FFI — no plugin code involved.
         unsafe { macos::pump_events() };
     }
 
-    /// No-op on non-macOS platforms.
-    #[cfg(not(target_os = "macos"))]
+    /// Pump pending X11 events on Linux.
+    #[cfg(target_os = "linux")]
+    pub fn pump_platform_events() {
+        unsafe { linux::pump_events() };
+    }
+
+    /// Process Win32 message queue on Windows.
+    #[cfg(target_os = "windows")]
+    pub fn pump_platform_events() {
+        unsafe { windows::pump_events() };
+    }
+
+    /// No-op on unsupported platforms.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     pub fn pump_platform_events() {}
 
     /// Close the editor window and clean up resources.
@@ -357,6 +664,12 @@ impl EditorWindow {
         unsafe {
             #[cfg(target_os = "macos")]
             macos::close_window(&self.native_window);
+
+            #[cfg(target_os = "linux")]
+            linux::close_window(&self.native_window);
+
+            #[cfg(target_os = "windows")]
+            windows::close_window(&self.native_window);
 
             HostPlugFrame::destroy(self.plug_frame);
         }
@@ -712,6 +1025,372 @@ mod macos {
     }
 }
 
+// ── Linux X11 implementation ────────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::ffi::c_void;
+    use tracing::warn;
+
+    // X11/Xlib FFI types and functions
+    type Display = c_void;
+    type Window = u64;
+
+    #[link(name = "X11")]
+    unsafe extern "C" {
+        fn XOpenDisplay(display_name: *const i8) -> *mut Display;
+        fn XCloseDisplay(display: *mut Display) -> i32;
+        fn XCreateSimpleWindow(
+            display: *mut Display,
+            parent: Window,
+            x: i32,
+            y: i32,
+            width: u32,
+            height: u32,
+            border_width: u32,
+            border: u64,
+            background: u64,
+        ) -> Window;
+        fn XMapWindow(display: *mut Display, window: Window) -> i32;
+        fn XUnmapWindow(display: *mut Display, window: Window) -> i32;
+        fn XDestroyWindow(display: *mut Display, window: Window) -> i32;
+        fn XFlush(display: *mut Display) -> i32;
+        fn XDefaultRootWindow(display: *mut Display) -> Window;
+        fn XResizeWindow(display: *mut Display, window: Window, width: u32, height: u32) -> i32;
+        fn XStoreName(display: *mut Display, window: Window, window_name: *const i8) -> i32;
+        fn XPending(display: *mut Display) -> i32;
+        fn XNextEvent(display: *mut Display, event: *mut [u8; 192]) -> i32;
+    }
+
+    /// Thread-local display connection (one per thread, reused).
+    thread_local! {
+        static DISPLAY: std::cell::Cell<*mut Display> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+    }
+
+    fn get_display() -> *mut Display {
+        DISPLAY.with(|d| {
+            let ptr = d.get();
+            if !ptr.is_null() {
+                return ptr;
+            }
+            let display = unsafe { XOpenDisplay(std::ptr::null()) };
+            if display.is_null() {
+                warn!("Failed to open X11 display");
+                return std::ptr::null_mut();
+            }
+            d.set(display);
+            display
+        })
+    }
+
+    pub(super) unsafe fn create_window(
+        title: &str,
+        width: u32,
+        height: u32,
+    ) -> Option<super::NativeWindow> {
+        let display = get_display();
+        if display.is_null() {
+            return None;
+        }
+
+        unsafe {
+            let root = XDefaultRootWindow(display);
+            let window = XCreateSimpleWindow(
+                display, root, 100, 100, // x, y position
+                width, height, 0, // border width
+                0, // border color
+                0, // background (black)
+            );
+            if window == 0 {
+                warn!("XCreateSimpleWindow failed");
+                return None;
+            }
+
+            // Set window title
+            let c_title = std::ffi::CString::new(title).unwrap_or_default();
+            XStoreName(display, window, c_title.as_ptr());
+
+            Some(super::NativeWindow {
+                display,
+                window_id: window,
+            })
+        }
+    }
+
+    pub(super) unsafe fn show_window(native: &super::NativeWindow) {
+        unsafe {
+            XMapWindow(native.display, native.window_id);
+            XFlush(native.display);
+        }
+    }
+
+    pub(super) fn is_window_visible(native: &super::NativeWindow) -> bool {
+        // X11 doesn't have a simple "is visible" check without querying attributes.
+        // We assume the window is visible if the display and window ID are valid.
+        !native.display.is_null() && native.window_id != 0
+    }
+
+    pub(super) unsafe fn resize_window(native: &super::NativeWindow, width: u32, height: u32) {
+        unsafe {
+            XResizeWindow(native.display, native.window_id, width, height);
+            XFlush(native.display);
+        }
+    }
+
+    pub(super) unsafe fn close_window(native: &super::NativeWindow) {
+        unsafe {
+            XUnmapWindow(native.display, native.window_id);
+            XDestroyWindow(native.display, native.window_id);
+            XFlush(native.display);
+            // Note: we don't close the display — it's reused via thread-local
+        }
+    }
+
+    pub(super) unsafe fn pump_events() {
+        let display = get_display();
+        if display.is_null() {
+            return;
+        }
+        unsafe {
+            while XPending(display) > 0 {
+                let mut event = [0u8; 192]; // XEvent is ≤192 bytes
+                XNextEvent(display, &mut event);
+                // Events are dispatched to the plugin's embedded X11 window automatically
+            }
+        }
+    }
+}
+
+// ── Windows implementation ──────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use std::ffi::c_void;
+    use tracing::warn;
+
+    // Win32 API types
+    type HWND = *mut c_void;
+    type HINSTANCE = *mut c_void;
+    type HMENU = *mut c_void;
+    type LPARAM = isize;
+    type WPARAM = usize;
+    type LRESULT = isize;
+    type UINT = u32;
+    type BOOL = i32;
+    type DWORD = u32;
+    type ATOM = u16;
+
+    const WS_OVERLAPPEDWINDOW: DWORD = 0x00CF0000;
+    const WS_VISIBLE: DWORD = 0x10000000;
+    const CW_USEDEFAULT: i32 = 0x80000000_u32 as i32;
+    const SW_SHOW: i32 = 5;
+    const PM_REMOVE: UINT = 0x0001;
+    const WM_QUIT: UINT = 0x0012;
+
+    #[repr(C)]
+    struct WNDCLASSEXW {
+        cb_size: UINT,
+        style: UINT,
+        lpfn_wnd_proc: Option<unsafe extern "system" fn(HWND, UINT, WPARAM, LPARAM) -> LRESULT>,
+        cb_cls_extra: i32,
+        cb_wnd_extra: i32,
+        h_instance: HINSTANCE,
+        h_icon: *mut c_void,
+        h_cursor: *mut c_void,
+        hbr_background: *mut c_void,
+        lpsz_menu_name: *const u16,
+        lpsz_class_name: *const u16,
+        h_icon_sm: *mut c_void,
+    }
+
+    #[repr(C)]
+    struct POINT {
+        x: i32,
+        y: i32,
+    }
+
+    #[repr(C)]
+    struct MSG {
+        hwnd: HWND,
+        message: UINT,
+        w_param: WPARAM,
+        l_param: LPARAM,
+        time: DWORD,
+        pt: POINT,
+    }
+
+    #[repr(C)]
+    struct RECT {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn CreateWindowExW(
+            ex_style: DWORD,
+            class_name: *const u16,
+            window_name: *const u16,
+            style: DWORD,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+            parent: HWND,
+            menu: HMENU,
+            instance: HINSTANCE,
+            param: *mut c_void,
+        ) -> HWND;
+        fn DestroyWindow(hwnd: HWND) -> BOOL;
+        fn ShowWindow(hwnd: HWND, cmd_show: i32) -> BOOL;
+        fn IsWindowVisible(hwnd: HWND) -> BOOL;
+        fn SetWindowPos(
+            hwnd: HWND,
+            insert_after: HWND,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: UINT,
+        ) -> BOOL;
+        fn PeekMessageW(
+            msg: *mut MSG,
+            hwnd: HWND,
+            filter_min: UINT,
+            filter_max: UINT,
+            remove_msg: UINT,
+        ) -> BOOL;
+        fn TranslateMessage(msg: *const MSG) -> BOOL;
+        fn DispatchMessageW(msg: *const MSG) -> LRESULT;
+        fn DefWindowProcW(hwnd: HWND, msg: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT;
+        fn RegisterClassExW(wc: *const WNDCLASSEXW) -> ATOM;
+        fn GetModuleHandleW(module_name: *const u16) -> HINSTANCE;
+    }
+
+    // SWP flags
+    const SWP_NOMOVE: UINT = 0x0002;
+    const SWP_NOZORDER: UINT = 0x0004;
+
+    unsafe extern "system" fn wnd_proc(
+        hwnd: HWND,
+        msg: UINT,
+        w_param: WPARAM,
+        l_param: LPARAM,
+    ) -> LRESULT {
+        unsafe { DefWindowProcW(hwnd, msg, w_param, l_param) }
+    }
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    static CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
+    static CLASS_NAME: &str = "RsVstHostPluginEditor";
+
+    fn ensure_class_registered() {
+        CLASS_REGISTERED.call_once(|| unsafe {
+            let class_name_w = to_wide(CLASS_NAME);
+            let h_instance = GetModuleHandleW(std::ptr::null());
+            let wc = WNDCLASSEXW {
+                cb_size: std::mem::size_of::<WNDCLASSEXW>() as UINT,
+                style: 0,
+                lpfn_wnd_proc: Some(wnd_proc),
+                cb_cls_extra: 0,
+                cb_wnd_extra: 0,
+                h_instance,
+                h_icon: std::ptr::null_mut(),
+                h_cursor: std::ptr::null_mut(),
+                hbr_background: std::ptr::null_mut(),
+                lpsz_menu_name: std::ptr::null(),
+                lpsz_class_name: class_name_w.as_ptr(),
+                h_icon_sm: std::ptr::null_mut(),
+            };
+            RegisterClassExW(&wc);
+        });
+    }
+
+    pub(super) unsafe fn create_window(
+        title: &str,
+        width: u32,
+        height: u32,
+    ) -> Option<super::NativeWindow> {
+        ensure_class_registered();
+
+        unsafe {
+            let class_name_w = to_wide(CLASS_NAME);
+            let title_w = to_wide(title);
+            let h_instance = GetModuleHandleW(std::ptr::null());
+
+            let hwnd = CreateWindowExW(
+                0,
+                class_name_w.as_ptr(),
+                title_w.as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                width as i32,
+                height as i32,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                h_instance,
+                std::ptr::null_mut(),
+            );
+
+            if hwnd.is_null() {
+                warn!("CreateWindowExW failed");
+                return None;
+            }
+
+            Some(super::NativeWindow { hwnd })
+        }
+    }
+
+    pub(super) unsafe fn show_window(native: &super::NativeWindow) {
+        unsafe {
+            ShowWindow(native.hwnd, SW_SHOW);
+        }
+    }
+
+    pub(super) fn is_window_visible(native: &super::NativeWindow) -> bool {
+        unsafe { IsWindowVisible(native.hwnd) != 0 }
+    }
+
+    pub(super) unsafe fn resize_window(native: &super::NativeWindow, width: u32, height: u32) {
+        unsafe {
+            SetWindowPos(
+                native.hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                width as i32,
+                height as i32,
+                SWP_NOMOVE | SWP_NOZORDER,
+            );
+        }
+    }
+
+    pub(super) unsafe fn close_window(native: &super::NativeWindow) {
+        unsafe {
+            DestroyWindow(native.hwnd);
+        }
+    }
+
+    pub(super) unsafe fn pump_events() {
+        unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                if msg.message == WM_QUIT {
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -721,6 +1400,16 @@ mod tests {
     #[test]
     fn test_view_rect_platform_constant() {
         assert_eq!(K_PLATFORM_TYPE_NSVIEW, b"NSView\0");
+    }
+
+    #[test]
+    fn test_platform_type_hwnd() {
+        assert_eq!(K_PLATFORM_TYPE_HWND, b"HWND\0");
+    }
+
+    #[test]
+    fn test_platform_type_x11() {
+        assert_eq!(K_PLATFORM_TYPE_X11, b"X11EmbedWindowID\0");
     }
 
     #[test]

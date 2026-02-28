@@ -218,6 +218,12 @@ pub const K_INVALID_ARGUMENT: i32 = kInvalidArgument;
 /// Platform type: macOS NSView.
 pub const K_PLATFORM_TYPE_NSVIEW: &[u8] = b"NSView\0";
 
+/// Platform type: Windows HWND.
+pub const K_PLATFORM_TYPE_HWND: &[u8] = b"HWND\0";
+
+/// Platform type: Linux X11 embed window ID.
+pub const K_PLATFORM_TYPE_X11: &[u8] = b"X11EmbedWindowID\0";
+
 // ─── Convenience helpers ──────────────────────────────────────────────────
 
 /// Convert a null-terminated char8 (i8) buffer to a Rust String.

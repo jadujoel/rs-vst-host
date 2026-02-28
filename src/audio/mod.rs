@@ -7,6 +7,9 @@
 //! - Test tone generation for effect plugin testing
 //! - Audio routing graph for multi-plugin processing chains
 
+pub mod delay_line;
 pub mod device;
 pub mod engine;
 pub mod graph;
+pub mod graph_engine;
+pub mod perf;
