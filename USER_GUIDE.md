@@ -305,7 +305,15 @@ The GUI provides a modern glassmorphism-styled interface for managing plugins. L
 rs-vst-host gui
 ```
 
-By default, the GUI runs in a **separate child process** supervised by the main process. This provides crash isolation — if a plugin corrupts the GUI process's heap (e.g., during editor window teardown), the supervisor automatically relaunches the GUI while audio continues uninterrupted. To use the legacy single-process mode:
+By default, the host uses a **three-process architecture** supervised by a lightweight coordinator:
+
+| Process | Role |
+|---------|------|
+| **Supervisor** | Spawns and monitors both child processes, relays IPC messages, caches state for crash recovery |
+| **Audio Worker** | Runs `HostBackend`, audio engine, and all plugin instances in an isolated child process |
+| **GUI Worker** | Runs the eframe/egui window in its own child process |
+
+This provides **dual crash isolation**: if a plugin corrupts the audio worker's heap (e.g., a buggy DSP callback or shutdown), the supervisor automatically restarts the audio worker and restores the rack configuration — the GUI remains unaffected. Similarly, if the GUI process crashes, audio continues uninterrupted. To use the legacy single-process mode:
 
 ```sh
 rs-vst-host gui --in-process
@@ -646,6 +654,8 @@ The host includes a crash sandbox that protects against buggy plugins. If a plug
 
 - In the **GUI**: The crashed plugin is automatically deactivated and a warning message appears in the status bar (e.g., "⚠ 'Plugin Name' crashed — deactivated safely. The host is unaffected.").
 - In the **CLI**: The host logs a warning and continues running.
+
+> **Note (v0.19.0)**: With the new three-process architecture, if a plugin crash is severe enough to terminate the audio worker process (e.g., heap corruption that bypasses the in-process signal handler), the supervisor automatically restarts the audio worker and restores the rack configuration. The GUI displays a notification like "Audio process restarted (attempt #1)" and the user can re-activate plugins from their preserved rack.
 
 Some COM objects owned by the crashed plugin are intentionally leaked to avoid further crashes. The plugin's dynamic library is also kept loaded in memory to prevent C++ static destructors from running on corrupted state. Host-owned objects (`HostApplication`, `HostComponentHandler`) that the leaked plugin COM objects may still reference are also intentionally leaked to prevent use-after-free. The operating system reclaims all memory when the process exits.
 

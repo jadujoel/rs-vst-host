@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0] - 2026-02-28
+
+### Added
+- **Audio process separation** — The audio engine and plugin backend now run in a separate child process (`audio-worker`) from the supervisor, in addition to the GUI already running in its own child process. This provides full three-process crash isolation:
+  - **Supervisor** (main process): Lightweight relay that spawns and monitors both child processes, relays IPC messages bidirectionally, caches shadow state for crash recovery
+  - **Audio Worker** (child process): Runs `HostBackend`, `AudioEngine`, and all plugin instances. If a plugin corrupts the heap and crashes this process, the supervisor stays alive
+  - **GUI Worker** (child process): Runs the eframe/egui window (unchanged from v0.18.0)
+  - On audio worker crash: supervisor restarts it, restores cached rack configuration, and notifies the GUI. Active plugins need re-activation but the rack config is preserved
+  - On GUI crash: supervisor restarts it and syncs full state from the audio worker (unchanged)
+  - `AudioCommand` enum for supervisor→audio communication: `Action(GuiAction)`, `RequestFullState`, `RestoreState`, `Shutdown`
+  - `SupervisorUpdate::AudioProcessRestarted` variant notifies the GUI when audio is restarted
+  - `ShadowState` in supervisor caches rack config, plugin modules, transport, and settings for recovery
+  - Hidden `audio-worker` CLI subcommand for internal use by the supervisor
+  - New `gui/audio_worker.rs` module (audio worker entry point and message handling)
+- 678 tests passing (572 lib + 106 binary), 0 ignored
+
+### Changed
+- `supervisor.rs` rewritten as a thin message relay (was previously running the HostBackend directly in-process)
+- `handle_action()` moved from supervisor to audio worker process
+- GUI worker now handles `AudioProcessRestarted` update: clears active plugin state and shows restart message
+
 ## [0.18.1] - 2026-02-27
 
 ### Fixed

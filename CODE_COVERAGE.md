@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-27 (v0.18.1 — Fix GUI freeze after plugin deactivation crash + supervisor disconnect detection).
+Last updated: 2026-02-28 (v0.19.0 — Audio process separation: supervisor, audio worker, GUI in separate processes).
 
 ## Summary
 
-- **Total tests:** 663 (lib target)
+- **Total tests:** 678 (572 lib + 106 binary)
 - **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified
-- **Last test run:** 2026-02-27 (663 tests, 0 errors, 0 ignored)
+- **Last test run:** 2026-02-28 (678 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -24,7 +24,7 @@ Last updated: 2026-02-27 (v0.18.1 — Fix GUI freeze after plugin deactivation c
 | `src/vst3/param_changes.rs` | 16 | ✅ Full | COM vtable ops, queue overflow (MAX_PARAM_QUEUES/MAX_POINTS_PER_PARAM), QI, null safety |
 | `src/vst3/params.rs` | 14 | ⚠️ Partial | Utility functions (utf16, truncate) + ParameterEntry types; from_controller requires live plugin |
 | `src/vst3/event_list.rs` | 14 | ✅ Full | COM vtable, add/get/clear, overflow (MAX_EVENTS_PER_BLOCK), null pointers, QI |
-| `src/app/cli.rs` | 16 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, required/optional args, invalid input rejection |
+| `src/app/cli.rs` | 18 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, `audio-worker`, `audio-worker` with flags, required/optional args, invalid input rejection |
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
 | `src/vst3/host_context.rs` | 13 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety, system heap verification |\n| `src/vst3/host_alloc.rs` | 8 | ✅ Full | system_alloc/system_free lifecycle, null safety, system malloc zone verification (macOS), drop semantics, alignment, stress test (100 allocs), Box-is-not-system-zone (mimalloc validation) |
 | `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
@@ -50,9 +50,10 @@ Last updated: 2026-02-27 (v0.18.1 — Fix GUI freeze after plugin deactivation c
 | `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/e2e_tests.rs` | 39 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 crash-resilience tests use subprocess isolation with permanent SIGABRT handler (0 ignored). 10 multi-plugin lifecycle tests: forward/reverse shutdown, interleaved setup, stop-and-restart, duplicate instances, deterministic random ordering (seeds 42/1337), random start/stop cycles, concurrent AudioEngine, rapid add/remove stress. |
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
-| `src/gui/ipc.rs` | 6 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 11 variants), encode/decode wire protocol, DecodeError timeout classification |
-| `src/gui/supervisor.rs` | 5 | ⚠️ Partial | handle_action dispatch (shutdown, set_transport, stage_parameter, refresh_devices), audio_status_state conversion; full supervisor loop requires child process |
-| `src/gui/gui_worker.rs` | 16 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
+| `src/gui/ipc.rs` | 8 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 12 variants incl. AudioProcessRestarted), AudioCommand serde roundtrip (all 4 variants), encode/decode wire protocol, DecodeError timeout classification |
+| `src/gui/supervisor.rs` | 9 | ✅ Full | ShadowState (new, update_from FullState/RackUpdated/PluginModulesUpdated, ignores others, to_restore_command), LoopResult variants, AudioCommand encode/decode, RestoreState roundtrip, AudioProcessRestarted roundtrip; full supervisor loop requires child processes |
+| `src/gui/audio_worker.rs` | 17 | ✅ Full | AudioWorkerState (safe_mode, normal), audio_status_state conversion, build_full_state structure, handle_action dispatch (ping, shutdown, set_tone, add_to_rack, remove_from_rack, select_slot, stage_parameter, set_transport, add_invalid_index, refresh_devices), AudioCommand serialize roundtrip |
+| `src/gui/gui_worker.rs` | 17 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |

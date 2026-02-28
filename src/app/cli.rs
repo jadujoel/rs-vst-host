@@ -93,6 +93,21 @@ pub enum Command {
         #[arg(long)]
         malloc_debug: bool,
     },
+    /// Internal: run as the audio worker process (used by supervisor process separation).
+    #[command(hide = true)]
+    AudioWorker {
+        /// Path to the Unix domain socket for IPC with the supervisor.
+        #[arg(long)]
+        socket: String,
+
+        /// Launch in safe mode.
+        #[arg(long)]
+        safe_mode: bool,
+
+        /// Enable malloc debug.
+        #[arg(long)]
+        malloc_debug: bool,
+    },
 }
 
 #[cfg(test)]
@@ -282,5 +297,49 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_parse_audio_worker() {
+        let cli =
+            Cli::try_parse_from(["rs-vst-host", "audio-worker", "--socket", "/tmp/audio.sock"])
+                .unwrap();
+        match cli.command {
+            Command::AudioWorker {
+                socket,
+                safe_mode,
+                malloc_debug,
+            } => {
+                assert_eq!(socket, "/tmp/audio.sock");
+                assert!(!safe_mode);
+                assert!(!malloc_debug);
+            }
+            _ => panic!("Expected AudioWorker command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_audio_worker_with_flags() {
+        let cli = Cli::try_parse_from([
+            "rs-vst-host",
+            "audio-worker",
+            "--socket",
+            "/tmp/audio.sock",
+            "--safe-mode",
+            "--malloc-debug",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::AudioWorker {
+                socket,
+                safe_mode,
+                malloc_debug,
+            } => {
+                assert_eq!(socket, "/tmp/audio.sock");
+                assert!(safe_mode);
+                assert!(malloc_debug);
+            }
+            _ => panic!("Expected AudioWorker command"),
+        }
     }
 }

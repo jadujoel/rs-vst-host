@@ -22,6 +22,7 @@
 //!    crashes, the supervisor relaunches it. Audio continues uninterrupted.
 
 pub mod app;
+pub mod audio_worker;
 pub mod backend;
 pub mod editor;
 pub mod gui_worker;

@@ -240,6 +240,17 @@ pub enum SupervisorUpdate {
 
     /// Supervisor is shutting down.
     ShutdownAck,
+
+    /// The audio process crashed and was restarted.
+    ///
+    /// The supervisor sends this to the GUI when the audio worker dies
+    /// and is relaunched. Active plugins are lost but rack config is preserved.
+    AudioProcessRestarted {
+        /// Status message describing what happened.
+        message: String,
+        /// How many times the audio process has been restarted.
+        restart_count: u32,
+    },
 }
 
 // ── Shared state types (serializable) ───────────────────────────────────
@@ -302,6 +313,50 @@ pub struct MidiPortState {
     /// Port name.
     pub name: String,
 }
+
+// ── Supervisor → Audio Worker messages ──────────────────────────────────
+
+/// Commands sent from the supervisor to the audio worker process.
+///
+/// The audio worker runs the `HostBackend` and audio engine in a separate
+/// process. The supervisor relays GUI actions to it and receives
+/// `SupervisorUpdate` responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AudioCommand {
+    /// Forward a GUI action to the audio worker for processing.
+    Action(GuiAction),
+
+    /// Request the audio worker to send its current full state.
+    ///
+    /// Used when the GUI process reconnects after a crash — the supervisor
+    /// asks the audio worker for the latest state and forwards it.
+    RequestFullState,
+
+    /// Restore cached state after audio worker restart.
+    ///
+    /// The supervisor maintains a shadow copy of the rack, plugin modules,
+    /// and other state. When the audio worker crashes and is restarted,
+    /// this command seeds it with the last known configuration.
+    RestoreState {
+        /// Scanned plugin modules.
+        plugin_modules: Vec<PluginModuleInfo>,
+        /// Rack slot configuration.
+        rack: Vec<RackSlotState>,
+        /// Currently selected slot.
+        selected_slot: Option<usize>,
+        /// Whether the test tone is enabled.
+        tone_enabled: bool,
+        /// Transport state.
+        transport: TransportUpdate,
+        /// Session file path.
+        session_path: String,
+    },
+
+    /// Shut down the audio worker gracefully.
+    Shutdown,
+}
+
+// ── Shared state types (serializable) ───
 
 /// Transport state for IPC.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,6 +522,10 @@ mod tests {
                 status: AudioStatusState::default(),
             },
             SupervisorUpdate::EditorAvailability { has_editor: true },
+            SupervisorUpdate::AudioProcessRestarted {
+                message: "Audio crashed".into(),
+                restart_count: 3,
+            },
         ];
 
         for update in &updates {
@@ -560,5 +619,45 @@ mod tests {
         };
         let json = serde_json::to_string(&port).expect("serialize");
         assert!(json.contains("IAC Driver"));
+    }
+
+    #[test]
+    fn test_audio_command_serialize_roundtrip() {
+        let commands = vec![
+            AudioCommand::Action(GuiAction::Ping),
+            AudioCommand::Action(GuiAction::ScanPlugins),
+            AudioCommand::RequestFullState,
+            AudioCommand::RestoreState {
+                plugin_modules: Vec::new(),
+                rack: Vec::new(),
+                selected_slot: Some(0),
+                tone_enabled: true,
+                transport: TransportUpdate {
+                    playing: true,
+                    tempo: 128.0,
+                    time_sig_num: 3,
+                    time_sig_den: 4,
+                },
+                session_path: "/tmp/session.json".into(),
+            },
+            AudioCommand::Shutdown,
+        ];
+
+        for cmd in &commands {
+            let json = serde_json::to_string(cmd).expect("serialize");
+            let decoded: AudioCommand = serde_json::from_str(&json).expect("deserialize");
+            let json2 = serde_json::to_string(&decoded).expect("re-serialize");
+            assert_eq!(json, json2, "roundtrip failed for {:?}", cmd);
+        }
+    }
+
+    #[test]
+    fn test_audio_command_encode_decode() {
+        let cmd = AudioCommand::Action(GuiAction::SetToneEnabled { enabled: true });
+        let encoded = encode(&cmd).expect("encode");
+        assert!(encoded.len() > 4);
+        let mut cursor = std::io::Cursor::new(encoded);
+        let decoded: Option<AudioCommand> = decode(&mut cursor).expect("decode");
+        assert!(decoded.is_some());
     }
 }

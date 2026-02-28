@@ -18,6 +18,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 - **GUI crash isolation** — The GUI runs in a separate child process by default, supervised by the main process. If a plugin crashes the GUI, the supervisor relaunches it automatically while audio continues uninterrupted. Use `--in-process` for legacy single-process mode
+- **Audio process isolation** — The audio engine and plugin backend run in a separate child process from the supervisor. If a plugin crashes the audio process, the supervisor stays alive, restarts the audio worker, and restores the rack configuration. The GUI is notified and remains functional throughout
 
 ## Requirements
 
@@ -93,10 +94,11 @@ src/
 │   ├── app.rs       # HostApp eframe::App — plugin browser, rack, transport, parameter view, editor buttons
 │   ├── backend.rs   # Host backend — bridges GUI with audio engine, MIDI, and plugin editors (supports in-process and sandboxed modes)
 │   ├── editor.rs    # Native OS window management for VST3 plugin editor views (macOS NSWindow)
+│   ├── audio_worker.rs # Audio worker child process — runs HostBackend + AudioEngine in isolated process
 │   ├── gui_worker.rs # GUI child process — eframe App receiving state from supervisor via IPC
-│   ├── ipc.rs       # GUI IPC protocol — GuiAction/SupervisorUpdate message types, DecodeError
+│   ├── ipc.rs       # IPC protocol — GuiAction/SupervisorUpdate/AudioCommand message types, DecodeError
 │   ├── session.rs   # Session save/load — serialize/restore host state as JSON
-│   ├── supervisor.rs # GUI supervisor — spawns/monitors GUI child, handles crash recovery and restart
+│   ├── supervisor.rs # Supervisor — spawns/monitors both GUI and audio worker children, relays messages, handles crash recovery
 │   └── theme.rs     # Liquid Glass theme — colours, corner radii, shadows, styling
 ├── host/
 │   └── mod.rs       # Host-side abstractions

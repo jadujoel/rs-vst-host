@@ -323,6 +323,19 @@ impl GuiWorkerApp {
             SupervisorUpdate::ShutdownAck => {
                 debug!("Supervisor acknowledged shutdown");
             }
+
+            SupervisorUpdate::AudioProcessRestarted {
+                message,
+                restart_count: _,
+            } => {
+                self.status_message = message;
+                // Active plugin is lost after audio process restart
+                self.active_slot = None;
+                self.param_snapshots.clear();
+                self.has_editor = false;
+                self.audio_status = AudioStatusState::default();
+                debug!("Audio process was restarted by supervisor");
+            }
         }
     }
 
@@ -1604,5 +1617,41 @@ mod tests {
         // Should return immediately without trying to read
         app.poll_updates();
         assert!(app.supervisor_disconnected);
+    }
+
+    #[test]
+    fn test_apply_audio_process_restarted() {
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+        app.active_slot = Some(0);
+        app.has_editor = true;
+        app.audio_status = AudioStatusState {
+            sample_rate: 48000,
+            buffer_size: 256,
+            device_name: "Test".into(),
+            running: true,
+        };
+        app.param_snapshots = vec![ParamSnapshot {
+            id: 1,
+            title: "Vol".into(),
+            units: "dB".into(),
+            value: 0.5,
+            default: 0.5,
+            display: "0.5".into(),
+            can_automate: true,
+            is_read_only: false,
+            is_bypass: false,
+        }];
+
+        app.apply_update(SupervisorUpdate::AudioProcessRestarted {
+            message: "Audio crashed and was restarted".into(),
+            restart_count: 1,
+        });
+
+        assert_eq!(app.active_slot, None);
+        assert!(app.param_snapshots.is_empty());
+        assert!(!app.has_editor);
+        assert!(!app.audio_status.running);
+        assert!(app.status_message.contains("Audio crashed"));
     }
 }

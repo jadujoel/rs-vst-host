@@ -96,6 +96,13 @@ fn main() -> anyhow::Result<()> {
         } => {
             gui::gui_worker::launch_worker(&socket, safe_mode, malloc_debug)?;
         }
+        Command::AudioWorker {
+            socket,
+            safe_mode,
+            malloc_debug,
+        } => {
+            gui::audio_worker::launch_audio_worker(&socket, safe_mode, malloc_debug)?;
+        }
     }
 
     Ok(())

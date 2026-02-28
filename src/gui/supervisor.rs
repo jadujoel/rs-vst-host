@@ -1,32 +1,52 @@
-//! GUI process supervisor — spawns the GUI in a child process and relaunches on crash.
+//! GUI supervisor — spawns both the GUI and audio worker in child processes.
 //!
-//! The supervisor lives in the main process alongside the audio engine and
-//! plugin backend. It:
+//! The supervisor is a lightweight coordinator that:
 //!
-//! 1. Creates a Unix domain socket pair
-//! 2. Spawns a child process running `rs-vst-host gui-worker --socket <path>`
-//! 3. Runs the [`HostBackend`] and handles [`GuiAction`] messages from the child
-//! 4. Sends [`SupervisorUpdate`] state updates to the GUI
-//! 5. If the child crashes, relaunches it and re-sends the full state
+//! 1. Spawns an **audio worker** child process (runs `HostBackend` + audio engine + plugins)
+//! 2. Spawns a **GUI worker** child process (runs `eframe`/`egui` window)
+//! 3. Relays [`GuiAction`] messages from GUI → audio worker
+//! 4. Relays [`SupervisorUpdate`] messages from audio worker → GUI
+//! 5. If the **GUI** crashes, relaunches it and re-syncs state from the audio worker
+//! 6. If the **audio worker** crashes, relaunches it, restores cached state, and notifies the GUI
 //!
 //! This provides complete crash isolation: a plugin that corrupts the heap
-//! in the GUI process cannot bring down audio processing. The supervisor
-//! simply restarts the GUI.
+//! in the audio process cannot bring down the GUI or the supervisor. The
+//! supervisor simply restarts the audio worker. Similarly, a GUI crash
+//! doesn't affect audio processing.
+//!
+//! # Process Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────┐
+//! │   Supervisor Process        │
+//! │   (lightweight relay)       │
+//! │                             │
+//! │   Spawns + monitors both    │
+//! │   child processes.          │
+//! │   Relays IPC messages.      │
+//! │   Handles crash recovery.   │
+//! └──────┬──────────────┬───────┘
+//!        │              │
+//!    ┌───▼───┐      ┌───▼──────────┐
+//!    │  GUI  │      │ Audio Worker  │
+//!    │ Child │      │    Child      │
+//!    │       │      │              │
+//!    │eframe │      │ HostBackend  │
+//!    │egui   │      │ AudioEngine  │
+//!    │       │      │ Plugins      │
+//!    └───────┘      └──────────────┘
+//! ```
 
-use crate::gui::backend::{AudioStatus, HostBackend, ParamSnapshot};
 use crate::gui::ipc::*;
-use crate::gui::session::Session;
 use crate::vst3::types::PluginModuleInfo;
-use crate::vst3::{cache, scanner};
 
 use std::io::Write;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-/// Maximum number of rapid restarts before giving up.
+/// Maximum number of rapid restarts before giving up (per child type).
 const MAX_RAPID_RESTARTS: u32 = 5;
 /// Time window for counting "rapid" restarts.
 const RAPID_RESTART_WINDOW: Duration = Duration::from_secs(30);
@@ -46,82 +66,205 @@ pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()>
         safe_mode, malloc_debug
     );
 
-    // ── Build initial state ─────────────────────────────────────────────
-    let mut backend = HostBackend::new();
-    let mut plugin_modules: Vec<PluginModuleInfo> = if safe_mode {
-        Vec::new()
-    } else {
-        cache::load()
-            .ok()
-            .flatten()
-            .map(|c| c.modules)
-            .unwrap_or_default()
-    };
+    // ── Spawn audio worker ──────────────────────────────────────────────
+    let mut audio_ctx = AudioWorkerContext::spawn(safe_mode, malloc_debug)?;
 
-    let mut rack: Vec<RackSlotState> = Vec::new();
-    let mut selected_slot: Option<usize> = None;
-    let mut param_snapshots: Vec<ParamSnapshot> = Vec::new();
-    let mut status_message: String = if safe_mode {
-        "Safe mode — no plugins loaded. Click 'Scan' to discover VST3 plugins.".into()
-    } else if plugin_modules.is_empty() {
-        "No plugins cached. Click 'Scan' to discover VST3 plugins.".into()
-    } else {
-        let total: usize = plugin_modules.iter().map(|m| m.classes.len()).sum();
-        format!("{} plugin class(es) loaded from cache.", total)
-    };
-    let mut tone_enabled = false;
-    let mut transport = TransportUpdate {
-        playing: false,
-        tempo: 120.0,
-        time_sig_num: 4,
-        time_sig_den: 4,
-    };
-    let mut session_path = crate::gui::session::sessions_dir()
-        .map(|d| d.join("default.json").to_string_lossy().to_string())
-        .unwrap_or_else(|| "session.json".into());
+    // ── Shadow state for crash recovery ─────────────────────────────────
+    let mut shadow = ShadowState::new(safe_mode);
 
-    // ── Restart loop ────────────────────────────────────────────────────
-    let mut restart_count: u32 = 0;
-    let mut first_restart_time = std::time::Instant::now();
+    // ── GUI restart loop ────────────────────────────────────────────────
+    let mut gui_restart_count: u32 = 0;
+    let mut gui_first_restart_time = std::time::Instant::now();
+
+    // ── Audio restart tracking ──────────────────────────────────────────
+    let mut audio_restart_count: u32 = 0;
+    let mut audio_first_restart_time = std::time::Instant::now();
 
     loop {
-        // Check rapid restart limit
-        if restart_count > 0 {
-            if first_restart_time.elapsed() > RAPID_RESTART_WINDOW {
-                // Reset counter — we're past the window
-                restart_count = 0;
-                first_restart_time = std::time::Instant::now();
+        // Check GUI rapid restart limit
+        if gui_restart_count > 0 {
+            if gui_first_restart_time.elapsed() > RAPID_RESTART_WINDOW {
+                gui_restart_count = 0;
+                gui_first_restart_time = std::time::Instant::now();
             }
-            if restart_count >= MAX_RAPID_RESTARTS {
+            if gui_restart_count >= MAX_RAPID_RESTARTS {
                 error!(
                     "GUI crashed {} times within {}s — giving up",
-                    restart_count,
+                    gui_restart_count,
                     RAPID_RESTART_WINDOW.as_secs()
                 );
+                // Shut down audio worker
+                let _ = send_audio_command(&audio_ctx.stream, &AudioCommand::Shutdown);
+                let _ = audio_ctx.child.wait();
                 return Err(anyhow::anyhow!(
                     "GUI process crashed {} times rapidly — cannot recover",
-                    restart_count
+                    gui_restart_count
                 ));
             }
         }
 
-        // Create socket
-        let socket_path =
+        // ── Spawn GUI child process ────────────────────────────────────
+        let gui_socket_path =
             std::env::temp_dir().join(format!("rs-vst-host-gui-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&gui_socket_path);
+
+        let gui_listener = UnixListener::bind(&gui_socket_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to create GUI socket at '{}': {}",
+                gui_socket_path.display(),
+                e
+            )
+        })?;
+
+        let exe_path = std::env::current_exe()?;
+        let mut cmd = Command::new(&exe_path);
+        cmd.arg("gui-worker")
+            .arg("--socket")
+            .arg(gui_socket_path.to_str().unwrap_or(""));
+        if safe_mode {
+            cmd.arg("--safe-mode");
+        }
+        if malloc_debug {
+            cmd.arg("--malloc-debug");
+        }
+
+        let gui_child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn GUI process: {}", e))?;
+
+        let gui_pid = gui_child.id();
+        info!(pid = gui_pid, "Spawned GUI process");
+
+        // Accept GUI connection with timeout
+        gui_listener.set_nonblocking(true).ok();
+        let gui_stream = {
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(15);
+            loop {
+                match gui_listener.accept() {
+                    Ok((stream, _)) => {
+                        stream.set_nonblocking(false).ok();
+                        stream
+                            .set_read_timeout(Some(Duration::from_millis(50)))
+                            .ok();
+                        break stream;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if start.elapsed() > timeout {
+                            error!("Timed out waiting for GUI process to connect");
+                            let _ = std::fs::remove_file(&gui_socket_path);
+                            let _ = send_audio_command(&audio_ctx.stream, &AudioCommand::Shutdown);
+                            let _ = audio_ctx.child.wait();
+                            return Err(anyhow::anyhow!(
+                                "GUI process did not connect within {}s",
+                                timeout.as_secs()
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&gui_socket_path);
+                        let _ = send_audio_command(&audio_ctx.stream, &AudioCommand::Shutdown);
+                        let _ = audio_ctx.child.wait();
+                        return Err(anyhow::anyhow!("Accept failed: {}", e));
+                    }
+                }
+            }
+        };
+
+        info!("GUI process connected");
+
+        // Request full state from audio worker and forward to GUI
+        if let Err(e) =
+            send_audio_command(&audio_ctx.stream, &AudioCommand::RequestFullState)
+        {
+            warn!(error = %e, "Failed to request full state from audio worker");
+        }
+
+        // Read back the full state from audio worker and forward to GUI
+        if let Ok(Some(full_state)) =
+            decode::<SupervisorUpdate>(&mut audio_ctx.reader())
+        {
+            shadow.update_from(&full_state);
+            if let Err(e) = send_gui_update(&gui_stream, &full_state) {
+                warn!(error = %e, "Failed to send initial state to GUI");
+            }
+        }
+
+        // ── Message relay loop ──────────────────────────────────────────
+        let result = run_relay_loop(
+            &gui_stream,
+            gui_child,
+            &mut audio_ctx,
+            &mut shadow,
+            &mut audio_restart_count,
+            &mut audio_first_restart_time,
+            safe_mode,
+            malloc_debug,
+        );
+
+        // Clean up GUI socket
+        let _ = std::fs::remove_file(&gui_socket_path);
+
+        match result {
+            LoopResult::CleanShutdown => {
+                info!("GUI shut down cleanly — shutting down audio worker");
+                let _ = send_audio_command(&audio_ctx.stream, &AudioCommand::Shutdown);
+                let _ = audio_ctx.child.wait();
+                break;
+            }
+            LoopResult::Crashed(reason) => {
+                gui_restart_count += 1;
+                if gui_restart_count == 1 {
+                    gui_first_restart_time = std::time::Instant::now();
+                }
+                warn!(
+                    reason = %reason,
+                    restarts = gui_restart_count,
+                    "GUI process crashed — restarting"
+                );
+                // Audio worker stays alive — brief pause before GUI restart
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+    }
+
+    info!("Supervisor shut down");
+    Ok(())
+}
+
+// ── Audio worker management ─────────────────────────────────────────────
+
+/// Context for communicating with the audio worker child process.
+struct AudioWorkerContext {
+    /// The audio worker child process.
+    child: Child,
+    /// Unix socket stream to the audio worker.
+    stream: std::os::unix::net::UnixStream,
+    /// Socket path (for cleanup).
+    socket_path: std::path::PathBuf,
+}
+
+impl AudioWorkerContext {
+    /// Spawn a new audio worker child process and connect via Unix socket.
+    fn spawn(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<Self> {
+        let socket_path = std::env::temp_dir().join(format!(
+            "rs-vst-host-audio-{}.sock",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&socket_path);
 
         let listener = UnixListener::bind(&socket_path).map_err(|e| {
             anyhow::anyhow!(
-                "Failed to create GUI socket at '{}': {}",
+                "Failed to create audio socket at '{}': {}",
                 socket_path.display(),
                 e
             )
         })?;
 
-        // Spawn GUI child process
         let exe_path = std::env::current_exe()?;
         let mut cmd = Command::new(&exe_path);
-        cmd.arg("gui-worker")
+        cmd.arg("audio-worker")
             .arg("--socket")
             .arg(socket_path.to_str().unwrap_or(""));
         if safe_mode {
@@ -133,10 +276,10 @@ pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()>
 
         let child = cmd
             .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to spawn GUI process: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to spawn audio worker: {}", e))?;
 
         let child_pid = child.id();
-        info!(pid = child_pid, "Spawned GUI process");
+        info!(pid = child_pid, "Spawned audio worker process");
 
         // Accept connection with timeout
         listener.set_nonblocking(true).ok();
@@ -154,10 +297,9 @@ pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()>
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         if start.elapsed() > timeout {
-                            error!("Timed out waiting for GUI process to connect");
                             let _ = std::fs::remove_file(&socket_path);
                             return Err(anyhow::anyhow!(
-                                "GUI process did not connect within {}s",
+                                "Audio worker did not connect within {}s",
                                 timeout.as_secs()
                             ));
                         }
@@ -165,82 +307,133 @@ pub fn run_supervisor(safe_mode: bool, malloc_debug: bool) -> anyhow::Result<()>
                     }
                     Err(e) => {
                         let _ = std::fs::remove_file(&socket_path);
-                        return Err(anyhow::anyhow!("Accept failed: {}", e));
+                        return Err(anyhow::anyhow!(
+                            "Audio worker accept failed: {}",
+                            e
+                        ));
                     }
                 }
             }
         };
 
-        info!("GUI process connected");
+        info!("Audio worker connected");
 
-        // Send full state to the newly connected GUI
-        let full_state = build_full_state(
-            &plugin_modules,
-            &rack,
-            selected_slot,
-            &backend,
-            &param_snapshots,
-            &status_message,
-            &transport,
-            tone_enabled,
-            safe_mode,
-        );
-        if let Err(e) = send_update(&stream, &full_state) {
-            warn!(error = %e, "Failed to send initial state to GUI");
-        }
-
-        // ── Message loop ────────────────────────────────────────────────
-        let result = run_message_loop(
-            &stream,
+        Ok(Self {
             child,
-            &mut backend,
-            &mut plugin_modules,
-            &mut rack,
-            &mut selected_slot,
-            &mut param_snapshots,
-            &mut status_message,
-            &mut tone_enabled,
-            &mut transport,
-            &mut session_path,
+            stream,
+            socket_path,
+        })
+    }
+
+    /// Get a cloned reader for the audio worker stream.
+    fn reader(&self) -> std::os::unix::net::UnixStream {
+        let r = self.stream.try_clone().expect("clone audio stream");
+        r.set_read_timeout(Some(Duration::from_millis(50))).ok();
+        r
+    }
+}
+
+impl Drop for AudioWorkerContext {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.socket_path);
+    }
+}
+
+// ── Shadow state ────────────────────────────────────────────────────────
+
+/// Shadow copy of state that the supervisor caches for crash recovery.
+///
+/// When the audio worker crashes, the supervisor can restore this state
+/// in a newly spawned audio worker, preserving the user's rack config.
+struct ShadowState {
+    /// Available plugin modules.
+    plugin_modules: Vec<PluginModuleInfo>,
+    /// Rack slot configuration.
+    rack: Vec<RackSlotState>,
+    /// Currently selected slot.
+    selected_slot: Option<usize>,
+    /// Whether tone is enabled.
+    tone_enabled: bool,
+    /// Transport state.
+    transport: TransportUpdate,
+    /// Session file path.
+    session_path: String,
+    /// Whether safe mode is active.
+    safe_mode: bool,
+}
+
+impl ShadowState {
+    fn new(safe_mode: bool) -> Self {
+        let session_path = crate::gui::session::sessions_dir()
+            .map(|d| d.join("default.json").to_string_lossy().to_string())
+            .unwrap_or_else(|| "session.json".into());
+
+        Self {
+            plugin_modules: Vec::new(),
+            rack: Vec::new(),
+            selected_slot: None,
+            tone_enabled: false,
+            transport: TransportUpdate {
+                playing: false,
+                tempo: 120.0,
+                time_sig_num: 4,
+                time_sig_den: 4,
+            },
+            session_path,
             safe_mode,
-            malloc_debug,
-        );
-
-        // Clean up socket
-        let _ = std::fs::remove_file(&socket_path);
-
-        match result {
-            LoopResult::CleanShutdown => {
-                info!("GUI shut down cleanly");
-                break;
-            }
-            LoopResult::Crashed(reason) => {
-                restart_count += 1;
-                if restart_count == 1 {
-                    first_restart_time = std::time::Instant::now();
-                }
-                warn!(
-                    reason = %reason,
-                    restarts = restart_count,
-                    "GUI process crashed — restarting"
-                );
-                status_message = format!(
-                    "⚠ GUI process crashed and was restarted (attempt {}). Audio continues unaffected.",
-                    restart_count
-                );
-                // Brief pause before restart
-                std::thread::sleep(Duration::from_millis(500));
-            }
         }
     }
 
-    // Clean shutdown: deactivate any active plugin
-    backend.deactivate_plugin();
-    info!("Supervisor shut down");
-    Ok(())
+    /// Update shadow state from a `SupervisorUpdate` message.
+    fn update_from(&mut self, update: &SupervisorUpdate) {
+        match update {
+            SupervisorUpdate::FullState {
+                plugin_modules,
+                rack,
+                selected_slot,
+                transport,
+                tone_enabled,
+                safe_mode,
+                ..
+            } => {
+                self.plugin_modules = plugin_modules.clone();
+                self.rack = rack.clone();
+                self.selected_slot = *selected_slot;
+                self.transport = transport.clone();
+                self.tone_enabled = *tone_enabled;
+                self.safe_mode = *safe_mode;
+            }
+            SupervisorUpdate::RackUpdated {
+                rack,
+                selected_slot,
+                ..
+            } => {
+                self.rack = rack.clone();
+                self.selected_slot = *selected_slot;
+            }
+            SupervisorUpdate::PluginModulesUpdated { modules } => {
+                self.plugin_modules = modules.clone();
+            }
+            _ => {}
+        }
+    }
+
+    /// Build a `RestoreState` command from cached shadow state.
+    fn to_restore_command(&self) -> AudioCommand {
+        AudioCommand::RestoreState {
+            plugin_modules: self.plugin_modules.clone(),
+            rack: self.rack.clone(),
+            selected_slot: self.selected_slot,
+            tone_enabled: self.tone_enabled,
+            transport: self.transport.clone(),
+            session_path: self.session_path.clone(),
+        }
+    }
 }
 
-/// Result of the message loop.
+// ── Loop result ─────────────────────────────────────────────────────────
+
+/// Result of the message relay loop.
 enum LoopResult {
     /// GUI shut down normally (window closed).
     CleanShutdown,
@@ -248,123 +441,158 @@ enum LoopResult {
     Crashed(String),
 }
 
-/// Run the message loop, processing actions from the GUI and sending updates.
+// ── Message relay loop ──────────────────────────────────────────────────
+
+/// Run the message relay loop between the GUI and audio worker.
+///
+/// Relays messages bidirectionally:
+/// - GUI → (GuiAction) → wrap as AudioCommand::Action → Audio Worker
+/// - Audio Worker → (SupervisorUpdate) → GUI
+///
+/// Also monitors both child processes for crashes and handles recovery.
 #[allow(clippy::too_many_arguments)]
-fn run_message_loop(
-    stream: &std::os::unix::net::UnixStream,
-    mut child: Child,
-    backend: &mut HostBackend,
-    plugin_modules: &mut Vec<PluginModuleInfo>,
-    rack: &mut Vec<RackSlotState>,
-    selected_slot: &mut Option<usize>,
-    param_snapshots: &mut Vec<ParamSnapshot>,
-    status_message: &mut String,
-    tone_enabled: &mut bool,
-    transport: &mut TransportUpdate,
-    _session_path: &mut String,
+fn run_relay_loop(
+    gui_stream: &std::os::unix::net::UnixStream,
+    mut gui_child: Child,
+    audio_ctx: &mut AudioWorkerContext,
+    shadow: &mut ShadowState,
+    audio_restart_count: &mut u32,
+    audio_first_restart_time: &mut std::time::Instant,
     safe_mode: bool,
-    _malloc_debug: bool,
+    malloc_debug: bool,
 ) -> LoopResult {
-    // Use a clone for reading (Unix sockets can be split this way)
-    let mut reader = stream.try_clone().expect("clone stream for reading");
-    reader
-        .set_read_timeout(Some(Duration::from_millis(50)))
+    let mut gui_reader = gui_stream.try_clone().expect("clone GUI stream for reading");
+    gui_reader
+        .set_read_timeout(Some(Duration::from_millis(25)))
+        .ok();
+    let mut audio_reader = audio_ctx.reader();
+    audio_reader
+        .set_read_timeout(Some(Duration::from_millis(25)))
         .ok();
 
     loop {
-        // 1. Try to read a GUI action (non-blocking with 50ms timeout)
-        match decode::<GuiAction>(&mut reader) {
+        // 1. Try to read a GUI action and forward to audio worker
+        match decode::<GuiAction>(&mut gui_reader) {
             Ok(Some(action)) => {
-                let response = handle_action(
-                    action,
-                    backend,
-                    plugin_modules,
-                    rack,
-                    selected_slot,
-                    param_snapshots,
-                    status_message,
-                    tone_enabled,
-                    transport,
-                    safe_mode,
-                );
-
-                // Send response updates
-                for update in response {
-                    if let Err(e) = send_update(stream, &update) {
-                        return LoopResult::Crashed(format!("Send failed: {}", e));
-                    }
+                let is_shutdown = matches!(action, GuiAction::Shutdown);
+                let cmd = AudioCommand::Action(action);
+                if let Err(e) = send_audio_command(&audio_ctx.stream, &cmd) {
+                    warn!(error = %e, "Failed to forward action to audio worker");
+                    // Audio worker might have crashed — will be detected below
+                }
+                if is_shutdown {
+                    // Wait for ShutdownAck from audio worker, then exit
+                    // Give audio worker a moment to send ack
+                    std::thread::sleep(Duration::from_millis(100));
+                    return LoopResult::CleanShutdown;
                 }
             }
             Ok(None) => {
                 // EOF — GUI process closed the connection
-                return check_child_exit(&mut child);
+                return check_gui_exit(&mut gui_child);
             }
             Err(e) if e.is_timeout() => {
-                // Timeout is expected — we're polling at 50ms intervals
+                // Expected — polling
             }
             Err(e) => {
-                // Real error — GUI might have crashed
                 debug!(error = %e, "GUI decode error");
-                return check_child_exit(&mut child);
+                return check_gui_exit(&mut gui_child);
             }
         }
 
-        // 2. Check for plugin crashes
-        if backend.is_crashed() {
-            let active_name = backend
-                .active_slot_index()
-                .and_then(|idx| rack.get(idx))
-                .map(|s| s.name.clone())
-                .unwrap_or_else(|| "Unknown".into());
-            backend.deactivate_plugin();
-            *status_message = format!(
-                "⚠ '{}' crashed — deactivated safely. Audio host is unaffected.",
-                active_name
-            );
+        // 2. Try to read updates from audio worker and forward to GUI
+        match decode::<SupervisorUpdate>(&mut audio_reader) {
+            Ok(Some(update)) => {
+                // Cache state for crash recovery
+                shadow.update_from(&update);
 
-            // Send updates to GUI
-            let updates = vec![
-                SupervisorUpdate::StatusMessage {
-                    message: status_message.clone(),
-                },
-                SupervisorUpdate::RackUpdated {
-                    rack: rack.clone(),
-                    active_slot: backend.active_slot_index(),
-                    selected_slot: *selected_slot,
-                },
-                SupervisorUpdate::AudioStatusUpdated {
-                    status: audio_status_state(&backend.audio_status),
-                },
-            ];
-            for update in updates {
-                if let Err(e) = send_update(stream, &update) {
-                    debug!(error = %e, "Failed to send crash update to GUI");
+                // Forward to GUI
+                if let Err(e) = send_gui_update(gui_stream, &update) {
+                    debug!(error = %e, "Failed to forward update to GUI");
+                    // GUI might have crashed — will be detected below
                 }
             }
-        }
-
-        // 3. Periodically refresh parameters for active plugin
-        if backend.is_active() {
-            if let Some(idx) = *selected_slot {
-                let is_active = backend.active_slot_index() == Some(idx);
-                if is_active {
-                    let new_snapshots = backend.active_param_snapshots();
-                    if new_snapshots != *param_snapshots {
-                        *param_snapshots = new_snapshots;
-                        // Only send if snapshots actually changed
-                        let _ = send_update(
-                            stream,
-                            &SupervisorUpdate::ParamsUpdated {
-                                snapshots: param_snapshots.clone(),
+            Ok(None) => {
+                // EOF — Audio worker disconnected (crashed?)
+                warn!("Audio worker disconnected");
+                match try_restart_audio_worker(
+                    audio_ctx,
+                    shadow,
+                    gui_stream,
+                    audio_restart_count,
+                    audio_first_restart_time,
+                    safe_mode,
+                    malloc_debug,
+                ) {
+                    Ok(new_reader) => {
+                        audio_reader = new_reader;
+                        continue;
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to restart audio worker — giving up");
+                        // Notify GUI and clean exit
+                        let _ = send_gui_update(
+                            gui_stream,
+                            &SupervisorUpdate::StatusMessage {
+                                message: format!(
+                                    "✗ Audio process failed to restart: {}. Please restart the host.",
+                                    e
+                                ),
                             },
                         );
+                        // Wait for GUI to close
+                        let _ = gui_child.wait();
+                        return LoopResult::CleanShutdown;
+                    }
+                }
+            }
+            Err(e) if e.is_timeout() => {
+                // Expected — polling
+            }
+            Err(e) => {
+                debug!(error = %e, "Audio worker decode error");
+                // Check if audio worker died
+                match audio_ctx.child.try_wait() {
+                    Ok(Some(status)) if !status.success() => {
+                        warn!(exit_status = %status, "Audio worker exited abnormally");
+                        match try_restart_audio_worker(
+                            audio_ctx,
+                            shadow,
+                            gui_stream,
+                            audio_restart_count,
+                            audio_first_restart_time,
+                            safe_mode,
+                            malloc_debug,
+                        ) {
+                            Ok(new_reader) => {
+                                audio_reader = new_reader;
+                                continue;
+                            }
+                            Err(e) => {
+                                error!(error = %e, "Failed to restart audio worker");
+                                let _ = send_gui_update(
+                                    gui_stream,
+                                    &SupervisorUpdate::StatusMessage {
+                                        message: format!(
+                                            "✗ Audio process crashed and could not be restarted: {}",
+                                            e
+                                        ),
+                                    },
+                                );
+                                let _ = gui_child.wait();
+                                return LoopResult::CleanShutdown;
+                            }
+                        }
+                    }
+                    _ => {
+                        // Audio worker still running — might be a transient error
                     }
                 }
             }
         }
 
-        // 4. Check if child is still running
-        match child.try_wait() {
+        // 3. Check if GUI is still running
+        match gui_child.try_wait() {
             Ok(Some(exit_status)) => {
                 if exit_status.success() {
                     return LoopResult::CleanShutdown;
@@ -373,524 +601,136 @@ fn run_message_loop(
                 }
             }
             Ok(None) => {
-                // Still running — continue
+                // Still running
             }
             Err(e) => {
-                return LoopResult::Crashed(format!("wait error: {}", e));
+                return LoopResult::Crashed(format!("GUI wait error: {}", e));
+            }
+        }
+
+        // 4. Check if audio worker is still running
+        match audio_ctx.child.try_wait() {
+            Ok(Some(status)) if !status.success() => {
+                warn!(exit_status = %status, "Audio worker exited abnormally");
+                match try_restart_audio_worker(
+                    audio_ctx,
+                    shadow,
+                    gui_stream,
+                    audio_restart_count,
+                    audio_first_restart_time,
+                    safe_mode,
+                    malloc_debug,
+                ) {
+                    Ok(new_reader) => {
+                        audio_reader = new_reader;
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to restart audio worker");
+                        let _ = send_gui_update(
+                            gui_stream,
+                            &SupervisorUpdate::StatusMessage {
+                                message: format!(
+                                    "✗ Audio process crashed and could not be restarted: {}",
+                                    e
+                                ),
+                            },
+                        );
+                    }
+                }
+            }
+            _ => {
+                // Still running or exited cleanly
             }
         }
     }
 }
 
-/// Handle a single GUI action and return supervisor updates to send back.
+/// Try to restart the audio worker after a crash.
+///
+/// Returns the new audio reader stream on success.
 #[allow(clippy::too_many_arguments)]
-fn handle_action(
-    action: GuiAction,
-    backend: &mut HostBackend,
-    plugin_modules: &mut Vec<PluginModuleInfo>,
-    rack: &mut Vec<RackSlotState>,
-    selected_slot: &mut Option<usize>,
-    param_snapshots: &mut Vec<ParamSnapshot>,
-    status_message: &mut String,
-    tone_enabled: &mut bool,
-    transport: &mut TransportUpdate,
+fn try_restart_audio_worker(
+    audio_ctx: &mut AudioWorkerContext,
+    shadow: &ShadowState,
+    gui_stream: &std::os::unix::net::UnixStream,
+    restart_count: &mut u32,
+    first_restart_time: &mut std::time::Instant,
     safe_mode: bool,
-) -> Vec<SupervisorUpdate> {
-    match action {
-        GuiAction::Ping => vec![SupervisorUpdate::Pong],
+    malloc_debug: bool,
+) -> anyhow::Result<std::os::unix::net::UnixStream> {
+    // Check rapid restart limit
+    *restart_count += 1;
+    if *restart_count == 1 {
+        *first_restart_time = std::time::Instant::now();
+    }
+    if first_restart_time.elapsed() > RAPID_RESTART_WINDOW {
+        *restart_count = 1;
+        *first_restart_time = std::time::Instant::now();
+    }
+    if *restart_count > MAX_RAPID_RESTARTS {
+        return Err(anyhow::anyhow!(
+            "Audio worker crashed {} times within {}s",
+            restart_count,
+            RAPID_RESTART_WINDOW.as_secs()
+        ));
+    }
 
-        GuiAction::Shutdown => vec![SupervisorUpdate::ShutdownAck],
+    info!(
+        restarts = *restart_count,
+        "Restarting audio worker after crash"
+    );
 
-        GuiAction::ScanPlugins => {
-            *status_message = "Scanning for plugins…".into();
+    // Clean up old audio worker
+    let _ = audio_ctx.child.kill();
+    let _ = audio_ctx.child.wait();
 
-            let search_paths = scanner::default_vst3_paths();
-            let bundles = scanner::discover_bundles(&search_paths);
+    // Brief pause before restart
+    std::thread::sleep(Duration::from_millis(500));
 
-            let mut modules: Vec<PluginModuleInfo> = Vec::new();
-            let mut error_count: usize = 0;
-            for bundle_path in &bundles {
-                match crate::vst3::module::Vst3Module::load(bundle_path) {
-                    Ok(module) => {
-                        if let Ok(info) = module.get_info() {
-                            modules.push(info);
-                        }
-                    }
-                    Err(e) => {
-                        error_count += 1;
-                        warn!(path = %bundle_path.display(), error = %e, "scan failed");
-                    }
-                }
-            }
+    // Spawn new audio worker
+    let new_ctx = AudioWorkerContext::spawn(safe_mode, malloc_debug)?;
+    let new_reader = new_ctx.reader();
 
-            let scan_cache = cache::ScanCache::new(modules.clone());
-            if let Err(e) = cache::save(&scan_cache) {
-                warn!(error = %e, "cache save failed");
-            }
+    // Replace the context
+    *audio_ctx = new_ctx;
 
-            let class_count: usize = modules.iter().map(|m| m.classes.len()).sum();
-            let module_count = modules.len();
-            *plugin_modules = modules;
+    // Restore cached state in the new audio worker
+    if let Err(e) = send_audio_command(&audio_ctx.stream, &shadow.to_restore_command()) {
+        warn!(error = %e, "Failed to send restore state to new audio worker");
+    }
 
-            let error_str = if error_count > 0 {
-                format!(", {} error(s)", error_count)
-            } else {
-                String::new()
-            };
-            *status_message = format!(
-                "Scan complete — {} module(s), {} class(es){}.",
-                module_count, class_count, error_str
-            );
-
-            vec![
-                SupervisorUpdate::PluginModulesUpdated {
-                    modules: plugin_modules.clone(),
-                },
-                SupervisorUpdate::StatusMessage {
-                    message: status_message.clone(),
-                },
-            ]
-        }
-
-        GuiAction::AddToRack {
-            module_index,
-            class_index,
-        } => {
-            if let Some(module) = plugin_modules.get(module_index) {
-                if let Some(class) = module.classes.get(class_index) {
-                    let vendor = class
-                        .vendor
-                        .as_deref()
-                        .or(module.factory_vendor.as_deref())
-                        .unwrap_or("Unknown")
-                        .to_string();
-
-                    let slot = RackSlotState {
-                        name: class.name.clone(),
-                        vendor,
-                        category: class.category.clone(),
-                        path: module.path.clone(),
-                        cid: class.cid,
-                        bypassed: false,
-                        param_cache: Vec::new(),
-                        staged_changes: Vec::new(),
-                    };
-
-                    *status_message = format!("Added '{}' to the rack.", slot.name);
-                    rack.push(slot);
-
-                    return vec![
-                        SupervisorUpdate::RackUpdated {
-                            rack: rack.clone(),
-                            active_slot: backend.active_slot_index(),
-                            selected_slot: *selected_slot,
-                        },
-                        SupervisorUpdate::StatusMessage {
-                            message: status_message.clone(),
-                        },
-                    ];
-                }
-            }
-            vec![SupervisorUpdate::StatusMessage {
-                message: "Invalid module/class index.".into(),
-            }]
-        }
-
-        GuiAction::RemoveFromRack { index } => {
-            if index < rack.len() {
-                let name = rack[index].name.clone();
-
-                if backend.active_slot_index() == Some(index) {
-                    backend.deactivate_plugin();
-                    param_snapshots.clear();
-                }
-
-                rack.remove(index);
-                if *selected_slot == Some(index) {
-                    *selected_slot = None;
-                    param_snapshots.clear();
-                } else if let Some(sel) = *selected_slot {
-                    if sel > index {
-                        *selected_slot = Some(sel - 1);
-                    }
-                }
-                *status_message = format!("Removed '{}' from the rack.", name);
-            }
-
-            vec![
-                SupervisorUpdate::RackUpdated {
-                    rack: rack.clone(),
-                    active_slot: backend.active_slot_index(),
-                    selected_slot: *selected_slot,
-                },
-                SupervisorUpdate::ParamsUpdated {
-                    snapshots: param_snapshots.clone(),
-                },
-                SupervisorUpdate::StatusMessage {
-                    message: status_message.clone(),
-                },
-            ]
-        }
-
-        GuiAction::ActivateSlot { index } => {
-            if index < rack.len() {
-                let slot = &rack[index];
-                let path = slot.path.clone();
-                let cid = slot.cid;
-                let name = slot.name.clone();
-
-                match backend.activate_plugin(index, &path, &cid, &name) {
-                    Ok(snapshots) => {
-                        *param_snapshots = snapshots;
-                        *selected_slot = Some(index);
-
-                        // Apply staged changes
-                        let staged: Vec<(u32, f64)> =
-                            rack[index].staged_changes.drain(..).collect();
-                        let staged_count = staged.len();
-                        for (id, value) in staged {
-                            if let Err(e) = backend.set_parameter(id, value) {
-                                warn!(param_id = id, error = %e, "staged param apply failed");
-                            }
-                        }
-
-                        if staged_count > 0 {
-                            *param_snapshots = backend.active_param_snapshots();
-                        }
-
-                        rack[index].param_cache.clone_from(param_snapshots);
-
-                        let staged_msg = if staged_count > 0 {
-                            format!(" ({} staged change(s) applied)", staged_count)
-                        } else {
-                            String::new()
-                        };
-                        *status_message =
-                            format!("▶ '{}' active — processing audio.{}", name, staged_msg);
-
-                        let has_editor = backend.active_has_editor();
-                        return vec![
-                            SupervisorUpdate::RackUpdated {
-                                rack: rack.clone(),
-                                active_slot: backend.active_slot_index(),
-                                selected_slot: *selected_slot,
-                            },
-                            SupervisorUpdate::ParamsUpdated {
-                                snapshots: param_snapshots.clone(),
-                            },
-                            SupervisorUpdate::AudioStatusUpdated {
-                                status: audio_status_state(&backend.audio_status),
-                            },
-                            SupervisorUpdate::EditorAvailability { has_editor },
-                            SupervisorUpdate::StatusMessage {
-                                message: status_message.clone(),
-                            },
-                        ];
-                    }
-                    Err(e) => {
-                        *status_message = format!("✗ Failed to activate '{}': {}", name, e);
-                        error!(plugin = %name, error = %e, "activation failed");
-                    }
-                }
-            }
-
-            vec![SupervisorUpdate::StatusMessage {
-                message: status_message.clone(),
-            }]
-        }
-
-        GuiAction::DeactivateSlot => {
-            // Cache params before deactivating
-            if let Some(active_idx) = backend.active_slot_index() {
-                if let Some(slot) = rack.get_mut(active_idx) {
-                    slot.param_cache = param_snapshots.clone();
-                }
-            }
-
-            let tainted_before = backend.tainted_paths.len();
-            backend.deactivate_plugin();
-            let tainted_after = backend.tainted_paths.len();
-
-            if tainted_after > tainted_before {
-                let name = backend
-                    .active_slot_index()
-                    .and_then(|idx| rack.get(idx))
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| "Plugin".into());
-                *status_message = format!(
-                    "⚠ '{}' crashed during deactivation — restart the host to reuse this plugin.",
-                    name
-                );
-            } else {
-                *status_message = "Plugin deactivated.".into();
-            }
-
-            let mut updates = vec![
-                SupervisorUpdate::RackUpdated {
-                    rack: rack.clone(),
-                    active_slot: backend.active_slot_index(),
-                    selected_slot: *selected_slot,
-                },
-                SupervisorUpdate::AudioStatusUpdated {
-                    status: audio_status_state(&backend.audio_status),
-                },
-                SupervisorUpdate::StatusMessage {
-                    message: status_message.clone(),
-                },
-            ];
-
-            if backend.heap_corruption_detected {
-                updates.push(SupervisorUpdate::HeapCorruptionDetected);
-            }
-
-            updates
-        }
-
-        GuiAction::SetParameter { id, value } => {
-            match backend.set_parameter(id, value) {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!(param_id = id, error = %e, "param set failed");
-                }
-            }
-            vec![] // Params will be refreshed in the periodic update
-        }
-
-        GuiAction::StageParameter {
-            slot_index,
-            id,
-            value,
-        } => {
-            if let Some(slot) = rack.get_mut(slot_index) {
-                if let Some(existing) = slot.staged_changes.iter_mut().find(|(sid, _)| *sid == id) {
-                    existing.1 = value;
-                } else {
-                    slot.staged_changes.push((id, value));
-                }
-                if let Some(cached) = slot.param_cache.iter_mut().find(|s| s.id == id) {
-                    cached.value = value;
-                    cached.display = format!("{:.3}", value);
-                }
-            }
-            vec![SupervisorUpdate::RackUpdated {
-                rack: rack.clone(),
-                active_slot: backend.active_slot_index(),
-                selected_slot: *selected_slot,
-            }]
-        }
-
-        GuiAction::SelectSlot { index } => {
-            *selected_slot = index;
-            // Load cached params for inactive plugin
-            if let Some(idx) = index {
-                let is_active = backend.active_slot_index() == Some(idx);
-                if is_active {
-                    *param_snapshots = backend.active_param_snapshots();
-                } else if let Some(slot) = rack.get(idx) {
-                    *param_snapshots = slot.param_cache.clone();
-                } else {
-                    param_snapshots.clear();
-                }
-            } else {
-                param_snapshots.clear();
-            }
-
-            vec![SupervisorUpdate::ParamsUpdated {
-                snapshots: param_snapshots.clone(),
-            }]
-        }
-
-        GuiAction::SetToneEnabled { enabled } => {
-            *tone_enabled = enabled;
-            backend.set_tone_enabled(enabled);
-            vec![]
-        }
-
-        GuiAction::SetTransport {
-            playing,
-            tempo,
-            time_sig_num,
-            time_sig_den,
-        } => {
-            transport.playing = playing;
-            transport.tempo = tempo;
-            transport.time_sig_num = time_sig_num;
-            transport.time_sig_den = time_sig_den;
-
-            if backend.is_active() {
-                backend.set_playing(playing);
-                backend.set_tempo(tempo);
-                backend.set_time_signature(time_sig_num, time_sig_den);
-            }
-            vec![]
-        }
-
-        GuiAction::OpenEditor => {
-            let name = selected_slot
-                .and_then(|idx| rack.get(idx))
-                .map(|s| s.name.clone())
-                .unwrap_or_default();
-
-            match backend.open_editor(&name) {
-                Ok(()) => {
-                    *status_message = format!("🎹 Editor opened for '{}'.", name);
-                }
-                Err(e) => {
-                    *status_message = format!("✗ Editor failed: {}", e);
-                }
-            }
-
-            vec![SupervisorUpdate::StatusMessage {
-                message: status_message.clone(),
-            }]
-        }
-
-        GuiAction::SaveSession { path } => {
-            let gui_transport = crate::gui::app::TransportState {
-                playing: transport.playing,
-                tempo: transport.tempo,
-                time_sig_num: transport.time_sig_num,
-                time_sig_den: transport.time_sig_den,
-            };
-
-            let gui_rack: Vec<crate::gui::app::PluginSlot> = rack
-                .iter()
-                .map(|s| crate::gui::app::PluginSlot {
-                    name: s.name.clone(),
-                    vendor: s.vendor.clone(),
-                    category: s.category.clone(),
-                    path: s.path.clone(),
-                    cid: s.cid,
-                    bypassed: s.bypassed,
-                    param_cache: s.param_cache.clone(),
-                    staged_changes: s.staged_changes.clone(),
-                })
-                .collect();
-
-            let session = Session::capture(
-                &gui_transport,
-                &gui_rack,
-                backend.selected_audio_device.clone(),
-                backend.selected_midi_port.clone(),
-            );
-
-            let p = PathBuf::from(&path);
-            match session.save_to_file(&p) {
-                Ok(()) => {
-                    *status_message = format!("Session saved to {}", p.display());
-                }
-                Err(e) => {
-                    *status_message = format!("✗ Save failed: {}", e);
-                }
-            }
-
-            vec![SupervisorUpdate::StatusMessage {
-                message: status_message.clone(),
-            }]
-        }
-
-        GuiAction::LoadSession { path } => {
-            let p = PathBuf::from(&path);
-            match Session::load_from_file(&p) {
-                Ok(session) => {
-                    backend.deactivate_plugin();
-                    param_snapshots.clear();
-
-                    let (gui_transport, gui_rack) = session.restore();
-                    transport.playing = gui_transport.playing;
-                    transport.tempo = gui_transport.tempo;
-                    transport.time_sig_num = gui_transport.time_sig_num;
-                    transport.time_sig_den = gui_transport.time_sig_den;
-
-                    *rack = gui_rack
-                        .into_iter()
-                        .map(|s| RackSlotState {
-                            name: s.name,
-                            vendor: s.vendor,
-                            category: s.category,
-                            path: s.path,
-                            cid: s.cid,
-                            bypassed: s.bypassed,
-                            param_cache: Vec::new(),
-                            staged_changes: Vec::new(),
-                        })
-                        .collect();
-
-                    *selected_slot = None;
-                    backend.selected_audio_device = session.audio_device;
-                    backend.selected_midi_port = session.midi_port;
-
-                    *status_message =
-                        format!("Session loaded from {} ({} slots)", p.display(), rack.len());
-                }
-                Err(e) => {
-                    *status_message = format!("✗ Load failed: {}", e);
-                }
-            }
-
-            // Send full state after session load
-            vec![build_full_state(
-                plugin_modules,
-                rack,
-                *selected_slot,
-                backend,
-                param_snapshots,
-                status_message,
-                transport,
-                *tone_enabled,
-                safe_mode,
-            )]
-        }
-
-        GuiAction::SelectAudioDevice { name } => {
-            backend.selected_audio_device = name;
-            vec![]
-        }
-
-        GuiAction::SelectMidiPort { name } => {
-            backend.selected_midi_port = name;
-            vec![]
-        }
-
-        GuiAction::RefreshDevices => {
-            backend.refresh_devices();
-            *status_message = format!(
-                "Devices refreshed — {} audio, {} MIDI",
-                backend.audio_devices.len(),
-                backend.midi_ports.len()
-            );
-            vec![
-                SupervisorUpdate::DevicesUpdated {
-                    audio_devices: backend
-                        .audio_devices
-                        .iter()
-                        .map(|d| DeviceState {
-                            name: d.name.clone(),
-                        })
-                        .collect(),
-                    midi_ports: backend
-                        .midi_ports
-                        .iter()
-                        .map(|p| MidiPortState {
-                            name: p.name.clone(),
-                        })
-                        .collect(),
-                },
-                SupervisorUpdate::StatusMessage {
-                    message: status_message.clone(),
-                },
-            ]
-        }
-
-        GuiAction::SetProcessIsolation { enabled } => {
-            backend.process_isolation = enabled;
-            vec![]
+    // Wait for restored state response (read up to a few from audio worker)
+    let mut temp_reader = audio_ctx.reader();
+    temp_reader
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .ok();
+    if let Ok(Some(restored_state)) = decode::<SupervisorUpdate>(&mut temp_reader) {
+        // Forward the restored state to GUI
+        if let Err(e) = send_gui_update(gui_stream, &restored_state) {
+            debug!(error = %e, "Failed to forward restored state to GUI");
         }
     }
+
+    // Notify GUI that audio was restarted
+    let restart_msg = SupervisorUpdate::AudioProcessRestarted {
+        message: format!(
+            "⚠ Audio process crashed and was restarted (attempt {}). \
+             Plugins need to be re-activated.",
+            restart_count
+        ),
+        restart_count: *restart_count,
+    };
+    if let Err(e) = send_gui_update(gui_stream, &restart_msg) {
+        debug!(error = %e, "Failed to send restart notification to GUI");
+    }
+
+    Ok(new_reader)
 }
 
-/// Check the child process exit status.
-fn check_child_exit(child: &mut Child) -> LoopResult {
+// ── Helper functions ────────────────────────────────────────────────────
+
+/// Check the GUI child process exit status.
+fn check_gui_exit(child: &mut Child) -> LoopResult {
     match child.try_wait() {
         Ok(Some(status)) if status.success() => LoopResult::CleanShutdown,
         Ok(Some(status)) => LoopResult::Crashed(format!("GUI exited with {}", status)),
@@ -904,64 +744,22 @@ fn check_child_exit(child: &mut Child) -> LoopResult {
     }
 }
 
-/// Build a full state update for sending to a (re)connected GUI.
-fn build_full_state(
-    plugin_modules: &[PluginModuleInfo],
-    rack: &[RackSlotState],
-    selected_slot: Option<usize>,
-    backend: &HostBackend,
-    param_snapshots: &[ParamSnapshot],
-    status_message: &str,
-    transport: &TransportUpdate,
-    tone_enabled: bool,
-    safe_mode: bool,
-) -> SupervisorUpdate {
-    SupervisorUpdate::FullState {
-        plugin_modules: plugin_modules.to_vec(),
-        rack: rack.to_vec(),
-        selected_slot,
-        active_slot: backend.active_slot_index(),
-        param_snapshots: param_snapshots.to_vec(),
-        audio_status: audio_status_state(&backend.audio_status),
-        audio_devices: backend
-            .audio_devices
-            .iter()
-            .map(|d| DeviceState {
-                name: d.name.clone(),
-            })
-            .collect(),
-        midi_ports: backend
-            .midi_ports
-            .iter()
-            .map(|p| MidiPortState {
-                name: p.name.clone(),
-            })
-            .collect(),
-        selected_audio_device: backend.selected_audio_device.clone(),
-        selected_midi_port: backend.selected_midi_port.clone(),
-        process_isolation: backend.process_isolation,
-        status_message: status_message.to_string(),
-        heap_corruption_detected: backend.heap_corruption_detected,
-        has_editor: backend.active_has_editor(),
-        tainted_count: backend.tainted_paths.len(),
-        transport: transport.clone(),
-        tone_enabled,
-        safe_mode,
-    }
+/// Send an `AudioCommand` to the audio worker.
+fn send_audio_command(
+    stream: &std::os::unix::net::UnixStream,
+    cmd: &AudioCommand,
+) -> Result<(), String> {
+    let data = encode(cmd)?;
+    let mut writer = stream;
+    writer
+        .write_all(&data)
+        .map_err(|e| format!("Write failed: {}", e))?;
+    writer.flush().map_err(|e| format!("Flush failed: {}", e))?;
+    Ok(())
 }
 
-/// Convert `AudioStatus` to `AudioStatusState` for IPC.
-fn audio_status_state(status: &AudioStatus) -> AudioStatusState {
-    AudioStatusState {
-        sample_rate: status.sample_rate,
-        buffer_size: status.buffer_size,
-        device_name: status.device_name.clone(),
-        running: status.running,
-    }
-}
-
-/// Send a supervisor update to the GUI process.
-fn send_update(
+/// Send a `SupervisorUpdate` to the GUI process.
+fn send_gui_update(
     stream: &std::os::unix::net::UnixStream,
     update: &SupervisorUpdate,
 ) -> Result<(), String> {
@@ -981,476 +779,170 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_audio_status_state_conversion() {
-        let status = AudioStatus {
-            sample_rate: 44100,
-            buffer_size: 512,
-            device_name: "Built-in Output".into(),
-            running: true,
-        };
-        let state = audio_status_state(&status);
-        assert_eq!(state.sample_rate, 44100);
-        assert_eq!(state.buffer_size, 512);
-        assert_eq!(state.device_name, "Built-in Output");
-        assert!(state.running);
+    fn test_shadow_state_new() {
+        let shadow = ShadowState::new(true);
+        assert!(shadow.plugin_modules.is_empty());
+        assert!(shadow.rack.is_empty());
+        assert_eq!(shadow.selected_slot, None);
+        assert!(!shadow.tone_enabled);
+        assert!(shadow.safe_mode);
     }
 
     #[test]
-    fn test_audio_status_state_default_conversion() {
-        let status = AudioStatus::default();
-        let state = audio_status_state(&status);
-        assert_eq!(state.sample_rate, 0);
-        assert!(!state.running);
-    }
-
-    #[test]
-    fn test_build_full_state_structure() {
-        let backend = HostBackend::new();
-        let state = build_full_state(
-            &[],
-            &[],
-            None,
-            &backend,
-            &[],
-            "test status",
-            &TransportUpdate {
-                playing: false,
-                tempo: 120.0,
-                time_sig_num: 4,
+    fn test_shadow_state_update_from_full_state() {
+        let mut shadow = ShadowState::new(false);
+        let update = SupervisorUpdate::FullState {
+            plugin_modules: vec![PluginModuleInfo {
+                path: std::path::PathBuf::from("/test.vst3"),
+                factory_vendor: Some("TestVendor".into()),
+                factory_url: None,
+                factory_email: None,
+                classes: vec![],
+            }],
+            rack: vec![RackSlotState {
+                name: "TestPlugin".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: std::path::PathBuf::from("/test.vst3"),
+                cid: [0u8; 16],
+                bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+            }],
+            selected_slot: Some(0),
+            active_slot: Some(0),
+            param_snapshots: Vec::new(),
+            audio_status: AudioStatusState::default(),
+            audio_devices: Vec::new(),
+            midi_ports: Vec::new(),
+            selected_audio_device: None,
+            selected_midi_port: None,
+            process_isolation: false,
+            status_message: "test".into(),
+            heap_corruption_detected: false,
+            has_editor: false,
+            tainted_count: 0,
+            transport: TransportUpdate {
+                playing: true,
+                tempo: 140.0,
+                time_sig_num: 3,
                 time_sig_den: 4,
             },
-            false,
-            false,
-        );
-        match state {
-            SupervisorUpdate::FullState {
+            tone_enabled: true,
+            safe_mode: true,
+        };
+        shadow.update_from(&update);
+        assert_eq!(shadow.plugin_modules.len(), 1);
+        assert_eq!(shadow.rack.len(), 1);
+        assert_eq!(shadow.selected_slot, Some(0));
+        assert!(shadow.tone_enabled);
+        assert!(shadow.transport.playing);
+        assert_eq!(shadow.transport.tempo, 140.0);
+        assert!(shadow.safe_mode);
+    }
+
+    #[test]
+    fn test_shadow_state_update_from_rack_updated() {
+        let mut shadow = ShadowState::new(false);
+        let update = SupervisorUpdate::RackUpdated {
+            rack: vec![RackSlotState {
+                name: "P1".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: std::path::PathBuf::from("/p1.vst3"),
+                cid: [0u8; 16],
+                bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+            }],
+            active_slot: None,
+            selected_slot: Some(0),
+        };
+        shadow.update_from(&update);
+        assert_eq!(shadow.rack.len(), 1);
+        assert_eq!(shadow.selected_slot, Some(0));
+    }
+
+    #[test]
+    fn test_shadow_state_update_from_modules_updated() {
+        let mut shadow = ShadowState::new(false);
+        let update = SupervisorUpdate::PluginModulesUpdated {
+            modules: vec![PluginModuleInfo {
+                path: std::path::PathBuf::from("/test.vst3"),
+                factory_vendor: None,
+                factory_url: None,
+                factory_email: None,
+                classes: vec![],
+            }],
+        };
+        shadow.update_from(&update);
+        assert_eq!(shadow.plugin_modules.len(), 1);
+    }
+
+    #[test]
+    fn test_shadow_state_to_restore_command() {
+        let shadow = ShadowState {
+            plugin_modules: vec![PluginModuleInfo {
+                path: std::path::PathBuf::from("/test.vst3"),
+                factory_vendor: None,
+                factory_url: None,
+                factory_email: None,
+                classes: vec![],
+            }],
+            rack: vec![RackSlotState {
+                name: "P1".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: std::path::PathBuf::from("/p1.vst3"),
+                cid: [0u8; 16],
+                bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+            }],
+            selected_slot: Some(0),
+            tone_enabled: true,
+            transport: TransportUpdate {
+                playing: true,
+                tempo: 130.0,
+                time_sig_num: 3,
+                time_sig_den: 8,
+            },
+            session_path: "test.json".into(),
+            safe_mode: false,
+        };
+        let cmd = shadow.to_restore_command();
+        match cmd {
+            AudioCommand::RestoreState {
                 plugin_modules,
                 rack,
                 selected_slot,
-                active_slot,
-                status_message,
-                safe_mode,
-                ..
+                tone_enabled,
+                transport,
+                session_path,
             } => {
-                assert!(plugin_modules.is_empty());
-                assert!(rack.is_empty());
-                assert_eq!(selected_slot, None);
-                assert_eq!(active_slot, None);
-                assert_eq!(status_message, "test status");
-                assert!(!safe_mode);
+                assert_eq!(plugin_modules.len(), 1);
+                assert_eq!(rack.len(), 1);
+                assert_eq!(selected_slot, Some(0));
+                assert!(tone_enabled);
+                assert!(transport.playing);
+                assert_eq!(transport.tempo, 130.0);
+                assert_eq!(session_path, "test.json");
             }
-            _ => panic!("Expected FullState"),
+            _ => panic!("Expected RestoreState"),
         }
     }
 
     #[test]
-    fn test_handle_action_ping() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let result = handle_action(
-            GuiAction::Ping,
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert_eq!(result.len(), 1);
-        matches!(&result[0], SupervisorUpdate::Pong);
-    }
-
-    #[test]
-    fn test_handle_action_shutdown() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let result = handle_action(
-            GuiAction::Shutdown,
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert_eq!(result.len(), 1);
-        matches!(&result[0], SupervisorUpdate::ShutdownAck);
-    }
-
-    #[test]
-    fn test_handle_action_set_tone() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let result = handle_action(
-            GuiAction::SetToneEnabled { enabled: true },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert!(result.is_empty());
-        assert!(tone);
-    }
-
-    #[test]
-    fn test_handle_action_add_to_rack() {
-        let mut backend = HostBackend::new();
-        let mut modules = vec![PluginModuleInfo {
-            path: PathBuf::from("/test.vst3"),
-            factory_vendor: Some("TestVendor".into()),
-            factory_url: None,
-            factory_email: None,
-            classes: vec![crate::vst3::types::PluginClassInfo {
-                name: "TestPlugin".into(),
-                category: "Audio Module Class".into(),
-                subcategories: None,
-                vendor: None,
-                version: None,
-                sdk_version: None,
-                cid: [0u8; 16],
-            }],
-        }];
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let result = handle_action(
-            GuiAction::AddToRack {
-                module_index: 0,
-                class_index: 0,
-            },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert_eq!(rack.len(), 1);
-        assert_eq!(rack[0].name, "TestPlugin");
-        assert_eq!(rack[0].vendor, "TestVendor");
-        assert!(status.contains("TestPlugin"));
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_handle_action_remove_from_rack() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = vec![RackSlotState {
-            name: "ToRemove".into(),
-            vendor: "V".into(),
-            category: "C".into(),
-            path: PathBuf::from("/test.vst3"),
-            cid: [0u8; 16],
-            bypassed: false,
-            param_cache: Vec::new(),
-            staged_changes: Vec::new(),
-        }];
-        let mut selected = Some(0);
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let _ = handle_action(
-            GuiAction::RemoveFromRack { index: 0 },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert!(rack.is_empty());
-        assert_eq!(selected, None);
-    }
-
-    #[test]
-    fn test_handle_action_select_slot() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = vec![RackSlotState {
-            name: "Test".into(),
-            vendor: "V".into(),
-            category: "C".into(),
-            path: PathBuf::from("/test.vst3"),
-            cid: [0u8; 16],
-            bypassed: false,
-            param_cache: vec![ParamSnapshot {
-                id: 1,
-                title: "Vol".into(),
-                units: "dB".into(),
-                value: 0.5,
-                default: 0.5,
-                display: "0.5".into(),
-                can_automate: true,
-                is_read_only: false,
-                is_bypass: false,
-            }],
-            staged_changes: Vec::new(),
-        }];
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let _ = handle_action(
-            GuiAction::SelectSlot { index: Some(0) },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert_eq!(selected, Some(0));
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[0].title, "Vol");
-    }
-
-    #[test]
-    fn test_handle_action_stage_parameter() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = vec![RackSlotState {
-            name: "Test".into(),
-            vendor: "V".into(),
-            category: "C".into(),
-            path: PathBuf::from("/test.vst3"),
-            cid: [0u8; 16],
-            bypassed: false,
-            param_cache: vec![ParamSnapshot {
-                id: 1,
-                title: "Vol".into(),
-                units: "dB".into(),
-                value: 0.5,
-                default: 0.5,
-                display: "0.500".into(),
-                can_automate: true,
-                is_read_only: false,
-                is_bypass: false,
-            }],
-            staged_changes: Vec::new(),
-        }];
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let _ = handle_action(
-            GuiAction::StageParameter {
-                slot_index: 0,
-                id: 1,
-                value: 0.8,
-            },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert_eq!(rack[0].staged_changes.len(), 1);
-        assert_eq!(rack[0].staged_changes[0], (1, 0.8));
-        assert_eq!(rack[0].param_cache[0].value, 0.8);
-    }
-
-    #[test]
-    fn test_handle_action_set_transport() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let _ = handle_action(
-            GuiAction::SetTransport {
-                playing: true,
-                tempo: 140.0,
-                time_sig_num: 3,
-                time_sig_den: 8,
-            },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert!(transport.playing);
-        assert_eq!(transport.tempo, 140.0);
-        assert_eq!(transport.time_sig_num, 3);
-        assert_eq!(transport.time_sig_den, 8);
-    }
-
-    #[test]
-    fn test_handle_action_add_invalid_index() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let result = handle_action(
-            GuiAction::AddToRack {
-                module_index: 99,
-                class_index: 0,
-            },
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert!(rack.is_empty());
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn test_handle_action_refresh_devices() {
-        let mut backend = HostBackend::new();
-        let mut modules = Vec::new();
-        let mut rack = Vec::new();
-        let mut selected = None;
-        let mut params = Vec::new();
-        let mut status = String::new();
-        let mut tone = false;
-        let mut transport = TransportUpdate {
-            playing: false,
-            tempo: 120.0,
-            time_sig_num: 4,
-            time_sig_den: 4,
-        };
-
-        let result = handle_action(
-            GuiAction::RefreshDevices,
-            &mut backend,
-            &mut modules,
-            &mut rack,
-            &mut selected,
-            &mut params,
-            &mut status,
-            &mut tone,
-            &mut transport,
-            false,
-        );
-        assert!(!result.is_empty());
-        assert!(status.contains("Devices refreshed"));
-    }
-
-    #[test]
-    fn test_check_child_exit_clean() {
-        // We can't easily test this without a real child process,
-        // but we can verify the function signature and logic.
-        // The actual integration is tested via the supervisor launch.
+    fn test_shadow_state_ignores_other_updates() {
+        let mut shadow = ShadowState::new(false);
+        shadow.update_from(&SupervisorUpdate::Pong);
+        shadow.update_from(&SupervisorUpdate::ShutdownAck);
+        shadow.update_from(&SupervisorUpdate::HeapCorruptionDetected);
+        shadow.update_from(&SupervisorUpdate::StatusMessage {
+            message: "test".into(),
+        });
+        assert!(shadow.plugin_modules.is_empty());
+        assert!(shadow.rack.is_empty());
     }
 
     #[test]
@@ -1465,5 +957,47 @@ mod tests {
             LoopResult::Crashed(msg) => assert_eq!(msg, "test"),
             _ => panic!("Expected Crashed"),
         }
+    }
+
+    #[test]
+    fn test_audio_command_encode_decode() {
+        let cmd = AudioCommand::Action(GuiAction::Ping);
+        let encoded = encode(&cmd).expect("encode");
+        let mut cursor = std::io::Cursor::new(encoded);
+        let decoded: Option<AudioCommand> = decode(&mut cursor).expect("decode");
+        assert!(decoded.is_some());
+    }
+
+    #[test]
+    fn test_audio_command_restore_state_roundtrip() {
+        let cmd = AudioCommand::RestoreState {
+            plugin_modules: vec![],
+            rack: vec![],
+            selected_slot: Some(2),
+            tone_enabled: true,
+            transport: TransportUpdate {
+                playing: true,
+                tempo: 128.0,
+                time_sig_num: 7,
+                time_sig_den: 8,
+            },
+            session_path: "/home/test.json".into(),
+        };
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        let decoded: AudioCommand = serde_json::from_str(&json).expect("deserialize");
+        let json2 = serde_json::to_string(&decoded).expect("re-serialize");
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn test_audio_process_restarted_roundtrip() {
+        let update = SupervisorUpdate::AudioProcessRestarted {
+            message: "Audio crashed".into(),
+            restart_count: 2,
+        };
+        let json = serde_json::to_string(&update).expect("serialize");
+        let decoded: SupervisorUpdate = serde_json::from_str(&json).expect("deserialize");
+        let json2 = serde_json::to_string(&decoded).expect("re-serialize");
+        assert_eq!(json, json2);
     }
 }
