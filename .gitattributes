@@ -2,5 +2,5 @@
 *.wav filter=lfs diff=lfs merge=lfs -text
 *.flac filter=lfs diff=lfs merge=lfs -text
 
-# Track entire VST3 bundles in LFS
-*.vst3 filter=lfs diff=lfs merge=lfs -text
+# Track test VST3 bundles in LFS
+plugins/*/vst3/*.vst3 filter=lfs diff=lfs merge=lfs -text
