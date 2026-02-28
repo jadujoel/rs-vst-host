@@ -111,10 +111,7 @@ mod tests {
         let restored: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.extra_scan_paths.len(), 2);
         assert_eq!(restored.extra_scan_paths[0], PathBuf::from("/custom/vst3"));
-        assert_eq!(
-            restored.extra_scan_paths[1],
-            PathBuf::from("/another/path")
-        );
+        assert_eq!(restored.extra_scan_paths[1], PathBuf::from("/another/path"));
     }
 
     #[test]
