@@ -9,8 +9,8 @@
 **Quality gate achieved**: 347 tests passing, zero warnings, comprehensive coverage of non-RT components.
 **Bug fix release**: IAudioProcessor IID corrected, CFBundleRef support added, IPluginFactory3 support added.
 **Compatibility fix**: Separate IEditController support — split component/controller plugins (e.g. FabFilter) now expose parameters.
-**GUI Design**: Created `DESIGN_DOCUMENT.md` outlining the Liquid Glass style architecture using `egui` + `wgpu`.
-**GUI Skeleton**: Basic `egui`/`eframe` GUI window with Liquid Glass theme, plugin browser, plugin rack, and transport controls. New `gui` CLI command.
+**GUI Design**: Created `DESIGN_DOCUMENT.md` outlining the style architecture using `egui` + `wgpu`.
+**GUI Skeleton**: Basic `egui`/`eframe` GUI window with theme, plugin browser, plugin rack, and transport controls. New `gui` CLI command.
 **GUI PRD**: Added `PRD.md` with product requirements for the GUI application.
 **GUI Integration**: Full backend bridge connecting GUI to audio engine — plugin activation/deactivation from rack, parameter view panel with sliders, audio/MIDI device selection, session save/load, test tone toggle.
 **GUI Editor Windows**: IPlugView/IPlugFrame COM interfaces, native macOS NSWindow hosting for plugin editors, editor lifecycle management, transport sync, audio status display, parameter search filter, safe mode, keyboard shortcuts.
@@ -126,7 +126,7 @@
 
 #### Phase 7 — GUI Implementation (Step 1: Skeleton)
 - **GUI module** (`gui/mod.rs`): New top-level module with `app`, `theme`, `editor`, `backend`, `session` submodules
-- **Liquid Glass theme** (`gui/theme.rs`): Full egui 0.31 theme — color palette (BG_BASE, PANEL_FILL, ACCENT, etc.), CornerRadius constants (card 12px, button 8px, small 6px), Shadow, Margin constants, widget/selection/window visuals, text styles, glass_card_frame() and section_frame() helpers
+- **Theme** (`gui/theme.rs`): Full egui 0.31 theme — color palette (BG_BASE, PANEL_FILL, ACCENT, etc.), CornerRadius constants (card 12px, button 8px, small 6px), Shadow, Margin constants, widget/selection/window visuals, text styles, glass_card_frame() and section_frame() helpers
 - **HostApp** (`gui/app.rs`): `eframe::App` implementation with three-panel layout:
   - Left sidebar: Plugin browser with scan button, search filter, scrollable list of glass-card plugin entries with add-to-rack buttons
   - Central panel: Plugin rack showing loaded plugin slots as glass cards with bypass toggle, remove button, and selection highlight

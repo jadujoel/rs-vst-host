@@ -397,8 +397,8 @@ All notable changes to this project will be documented in this file.
 ## [0.9.0] - 2026-02-25
 
 ### Added
-- **GUI Skeleton** (`gui/` module): Basic graphical user interface using `egui` 0.31 and `eframe` 0.31, implementing the first step of the Liquid Glass design.
-- **Liquid Glass Theme** (`gui/theme.rs`): Full dark glassmorphism theme — deep blue-black background, translucent panel fills, electric blue accent colour, CornerRadius (12/8/6 px), soft panel shadows, glass border strokes, custom text styles, and helper frame constructors (`glass_card_frame`, `section_frame`).
+- **GUI Skeleton** (`gui/` module): Basic graphical user interface using `egui` 0.31 and `eframe` 0.31, implementing the first step of the design.
+- **Theme** (`gui/theme.rs`): Full dark glassmorphism theme — transparent background, translucent panel fills, electric blue accent colour, CornerRadius (12/8/6 px), soft panel shadows, glass border strokes, custom text styles, and helper frame constructors (`glass_card_frame`, `section_frame`).
 - **HostApp** (`gui/app.rs`): Three-panel `eframe::App` layout:
   - **Plugin Browser** (left sidebar): Scan button, text search filter, scrollable list of cached plugins as glass cards with vendor/subcategory display and add-to-rack button.
   - **Plugin Rack** (central panel): Loaded plugin slots shown as selectable glass cards with slot number, name, vendor, bypass toggle, and remove button.
@@ -412,7 +412,6 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Phase 7 GUI Design**: Created `DESIGN_DOCUMENT.md` outlining the architecture and design philosophy for the upcoming graphical user interface.
-- **Liquid Glass Style**: Defined the visual language (Glassmorphism) using `egui` and a custom `wgpu` backend for frosted glass effects, floating panels, and vivid backgrounds.
 - **GUI Architecture**: Outlined core components including the Main Window, Plugin Rack/Routing Graph, Plugin Editor Host, Preset Manager, and Transport Controls.
 
 ## [0.7.0] - 2026-02-25

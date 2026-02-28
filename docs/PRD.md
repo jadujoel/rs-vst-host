@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD)
 
 ## Product
-rs-vst-host GUI application (Liquid Glass host UI for VST3 plugins)
+rs-vst-host GUI application (Host UI for VST3 plugins)
 
 ## Purpose
 Deliver a modern, dependable graphical host that makes scanning, loading, and controlling VST3 plugins fast and intuitive, while preserving real-time audio safety and the host's low-level VST3 compatibility goals.
@@ -32,7 +32,7 @@ The project already ships a CLI with full VST3 loading and audio/MIDI processing
 ## User Experience Principles
 - Fast to scan, fast to load, fast to recover from errors.
 - Controls should be obvious, minimal, and consistent.
-- Liquid Glass styling should enhance clarity, not reduce readability.
+- Styling should enhance clarity, not reduce readability.
 - Avoid blocking UI actions that could impact audio processing.
 
 ## Key User Stories
@@ -111,7 +111,7 @@ The project already ships a CLI with full VST3 loading and audio/MIDI processing
 - Maintain overall test coverage above 80%.
 
 ## UX and Visual Requirements
-- Continue Liquid Glass theme with high contrast text.
+- Styling should enhance clarity, not reduce readability.
 - Use subtle animation for panel transitions (no heavy motion).
 - Preserve readability under bright and dark system themes.
 - Support window resizing down to 1024x640 with responsive layout.

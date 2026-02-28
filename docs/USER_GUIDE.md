@@ -349,7 +349,7 @@ rs-vst-host gui
 | `--malloc-debug` | Enable heap integrity checking and print malloc debug instructions |
 | `--in-process` | Run the GUI in the same process as audio (legacy mode; disables crash isolation) |
 
-This opens a window with the **Liquid Glass** themed interface containing:
+This opens a window with interface containing:
 - **Plugin Browser** (left sidebar) — scan for plugins, search/filter, add to rack
 - **Plugin Rack** (central panel) — manage loaded plugin slots with activate, bypass, editor, and remove controls
 - **Parameter View** (right panel) — sliders and display values for the active plugin's parameters, with search filter

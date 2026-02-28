@@ -4,7 +4,7 @@
 
 Phase 8 transforms rs-vst-host from a functional MVP into a production-ready VST3 host. Building on the solid foundation of Phases 0–7 (CLI, audio engine, MIDI, parameters, GUI, crash sandboxing, process isolation, three-process architecture), this phase focuses on missing DAW-grade features: preset management, multi-plugin routing, cross-platform support, performance hardening, and polish.
 
-**Entry state:** v0.19.0 — 678 tests passing, three-process architecture (supervisor → audio worker + GUI worker), process-per-plugin sandboxing, Liquid Glass GUI with plugin browser/rack/parameter panel/session save-load, E2E test suite with real FabFilter plugins.
+**Entry state:** v0.19.0 — 678 tests passing, three-process architecture (supervisor → audio worker + GUI worker), process-per-plugin sandboxing, GUI with plugin browser/rack/parameter panel/session save-load, E2E test suite with real FabFilter plugins.
 
 ---
 

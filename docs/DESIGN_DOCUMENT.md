@@ -1,10 +1,10 @@
-# Phase 7 GUI Design Document: Liquid Glass Style
+# Phase 7 GUI Design Document
 
 ## 1. Introduction
-This document outlines the design and architecture for the Phase 7 GUI of the `rs-vst-host` project. The primary focus is on implementing a modern, visually appealing interface using the "Liquid Glass" (Glassmorphism) design language. This phase transitions the host from a purely CLI-based application to a fully-featured graphical application capable of hosting plugin editor windows, managing presets, and visualizing audio routing.
+This document outlines the design and architecture for the Phase 7 GUI of the `rs-vst-host` project. The primary focus is on implementing a modern, visually appealing interface using the "Glass" design language. This phase transitions the host from a purely CLI-based application to a fully-featured graphical application capable of hosting plugin editor windows, managing presets, and visualizing audio routing.
 
-## 2. Design Philosophy: Liquid Glass (Glassmorphism)
-The Liquid Glass style is characterized by:
+## 2. Design Philosophy:
+The style is characterized by:
 - **Translucency (Frosted Glass Effect):** Background blur (`backdrop-filter: blur`) to create a sense of depth and hierarchy.
 - **Multi-layered Approach:** UI elements appear to float in space, overlapping each other.
 - **Vivid Backgrounds:** Colorful, abstract, or dynamic backgrounds that highlight the blurred transparency of the foreground elements.
@@ -12,14 +12,14 @@ The Liquid Glass style is characterized by:
 - **Soft Shadows:** Diffused drop shadows to enhance the floating effect.
 
 ## 3. GUI Architecture
-Given the Rust ecosystem, we need a GUI framework that supports advanced rendering techniques like background blur and custom shaders to achieve the Liquid Glass effect.
+Given the Rust ecosystem, we need a GUI framework that supports advanced rendering techniques like background blur and custom shaders to achieve the Glass effect.
 
 ### 3.1 Framework Selection
 - **Primary Candidate: `egui` with `wgpu` backend.** `egui` is immediate mode, highly performant, and integrates well with Rust audio applications. With a custom `wgpu` backend, we can implement the necessary shaders for the frosted glass effect.
 - **Alternative: `iced`.** A reactive GUI library that also supports `wgpu` and might offer better layout primitives for complex routing graphs.
 - **Alternative: `slint`.** A declarative GUI toolkit that compiles to native code, offering good performance and styling capabilities.
 
-*Decision:* We will proceed with **`egui` + `wgpu`** due to its widespread adoption in the Rust audio community and the flexibility to write custom shaders for the Liquid Glass effect.
+*Decision:* We will proceed with **`egui` + `wgpu`** due to its widespread adoption in the Rust audio community and the flexibility to write custom shaders for the Glass effect.
 
 ### 3.2 Core Components
 1. **Main Window (The Workspace):**
@@ -30,14 +30,14 @@ Given the Rust ecosystem, we need a GUI framework that supports advanced renderi
    - Connections between plugins (audio/MIDI routing) drawn as glowing, semi-transparent splines.
 3. **Plugin Editor Host:**
    - A dedicated window or embedded panel that hosts the native VST3 plugin UI (HWND/NSView/X11 Window).
-   - Wrapped in a Liquid Glass frame with host-provided controls (bypass, preset selection).
+   - Wrapped in a Glass frame with host-provided controls (bypass, preset selection).
 4. **Preset & Session Manager:**
    - A slide-out drawer or modal dialog with a frosted glass background for browsing presets and saving/loading sessions.
 5. **Transport & Global Controls:**
    - A floating dock at the top or bottom containing play/pause, tempo, CPU usage, and master volume.
 
-## 4. Implementing the Liquid Glass Effect in `egui`
-To achieve the Liquid Glass look in `egui`, we will need to extend its default rendering:
+## 4. Implementing the Glass Effect in `egui`
+To achieve the look in `egui`, we will need to extend its default rendering:
 
 ### 4.1 Custom Shaders
 - We will implement a custom `wgpu` render pass that applies a Gaussian blur to the framebuffer region behind specific `egui` windows.
@@ -53,10 +53,10 @@ To achieve the Liquid Glass look in `egui`, we will need to extend its default r
 
 ### 5.1 Plugin Editor Window Support
 - **Challenge:** Embedding native OS windows (VST3 editors) within a custom rendered GUI (`wgpu`).
-- **Solution:** We will likely need to use a multi-window approach where the native plugin editor is a separate OS window, but we can style its non-client area (title bar) to match the host's Liquid Glass theme, or use a transparent overlay window if supported by the OS.
+- **Solution:** We will likely need to use a multi-window approach where the native plugin editor is a separate OS window, but we can style its non-client area (title bar) to match the host's theme, or use a transparent overlay window if supported by the OS.
 
 ### 5.2 Preset/Program Management
-- A glass-styled list view showing available presets.
+- A themed list view showing available presets.
 - Search and filter functionality with smooth animations.
 
 ### 5.3 Multiple Instances & Routing Graph
@@ -69,7 +69,7 @@ To achieve the Liquid Glass look in `egui`, we will need to extend its default r
 
 ## 6. Next Steps
 1. Set up a basic `egui` + `wgpu` project skeleton within the `rs-vst-host` workspace.
-2. Develop the custom background blur shader for the Liquid Glass effect.
+2. Develop the custom background blur shader for the Glass effect.
 3. Create a prototype of the "glass card" UI component.
 4. Integrate the existing VST3 loading logic to display loaded plugins as glass cards.
 5. Tackle the native window embedding for plugin editors.

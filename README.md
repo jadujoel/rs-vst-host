@@ -16,7 +16,7 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Process-per-plugin sandboxing** — Optional process isolation mode where each plugin runs in its own child process with POSIX shared memory for audio and Unix sockets for control IPC. A crashed plugin only kills its child process — the host is completely unaffected (like Bitwig Studio)
 - **Debug & profiling** — Optional feature-gated diagnostics: heap integrity checks (`malloc_zone_check`), backtrace capture in signal handler, dhat heap profiler, Chrome trace export, `--malloc-debug` CLI flag
 - **Cross-platform** — macOS, Linux, and Windows support
-- **Graphical interface** — Liquid Glass style GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
+- **Graphical interface** — GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 - **GUI crash isolation** — The GUI runs in a separate child process by default, supervised by the main process. If a plugin crashes the GUI, the supervisor relaunches it automatically while audio continues uninterrupted. Use `--in-process` for legacy single-process mode
 - **Audio process isolation** — The audio engine and plugin backend run in a separate child process from the supervisor. If a plugin crashes the audio process, the supervisor stays alive, restarts the audio worker, and restores the rack configuration. The GUI is notified and remains functional throughout
 
@@ -115,7 +115,7 @@ src/
 │   ├── ipc.rs       # IPC protocol — GuiAction/SupervisorUpdate/AudioCommand message types, DecodeError
 │   ├── session.rs   # Session save/load — serialize/restore host state as JSON
 │   ├── supervisor.rs # Supervisor — spawns/monitors both GUI and audio worker children, relays messages, handles crash recovery
-│   └── theme.rs     # Liquid Glass theme — colours, corner radii, shadows, styling
+│   └── theme.rs     # Theme — colours, corner radii, shadows, styling
 ├── host/
 │   └── mod.rs       # Host-side abstractions
 ├── ipc/
