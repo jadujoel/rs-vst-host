@@ -76,6 +76,11 @@ pub struct GuiWorkerApp {
     session_path: String,
     /// Number of tainted paths (for display).
     tainted_count: usize,
+    /// Whether the supervisor process has disconnected (crashed or exited).
+    ///
+    /// When `true`, the GUI stops sending actions and displays a
+    /// "supervisor lost" banner. The user should close and restart.
+    supervisor_disconnected: bool,
 }
 
 impl GuiWorkerApp {
@@ -116,12 +121,23 @@ impl GuiWorkerApp {
             bottom_tab: crate::gui::app::BottomTab::Transport,
             session_path: default_session_path,
             tainted_count: 0,
+            supervisor_disconnected: false,
         }
     }
 
     /// Send an action to the supervisor.
-    fn send_action(&self, action: GuiAction) {
-        if let Ok(conn) = self.conn.lock() {
+    ///
+    /// If the supervisor has disconnected, this is a no-op to avoid
+    /// spamming "Broken pipe" errors on every frame.
+    fn send_action(&mut self, action: GuiAction) {
+        if self.supervisor_disconnected {
+            return;
+        }
+        let mut disconnected = false;
+        {
+            let Ok(conn) = self.conn.lock() else {
+                return;
+            };
             let data = match encode(&action) {
                 Ok(d) => d,
                 Err(e) => {
@@ -131,22 +147,50 @@ impl GuiWorkerApp {
             };
             let mut writer: &UnixStream = &conn;
             if let Err(e) = writer.write_all(&data) {
-                error!(error = %e, "Failed to send action to supervisor");
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    disconnected = true;
+                } else {
+                    error!(error = %e, "Failed to send action to supervisor");
+                }
+            } else if let Err(e) = writer.flush() {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    disconnected = true;
+                } else {
+                    error!(error = %e, "Failed to flush action");
+                }
             }
-            if let Err(e) = writer.flush() {
-                error!(error = %e, "Failed to flush action");
-            }
+        }
+        if disconnected {
+            self.mark_supervisor_disconnected();
+        }
+    }
+
+    /// Mark the supervisor as disconnected and update the UI state.
+    fn mark_supervisor_disconnected(&mut self) {
+        if !self.supervisor_disconnected {
+            self.supervisor_disconnected = true;
+            self.active_slot = None;
+            self.audio_status = AudioStatusState::default();
+            self.status_message =
+                "\u{26A0} Supervisor process died \u{2014} please close and restart the application.".into();
+            error!("Supervisor process disconnected \u{2014} GUI is orphaned");
         }
     }
 
     /// Poll for updates from the supervisor (non-blocking).
     fn poll_updates(&mut self) {
+        if self.supervisor_disconnected {
+            return;
+        }
+
         // Collect updates while holding the lock, then apply after releasing it.
+        let mut eof_detected = false;
         let updates: Vec<SupervisorUpdate> = {
             let Ok(mut conn) = self.conn.lock() else {
                 return;
             };
-            conn.set_read_timeout(Some(std::time::Duration::from_millis(1))).ok();
+            conn.set_read_timeout(Some(std::time::Duration::from_millis(1)))
+                .ok();
 
             let mut collected = Vec::new();
             loop {
@@ -156,9 +200,7 @@ impl GuiWorkerApp {
                     }
                     Ok(None) => {
                         // EOF — supervisor disconnected
-                        collected.push(SupervisorUpdate::StatusMessage {
-                            message: "⚠ Lost connection to supervisor.".into(),
-                        });
+                        eof_detected = true;
                         break;
                     }
                     Err(_) => {
@@ -172,6 +214,10 @@ impl GuiWorkerApp {
 
         for update in updates {
             self.apply_update(update);
+        }
+
+        if eof_detected {
+            self.mark_supervisor_disconnected();
         }
     }
 
@@ -360,6 +406,26 @@ impl eframe::App for GuiWorkerApp {
             }
         });
 
+        // — Supervisor Disconnected Banner —
+        if self.supervisor_disconnected {
+            egui::TopBottomPanel::top("supervisor_disconnected_warning")
+                .frame(egui::Frame {
+                    fill: egui::Color32::from_rgb(180, 30, 30),
+                    inner_margin: egui::Margin::symmetric(16, 8),
+                    ..Default::default()
+                })
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("⚠ Supervisor process died — please close and restart the application.")
+                                .color(egui::Color32::WHITE)
+                                .strong()
+                                .size(14.0),
+                        );
+                    });
+                });
+        }
+
         // — Heap Corruption Warning Banner —
         if self.heap_corruption_detected {
             egui::TopBottomPanel::top("heap_corruption_warning")
@@ -371,10 +437,12 @@ impl eframe::App for GuiWorkerApp {
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new("⚠ Heap corruption detected — save your session and restart.")
-                                .color(egui::Color32::WHITE)
-                                .strong()
-                                .size(14.0),
+                            egui::RichText::new(
+                                "⚠ Heap corruption detected — save your session and restart.",
+                            )
+                            .color(egui::Color32::WHITE)
+                            .strong()
+                            .size(14.0),
                         );
                     });
                 });
@@ -1093,14 +1161,25 @@ impl GuiWorkerApp {
 /// Launch the GUI worker process. Connects to the supervisor and runs the eframe window.
 ///
 /// This is called from the `gui-worker` CLI subcommand.
-pub fn launch_worker(socket_path: &str, _safe_mode: bool, _malloc_debug: bool) -> anyhow::Result<()> {
+pub fn launch_worker(
+    socket_path: &str,
+    _safe_mode: bool,
+    _malloc_debug: bool,
+) -> anyhow::Result<()> {
     info!(socket = %socket_path, "GUI worker connecting to supervisor");
 
-    let stream = UnixStream::connect(socket_path)
-        .map_err(|e| anyhow::anyhow!("Failed to connect to supervisor socket '{}': {}", socket_path, e))?;
+    let stream = UnixStream::connect(socket_path).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to connect to supervisor socket '{}': {}",
+            socket_path,
+            e
+        )
+    })?;
 
     // Set a reasonable read timeout
-    stream.set_read_timeout(Some(std::time::Duration::from_millis(50))).ok();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+        .ok();
 
     info!("Connected to supervisor");
 
@@ -1125,8 +1204,8 @@ pub fn launch_worker(socket_path: &str, _safe_mode: bool, _malloc_debug: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use crate::vst3::types::PluginClassInfo;
+    use std::path::PathBuf;
 
     #[test]
     fn test_gui_worker_app_default_state() {
@@ -1185,7 +1264,9 @@ mod tests {
                 device_name: "Built-in".into(),
                 running: true,
             },
-            audio_devices: vec![DeviceState { name: "Built-in".into() }],
+            audio_devices: vec![DeviceState {
+                name: "Built-in".into(),
+            }],
             midi_ports: vec![],
             selected_audio_device: Some("Built-in".into()),
             selected_midi_port: None,
@@ -1291,19 +1372,17 @@ mod tests {
         let mut app = GuiWorkerApp::new(s1);
 
         app.apply_update(SupervisorUpdate::ParamsUpdated {
-            snapshots: vec![
-                ParamSnapshot {
-                    id: 1,
-                    title: "Freq".into(),
-                    units: "Hz".into(),
-                    value: 0.3,
-                    default: 0.5,
-                    display: "440".into(),
-                    can_automate: true,
-                    is_read_only: false,
-                    is_bypass: false,
-                },
-            ],
+            snapshots: vec![ParamSnapshot {
+                id: 1,
+                title: "Freq".into(),
+                units: "Hz".into(),
+                value: 0.3,
+                default: 0.5,
+                display: "440".into(),
+                can_automate: true,
+                is_read_only: false,
+                is_bypass: false,
+            }],
         });
 
         assert_eq!(app.param_snapshots.len(), 1);
@@ -1317,12 +1396,16 @@ mod tests {
 
         app.apply_update(SupervisorUpdate::DevicesUpdated {
             audio_devices: vec![
-                DeviceState { name: "Dev1".into() },
-                DeviceState { name: "Dev2".into() },
+                DeviceState {
+                    name: "Dev1".into(),
+                },
+                DeviceState {
+                    name: "Dev2".into(),
+                },
             ],
-            midi_ports: vec![
-                MidiPortState { name: "Port1".into() },
-            ],
+            midi_ports: vec![MidiPortState {
+                name: "Port1".into(),
+            }],
         });
 
         assert_eq!(app.audio_devices.len(), 2);
@@ -1390,7 +1473,8 @@ mod tests {
     #[test]
     fn test_transport_change_detection() {
         let (s1, s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
-        s2.set_read_timeout(Some(std::time::Duration::from_millis(10))).ok();
+        s2.set_read_timeout(Some(std::time::Duration::from_millis(10)))
+            .ok();
         let mut app = GuiWorkerApp::new(s1);
 
         // No change — should not send
@@ -1410,9 +1494,10 @@ mod tests {
     #[test]
     fn test_send_action_to_paired_socket() {
         let (s1, s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
-        s2.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+        s2.set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .ok();
 
-        let app = GuiWorkerApp::new(s1);
+        let mut app = GuiWorkerApp::new(s1);
         app.send_action(GuiAction::Ping);
 
         // Read the action from the other end
@@ -1423,5 +1508,101 @@ mod tests {
             GuiAction::Ping => {}
             other => panic!("Expected Ping, got {:?}", other),
         }
+    }
+
+    // ── Supervisor disconnection tests ──────────────────────────────────
+
+    #[test]
+    fn test_supervisor_disconnected_default_false() {
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let app = GuiWorkerApp::new(s1);
+        assert!(!app.supervisor_disconnected);
+    }
+
+    #[test]
+    fn test_mark_supervisor_disconnected() {
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        app.active_slot = Some(0);
+        app.audio_status.running = true;
+
+        app.mark_supervisor_disconnected();
+
+        assert!(app.supervisor_disconnected);
+        assert_eq!(app.active_slot, None);
+        assert!(!app.audio_status.running);
+        assert!(app.status_message.contains("Supervisor process died"));
+    }
+
+    #[test]
+    fn test_mark_supervisor_disconnected_idempotent() {
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        app.mark_supervisor_disconnected();
+        let msg1 = app.status_message.clone();
+        app.mark_supervisor_disconnected(); // second call should be no-op
+        assert_eq!(app.status_message, msg1);
+    }
+
+    #[test]
+    fn test_send_action_noop_when_disconnected() {
+        let (s1, s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        s2.set_read_timeout(Some(std::time::Duration::from_millis(50)))
+            .ok();
+        let mut app = GuiWorkerApp::new(s1);
+
+        app.supervisor_disconnected = true;
+        app.send_action(GuiAction::Ping);
+
+        // Nothing should have been sent — read should timeout
+        let mut reader = s2;
+        let result = decode::<GuiAction>(&mut reader);
+        assert!(
+            result.is_err(),
+            "Expected timeout/no data when disconnected"
+        );
+    }
+
+    #[test]
+    fn test_send_action_detects_broken_pipe() {
+        let (s1, s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        // Close the remote end to trigger broken pipe
+        drop(s2);
+
+        app.send_action(GuiAction::Ping);
+        assert!(
+            app.supervisor_disconnected,
+            "Should detect broken pipe and mark disconnected"
+        );
+    }
+
+    #[test]
+    fn test_poll_updates_detects_eof() {
+        let (s1, s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        // Close the remote end to trigger EOF
+        drop(s2);
+
+        app.poll_updates();
+        assert!(
+            app.supervisor_disconnected,
+            "Should detect EOF and mark disconnected"
+        );
+    }
+
+    #[test]
+    fn test_poll_updates_noop_when_disconnected() {
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        app.supervisor_disconnected = true;
+        // Should return immediately without trying to read
+        app.poll_updates();
+        assert!(app.supervisor_disconnected);
     }
 }

@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-27 (v0.18.0 — GUI process separation with supervisor/worker architecture).
+Last updated: 2026-02-27 (v0.18.1 — Fix GUI freeze after plugin deactivation crash + supervisor disconnect detection).
 
 ## Summary
 
-- **Total tests:** 652 (lib target)
+- **Total tests:** 663 (lib target)
 - **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified
-- **Last test run:** 2026-02-27 (652 tests, 0 errors, 0 ignored)
+- **Last test run:** 2026-02-27 (663 tests, 0 errors, 0 ignored)
 - **Miri coverage:** 109 tests pass under Miri (Tree Borrows), 70 under Miri (Stacked Borrows)
 - **ASan coverage:** 564 tests pass under AddressSanitizer (15 skipped: signal/malloc_zone conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -29,7 +29,7 @@ Last updated: 2026-02-27 (v0.18.0 — GUI process separation with supervisor/wor
 | `src/vst3/host_context.rs` | 13 | ✅ Full | Create/destroy, QI for all IIDs, ref counting, get_name, null safety, system heap verification |\n| `src/vst3/host_alloc.rs` | 8 | ✅ Full | system_alloc/system_free lifecycle, null safety, system malloc zone verification (macOS), drop semantics, alignment, stress test (100 allocs), Box-is-not-system-zone (mimalloc validation) |
 | `src/vst3/component_handler.rs` | 13 | ✅ Full | COM vtable, perform_edit, restart flags, ref counting, concurrent access, null destroy, system heap verification |
 | `src/gui/app.rs` | 60 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation |
-| `src/gui/backend.rs` | 41 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none; activation requires real .vst3 plugins |
+| `src/gui/backend.rs` | 45 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none, sandbox-wrapped deactivation (no active/no crash, flags cleared before drop, SandboxResult crashed detection, SandboxResult ok not crashed); activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 11 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, translucency, semantic colour distinctness |
 | `src/ipc/messages.rs` | 18 | ✅ Full | Serialization roundtrip (all HostMessage/WorkerResponse variants), encode/decode wire protocol, length-prefix framing, oversized message rejection (16 MB limit), empty stream handling, MidiEvent/ParamChange/TransportState serde |
 | `src/ipc/shm.rs` | 12 | ✅ Full | Create/open shared memory, input/output channel access, read/write audio data, header layout, sample count, ready flag, channel count validation, POSIX cleanup (`shm_unlink`) |
@@ -52,7 +52,7 @@ Last updated: 2026-02-27 (v0.18.0 — GUI process separation with supervisor/wor
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
 | `src/gui/ipc.rs` | 6 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 11 variants), encode/decode wire protocol, DecodeError timeout classification |
 | `src/gui/supervisor.rs` | 5 | ⚠️ Partial | handle_action dispatch (shutdown, set_transport, stage_parameter, refresh_devices), audio_status_state conversion; full supervisor loop requires child process |
-| `src/gui/gui_worker.rs` | 9 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket |
+| `src/gui/gui_worker.rs` | 16 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 3 | ⚠️ Partial | Platform constant, struct size, result constant; open/close/poll require real NSWindow + IPlugView |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |

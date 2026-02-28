@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1] - 2026-02-27
+
+### Fixed
+- **GUI freeze after plugin deactivation crash** — When a plugin crashed during deactivation (e.g. SIGBUS in `terminate_controller`), the sandbox caught the signal via `siglongjmp` but left the process heap corrupted. Subsequent `free()` calls from Rust's allocator (dropping `AudioEngine` buffers) hit the corrupted malloc metadata, triggering `SIGABRT` ("Corruption of tiny freelist") and killing the supervisor process. The GUI worker became orphaned, spinning with "Broken pipe" errors. Fix: wrapped `drop(active)` in an outer `sandbox_call` so the entire `ActiveState` drop chain is crash-protected — if any signal fires during teardown (SIGBUS from the plugin or SIGABRT from corrupted malloc), `siglongjmp` returns to the outer sandbox and the entire `ActiveState` is leaked instead of aborted.
+- **GUI worker orphaned after supervisor crash** — When the supervisor process died, the GUI worker kept running indefinitely, logging "Failed to send action to supervisor: Broken pipe" on every frame. Added `supervisor_disconnected` flag with detection on both send (broken pipe) and receive (EOF) paths. The GUI now shows a prominent red banner ("Supervisor process died — please close and restart") and stops trying to send actions.
+
 ## [0.18.0] - 2026-02-27
 
 ### Added
