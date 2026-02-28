@@ -4,6 +4,14 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.19.9] - 2026-02-28 — IPluginFactory3 vtable fix (no perf impact)
+
+### Summary
+
+Fixed segfault in plugin scan caused by missing `getClassInfoUnicode` slot in `IPluginFactory3Vtbl`. Only the COM vtable struct definition and helper functions were modified — no changes to any hot audio/IPC/rendering paths.
+
+**No benchmark regressions.**
+
 ## [0.19.8] - 2026-02-28 — Exclusive --paths flag (no perf impact)
 
 ### Summary

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.9] - 2026-02-28
+
+### Fixed
+- **SIGSEGV on plugin scan with JUCE-based plugins** (`src/vst3/module.rs`): Fixed segmentation fault (exit 139) when scanning JUCE-based VST3 plugins (e.g., Monster.vst3). Root cause: `IPluginFactory3Vtbl` was missing the `getClassInfoUnicode` virtual method. The vtable placed `set_host_context` at slot 8 (where `getClassInfoUnicode` belongs) instead of slot 9, so calling `setHostContext` actually dispatched to the plugin's `getClassInfoUnicode` implementation with a garbage `FUnknown*` pointer as the index parameter.
+  - Added `get_class_info_unicode` field to `IPluginFactory3Vtbl` (now correctly 10 function pointers)
+  - Added `RawClassInfoW` struct matching the VST3 SDK's `PClassInfoW` (UTF-16 name/vendor/version fields)
+  - Added `utf16_to_string` helper for converting null-terminated UTF-16 buffers
+  - 7 new tests: vtable layout assertions for `IPluginFactoryVtbl` (7 ptrs), `IPluginFactory2Vtbl` (8 ptrs), `IPluginFactory3Vtbl` (10 ptrs), `RawClassInfoW` size (1208 bytes), UTF-16 string conversion (basic, empty, unicode)
+  - 720 tests passing
+
 ## [0.19.8] - 2026-02-28
 
 ### Changed

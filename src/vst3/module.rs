@@ -52,6 +52,21 @@ struct RawClassInfo2 {
     sdk_version: [u8; 64],
 }
 
+/// PClassInfoW — unicode class info from IPluginFactory3::getClassInfoUnicode.
+/// Uses UTF-16 (char16) strings matching the VST3 SDK String128 type.
+#[repr(C)]
+struct RawClassInfoW {
+    cid: [u8; 16],
+    cardinality: i32,
+    category: [u8; 32],
+    name: [u16; 128],
+    class_flags: u32,
+    subcategories: [u8; 128],
+    vendor: [u16; 128],
+    version: [u16; 128],
+    sdk_version: [u16; 128],
+}
+
 /// IUnknown vtable (COM base interface).
 #[repr(C)]
 pub struct IUnknownVtbl {
@@ -118,9 +133,19 @@ const IPLUGIN_FACTORY3_IID: [u8; 16] = [
 ];
 
 /// IPluginFactory3 vtable (extends IPluginFactory2).
+///
+/// VST3 SDK layout:
+///   [0-2] IUnknown: queryInterface, addRef, release
+///   [3-6] IPluginFactory: getFactoryInfo, countClasses, getClassInfo, createInstance
+///   [7]   IPluginFactory2: getClassInfo2
+///   [8]   IPluginFactory3: getClassInfoUnicode (PClassInfoW)
+///   [9]   IPluginFactory3: setHostContext
 #[repr(C)]
 struct IPluginFactory3Vtbl {
     base: IPluginFactory2Vtbl,
+    /// getClassInfoUnicode(index: int32, info: *mut PClassInfoW) -> tresult
+    get_class_info_unicode:
+        unsafe extern "system" fn(this: *mut c_void, index: i32, info: *mut RawClassInfoW) -> i32,
     /// setHostContext(context: FUnknown*) -> tresult
     set_host_context: unsafe extern "system" fn(this: *mut c_void, context: *mut c_void) -> i32,
 }
@@ -497,6 +522,12 @@ fn bytes_to_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
+/// Convert a null-terminated UTF-16 buffer to a Rust `String`.
+fn utf16_to_string(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end])
+}
+
 /// Return `None` for empty strings, `Some(s)` otherwise.
 fn non_empty(s: String) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
@@ -621,5 +652,78 @@ mod tests {
         let normal = sandbox_call("post_skip_normal", || 42);
         assert!(normal.is_ok());
         assert_eq!(normal.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_utf16_to_string_basic() {
+        let buf: Vec<u16> = "Hello".encode_utf16().chain(std::iter::once(0)).collect();
+        assert_eq!(utf16_to_string(&buf), "Hello");
+    }
+
+    #[test]
+    fn test_utf16_to_string_no_null() {
+        let buf: Vec<u16> = "NoNull".encode_utf16().collect();
+        assert_eq!(utf16_to_string(&buf), "NoNull");
+    }
+
+    #[test]
+    fn test_utf16_to_string_empty() {
+        let buf: [u16; 2] = [0, 0x0041]; // null then 'A'
+        assert_eq!(utf16_to_string(&buf), "");
+    }
+
+    #[test]
+    fn test_utf16_to_string_unicode() {
+        // Test with non-ASCII chars (e.g., "Ünïcödé")
+        let input = "Ünïcödé";
+        let buf: Vec<u16> = input.encode_utf16().chain(std::iter::once(0)).collect();
+        assert_eq!(utf16_to_string(&buf), input);
+    }
+
+    #[test]
+    fn test_iplugin_factory3_vtable_layout() {
+        // Verify that IPluginFactory3Vtbl has the correct number of function pointers.
+        // VST3 SDK layout: 3 (IUnknown) + 4 (IPluginFactory) + 1 (Factory2) + 2 (Factory3) = 10
+        let expected_size = 10 * std::mem::size_of::<usize>();
+        let actual_size = std::mem::size_of::<IPluginFactory3Vtbl>();
+        assert_eq!(
+            actual_size, expected_size,
+            "IPluginFactory3Vtbl should contain 10 function pointers (got {} bytes, expected {})",
+            actual_size, expected_size
+        );
+    }
+
+    #[test]
+    fn test_iplugin_factory2_vtable_layout() {
+        // 3 (IUnknown) + 4 (IPluginFactory) + 1 (Factory2) = 8
+        let expected_size = 8 * std::mem::size_of::<usize>();
+        let actual_size = std::mem::size_of::<IPluginFactory2Vtbl>();
+        assert_eq!(
+            actual_size, expected_size,
+            "IPluginFactory2Vtbl should contain 8 function pointers (got {} bytes, expected {})",
+            actual_size, expected_size
+        );
+    }
+
+    #[test]
+    fn test_iplugin_factory_vtable_layout() {
+        // 3 (IUnknown) + 4 (IPluginFactory) = 7
+        let expected_size = 7 * std::mem::size_of::<usize>();
+        let actual_size = std::mem::size_of::<IPluginFactoryVtbl>();
+        assert_eq!(
+            actual_size, expected_size,
+            "IPluginFactoryVtbl should contain 7 function pointers (got {} bytes, expected {})",
+            actual_size, expected_size
+        );
+    }
+
+    #[test]
+    fn test_raw_class_info_w_layout() {
+        // Verify RawClassInfoW (PClassInfoW) has the expected size.
+        // cid: 16, cardinality: 4, category: 32, name: 256 (128*u16),
+        // class_flags: 4, subcategories: 128, vendor: 256, version: 256, sdk_version: 256
+        // = 16 + 4 + 32 + 256 + 4 + 128 + 256 + 256 + 256 = 1208
+        let size = std::mem::size_of::<RawClassInfoW>();
+        assert_eq!(size, 1208, "RawClassInfoW size mismatch: got {}", size);
     }
 }

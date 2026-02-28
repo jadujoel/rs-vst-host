@@ -1,10 +1,10 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.19.8 — Exclusive --paths flag).
+Last updated: 2026-02-28 (v0.19.9 — IPluginFactory3 vtable fix).
 
 ## Summary
 
-- **Total tests:** 712 (lib + binary)
+- **Total tests:** 720 (lib + binary)
 - **All passing:** ✅ (0 ignored)
 - **Build warnings:** 0 (new code), pre-existing warnings in editor.rs and instance.rs
 - **Test stability:** Verified
@@ -48,7 +48,7 @@ Last updated: 2026-02-28 (v0.19.8 — Exclusive --paths flag).
 | `src/gui/session.rs` | 9 | ✅ Full | Capture, restore, serde roundtrip, file roundtrip, empty rack, invalid JSON, missing file, sessions_dir, version constant, CID preservation |
 | `src/midi/device.rs` | 7 | ⚠️ Partial | MidiReceiver push/drain/pending; MidiDevice needs hardware |
 | `src/vst3/instance.rs` | 21 | ⚠️ Partial | IID constants, IConnectionPoint vtable layout, factory vtable size, LAST_DROP_CRASHED thread-local flag (default/set/reset, set on crash, not set on success), DEACTIVATION_CRASHED flag (default, set/read, independence from LAST_DROP_CRASHED), DEACTIVATION_HEAP_CORRUPTED flag, host object leak on crash (prevents use-after-free), host object destroy on clean shutdown, crash flags set together on COM crash; create_editor_view/has_editor require real COM objects |
-| `src/vst3/module.rs` | 9 | ⚠️ Partial | UTF-8 utilities, IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
+| `src/vst3/module.rs` | 16 | ⚠️ Partial | UTF-8/UTF-16 utilities, vtable layout assertions (Factory/Factory2/Factory3 slot counts, RawClassInfoW size), IPluginFactory2/3 IID UUID verification, module-drop crash flag read-and-reset, full crash→flag→skip integration; module loading requires real .vst3 bundles |
 | `src/e2e_tests.rs` | 39 | ✅ Full | E2E tests with real FabFilter Pro-MB and Pro-Q 4 plugins: discovery, metadata, instance, bus config, process lifecycle, multi-block, silence/signal, context, events, params, component handler, latency, sample rates, block sizes, interleaved I/O, AudioEngine, scan-cache pipeline. 6 crash-resilience tests use subprocess isolation with permanent SIGABRT handler (0 ignored). 10 multi-plugin lifecycle tests: forward/reverse shutdown, interleaved setup, stop-and-restart, duplicate instances, deterministic random ordering (seeds 42/1337), random start/stop cycles, concurrent AudioEngine, rapid add/remove stress. |
 | `src/audio/engine.rs` | 8+4 | ✅ Full | TestToneGenerator (basic, disabled, fill_buffer, custom_params, phase_wrap, zero_amplitude_disabled), shutdown flag (initial state, cross-thread propagation); E2E: AudioEngine with real plugins (Pro-Q 4 tone on/off, Pro-MB engine) |
 | `src/gui/ipc.rs` | 8 | ✅ Full | GuiAction serde roundtrip (all 20 variants), SupervisorUpdate roundtrip (all 12 variants incl. AudioProcessRestarted), AudioCommand serde roundtrip (all 4 variants), encode/decode wire protocol, DecodeError timeout classification |
