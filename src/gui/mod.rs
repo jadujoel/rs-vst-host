@@ -27,6 +27,7 @@ pub mod backend;
 pub mod editor;
 pub mod gui_worker;
 pub mod ipc;
+pub mod routing;
 pub mod session;
 pub mod supervisor;
 pub mod theme;

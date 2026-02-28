@@ -464,6 +464,21 @@ Transport state changes (tempo, time signature, play/pause) are synced to the au
 - Presets are saved as JSON files in `~/.rs-vst-host/presets/<plugin-name>/`
 - Each preset stores the plugin's component state and controller state as base64-encoded binary blobs
 - Use `CapturePluginState`, `SavePreset`, `LoadPreset`, and `ListPresets` actions via the IPC protocol
+- **Preset toolbar** in the parameter panel:
+  - **◀ / ▶** — Navigate to previous/next preset
+  - **💾 Save** — Open save dialog to name and save current plugin state as a preset
+  - **Init** — Reset plugin to its default state
+- **Preset list** — Collapsible section showing all user presets; click to load instantly
+- Current preset name is displayed in the toolbar
+
+**🔀 Routing:**
+- **Routing overview** — Compact pill chain displayed in the rack header showing the signal flow: `▸ IN → [Plugin A] → [Plugin B] → OUT ▸`
+- **Routing toggle** — Click the "Routing" button in the rack header to show/hide the advanced visual routing editor
+- **Advanced routing editor** — Full 2D node editor with:
+  - Glass-styled nodes for Input, Output, Plugin, Split, and Mix nodes
+  - Bézier curve connections between nodes
+  - Accent-colored I/O nodes, green plugin nodes
+  - Node positions laid out left-to-right
 
 ### Keyboard Shortcuts
 

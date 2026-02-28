@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0] - 2026-02-28
+
+### Added — Preset Management Buttons & Multi-Plugin Routing Graph (Phase 8.2 UI + 8.3)
+
+Preset management UI buttons in the parameter panel and a full multi-plugin routing graph data model with visual editor.
+
+**Preset Management Buttons (Phase 8.2 UI):**
+- `PresetNav` enum with variants: `Prev`, `Next`, `Init`, `ShowSaveDialog`, `DoSave`, `CancelSave`, `Load(PathBuf)`
+- Preset toolbar in parameter panel — Previous/Next navigation buttons, Save Preset button, Init (reset) button
+- Save Preset dialog with name input and save/cancel buttons, filename sanitization
+- Collapsible preset list section showing all user presets for the active plugin
+- One-click preset loading from the preset list
+- Current preset name displayed in the UI
+- `refresh_presets()`, `save_preset()`, `load_preset()`, `next_preset()`, `prev_preset()`, `init_preset()` methods on HostApp
+- `sanitize_preset_name()` public helper in `vst3/presets.rs`
+
+**Multi-Plugin Routing Graph (Phase 8.3):**
+- New `src/audio/graph.rs` module — complete routing graph data model:
+  - `NodeId`/`EdgeId` typed identifiers (u32)
+  - `NodeKind` enum: `Input`, `Output`, `Plugin { slot_index }`, `Split`, `Mix`
+  - `AudioNode` (id, kind, label, bypassed, x/y position) and `AudioEdge` (id, from_node, to_node)
+  - `AudioGraph` with HashMap-based storage and cached topological order
+  - `from_serial_chain()` — construct graph from ordered plugin slot list
+  - `add_node()`, `remove_node()`, `connect()` (with cycle detection), `disconnect()`
+  - `topological_order()` using Kahn's algorithm, `has_cycle()` using DFS
+  - `is_serial_chain()`, `serial_chain_slots()`, `rebuild_serial_chain()`
+  - `insert_in_chain()`, `adjust_slot_indices_after_remove()`
+  - `node_for_slot()`, `plugin_nodes()`, `predecessors()`, `successors()`
+  - Full `Serialize`/`Deserialize` support (cached_order is `#[serde(skip)]`)
+  - `GraphError` enum with `CycleDetected` and `NodeNotFound` variants
+
+- New `src/gui/routing.rs` module — visual routing editor:
+  - `show_routing_overview()` — compact pill chain visualization ("▸ IN → [Plugin A] → [Plugin B] → OUT ▸")
+  - `show_routing_editor()` — full 2D node editor with Bézier curve connections, draggable nodes, port circles
+  - Glass-styled nodes with theme-consistent colors (accent for IN/OUT, success for plugins, widget fill for split/mix)
+  - `DragConnection` struct for future drag-to-connect interaction
+  - `bezier_points()` helper for smooth cubic Bézier edge rendering
+
+- Integration into `HostApp`:
+  - `routing_graph: AudioGraph` field, `show_routing_editor: bool` toggle
+  - `sync_routing_graph()` method — keeps graph in sync with rack slot list
+  - Routing overview displayed in rack header (compact chain visualization)
+  - "Routing" toggle button to show/hide the advanced node editor
+  - Advanced routing editor view in rack panel
+
+**Tests added:** 64 new tests (1414 → 1478 total):
+- 27 graph module tests: new/empty, add/remove node, connect/disconnect, cycle detection, topological sort, serial chain construction, insert/remove chain, slot index adjustment, predecessors/successors, rebuild, graph error display, serde roundtrip, parallel routing
+- 5 routing module tests: overview smoke test, editor smoke test, empty graph, bezier points, node center
+- 2 new app tests: preset navigation, routing graph sync
+
+**Results:** 1478 tests passing (795 lib + 683 bin), 0 failures, no benchmark regressions.
+
 ## [0.23.0] - 2026-02-28
 
 ### Added — Plugin State Persistence & Preset Management (Phase 8.1 + 8.2)

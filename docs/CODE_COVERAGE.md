@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.23.0 — Plugin state persistence & preset management).
+Last updated: 2026-02-28 (v0.24.0 — Preset management buttons & multi-plugin routing graph).
 
 ## Summary
 
-- **Total tests:** 1414 (763 unit + 651 binary/integration)
+- **Total tests:** 1478 (795 unit + 683 binary/integration)
 - **All passing:** ✅ (0 failures)
-- **Build warnings:** 0 (clippy `-D warnings` clean)
+- **Build warnings:** 0 (dead code warnings for new graph APIs not yet fully wired)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (763 tests passing, 0 failures, 0 ignored) — Phase 8.1 + 8.2
+- **Last test run:** 2026-02-28 (795 tests passing, 0 failures, 0 ignored) — Phase 8.2 UI + 8.3
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -56,15 +56,17 @@ Last updated: 2026-02-28 (v0.23.0 — Plugin state persistence & preset manageme
 | `src/gui/audio_worker.rs` | 25 | ✅ Full | AudioWorkerState (safe_mode, normal), audio_status_state conversion, build_full_state structure, handle_action dispatch (ping, shutdown, set_tone, add_to_rack, remove_from_rack, select_slot, stage_parameter, set_transport, add_invalid_index, refresh_devices, capture_plugin_state, capture_invalid_index, list_presets_empty, load_preset_missing, save_preset_no_active), AudioCommand serialize roundtrip, state blob preservation, new variant serialize |
 | `src/gui/gui_worker.rs` | 18 | ✅ Full | Default state, apply_full_state, incremental updates (status, heap corruption, editor availability, audio status, audio process restarted), rack update, params update, devices update, filtered_classes (empty, with modules, search), transport change detection, send_action to paired socket, send_shutdown_action_on_close, supervisor disconnect (default false, mark disconnected, idempotent, send_action noop when disconnected, broken pipe detection, poll_updates EOF detection, poll_updates noop when disconnected) |
 | `src/gui/editor.rs` | 9 | ⚠️ Partial | Platform constant, struct size, result constant, sandbox import, NSApplication init idempotency, pump_events main-thread guard, pump_platform_events no-panic; open/close/poll require real NSWindow + IPlugView |
+| `src/gui/routing.rs` | 5 | ✅ Full | Routing overview smoke test, editor smoke test, empty graph, bezier points correctness, node center calculation |
 | `src/gui_tests.rs` | 6 | ✅ Full | Headless GUI integration: add plugin to rack with screenshot, open editor view and verify visible, full editor workflow (add→select→switch→deselect) with 9 screenshots, parameter types (automatable/bypass/read-only), multi-frame stability (10 frames), editor open without active plugin. CPU software-rasterized PNG screenshots saved to `target/test-screenshots/`. |
 | `src/vst3/ibstream.rs` | 6 | ✅ Full | IBStream COM implementation (vst3-rs types): create/destroy, write/read roundtrip, seek/tell, from_data, take_data, query_interface, ref counting |
 | `src/vst3/presets.rs` | 12 | ✅ Full | Preset serde roundtrip for binary state, no-state preset, base64 encoding, file I/O roundtrip, invalid JSON, missing file, filename sanitization, presets_dir, empty listing, listing with files, backward compat, large state (1 MB) |
 | `src/vst3/cf_bundle.rs` | 3 | ⚠️ Partial | Null path handling, null release safety, system framework validation; full testing requires .vst3 bundles |
 | `src/audio/device.rs` | 3 | ⚠️ Partial | Device enumeration (hardware-dependent); stream building untestable in CI |
+| `src/audio/graph.rs` | 27 | ✅ Full | New/empty graph, add/remove nodes, connect/disconnect edges, cycle detection (direct and indirect), topological sort (empty/single/serial/parallel), serial chain construction from slots, insert/remove in chain, slot index adjustment after remove, predecessors/successors, rebuild serial chain from new slots, graph error display, serde roundtrip, parallel routing with split/mix nodes |
 
 ## Coverage Analysis
 
-### Fully Tested (✅) — 23 modules
+### Fully Tested (✅) — 25 modules
 All public APIs and edge cases covered by unit tests. COM vtable methods tested through both direct API and vtable function pointer calls. IID constants verified against canonical UUID strings.
 
 ### Partially Tested (⚠️) — 12 modules

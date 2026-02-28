@@ -18,7 +18,8 @@ A minimal VST3 plugin host written in Rust. Discover, load, and run VST3 audio p
 - **Cross-platform** — macOS, Linux, and Windows support
 - **Graphical interface** — GUI using `egui`/`eframe` with plugin browser, rack, parameter view (with staging for inactive plugins), device selection, session save/load, and improved text contrast on glass panels
 - **Plugin state persistence** — Full plugin state save/restore via VST3 IBStream COM interfaces. Plugin state (component + controller) is captured on session save and restored on plugin activation from a loaded session. Session format v2.0 with base64-encoded binary state blobs, backward compatible with v1.0 sessions
-- **Preset management** — Save, load, and list user presets per plugin. Presets are stored as JSON files in `~/.rs-vst-host/presets/<plugin-name>/` with base64-encoded state blobs
+- **Preset management** — Save, load, and list user presets per plugin. Presets are stored as JSON files in `~/.rs-vst-host/presets/<plugin-name>/` with base64-encoded state blobs. GUI preset toolbar with previous/next navigation, save dialog, init reset, and one-click preset loading
+- **Multi-plugin routing graph** — DAG-based audio routing model with topological sort, cycle detection, and serial chain helpers. Visual routing editor with compact chain overview and advanced 2D node editor with Bézier curve connections
 - **GUI crash isolation** — The GUI runs in a separate child process by default, supervised by the main process. If a plugin crashes the GUI, the supervisor relaunches it automatically while audio continues uninterrupted. Use `--in-process` for legacy single-process mode
 - **Audio process isolation** — The audio engine and plugin backend run in a separate child process from the supervisor. If a plugin crashes the audio process, the supervisor stays alive, restarts the audio worker, and restores the rack configuration. The GUI is notified and remains functional throughout
 

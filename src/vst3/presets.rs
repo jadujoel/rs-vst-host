@@ -131,6 +131,14 @@ pub fn list_user_presets(plugin_name: &str) -> Vec<(String, PathBuf)> {
     presets
 }
 
+/// Sanitize a preset name for use as a filename.
+///
+/// Replaces filesystem-unsafe characters with underscores.
+/// This is the public API for generating preset file names.
+pub fn sanitize_preset_name(name: &str) -> String {
+    sanitize_filename(name)
+}
+
 /// Sanitize a plugin name for use as a directory name.
 ///
 /// Replaces filesystem-unsafe characters with underscores.
@@ -196,7 +204,11 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&preset).unwrap();
         // Base64 of [1,2,3,4,5] is "AQIDBAU="
-        assert!(json.contains("AQIDBAU="), "JSON should contain base64: {}", json);
+        assert!(
+            json.contains("AQIDBAU="),
+            "JSON should contain base64: {}",
+            json
+        );
 
         let restored: Preset = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.component_state, Some(vec![1, 2, 3, 4, 5]));

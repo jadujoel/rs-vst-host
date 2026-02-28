@@ -5,10 +5,11 @@
 //! Styled window. Integrates with the [`super::backend::HostBackend`]
 //! for live audio processing and plugin management.
 
+use crate::audio::graph::AudioGraph;
 use crate::gui::backend::{HostBackend, ParamSnapshot};
 use crate::gui::session::Session;
 use crate::gui::theme;
-use crate::vst3::{cache, scanner, types::PluginClassInfo, types::PluginModuleInfo};
+use crate::vst3::{cache, presets, scanner, types::PluginClassInfo, types::PluginModuleInfo};
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -87,6 +88,25 @@ impl Default for BottomTab {
     }
 }
 
+/// Deferred preset navigation action (used internally in param panel rendering).
+#[derive(Debug, Clone)]
+enum PresetNav {
+    /// Go to previous preset.
+    Prev,
+    /// Go to next preset.
+    Next,
+    /// Reset plugin to default.
+    Init,
+    /// Show the save-preset dialog.
+    ShowSaveDialog,
+    /// Confirm preset save.
+    DoSave,
+    /// Cancel preset save dialog.
+    CancelSave,
+    /// Load a specific preset file.
+    Load(PathBuf),
+}
+
 /// Top-level application state.
 pub struct HostApp {
     /// Cached plugin modules from last scan.
@@ -133,6 +153,18 @@ pub struct HostApp {
     prev_playing: bool,
     /// Custom scan paths (exclusive — when non-empty, defaults are skipped).
     pub custom_paths: Vec<PathBuf>,
+    /// Cached list of user presets for the active plugin.
+    pub user_presets: Vec<(String, PathBuf)>,
+    /// Preset name input for "Save Preset" dialog.
+    pub preset_save_name: String,
+    /// Whether the save-preset dialog is open.
+    pub show_save_preset_dialog: bool,
+    /// Current preset name displayed in the rack slot (if a preset was loaded).
+    pub current_preset_name: Option<String>,
+    /// Audio routing graph for multi-plugin processing chains.
+    pub routing_graph: AudioGraph,
+    /// Whether the advanced routing editor is visible (vs simple rack view).
+    pub show_routing_editor: bool,
 }
 
 impl HostApp {
@@ -195,6 +227,12 @@ impl HostApp {
             heap_check_counter: 0,
             heap_corruption_detected: false,
             custom_paths,
+            user_presets: Vec::new(),
+            preset_save_name: String::new(),
+            show_save_preset_dialog: false,
+            current_preset_name: None,
+            routing_graph: AudioGraph::new(),
+            show_routing_editor: false,
         }
     }
 
@@ -282,8 +320,14 @@ impl HostApp {
             controller_state: None,
         };
 
+        let slot_index = self.rack.len();
         self.status_message = format!("Added '{}' to the rack.", slot.name);
+        let slot_name = slot.name.clone();
         self.rack.push(slot);
+
+        // Update routing graph — add plugin node to the serial chain
+        self.sync_routing_graph();
+        tracing::debug!(slot_index, name = %slot_name, "Added plugin to rack and routing graph");
     }
 
     /// Remove a plugin slot by index.
@@ -306,8 +350,24 @@ impl HostApp {
                     self.selected_slot = Some(sel - 1);
                 }
             }
+            // Update routing graph
+            self.sync_routing_graph();
             self.status_message = format!("Removed '{}' from the rack.", name);
         }
+    }
+
+    /// Synchronize the routing graph with the current rack state.
+    ///
+    /// Rebuilds the graph as a serial chain from the rack slots.
+    /// This is called whenever the rack changes (add/remove/reorder).
+    pub fn sync_routing_graph(&mut self) {
+        let slots: Vec<(usize, String)> = self
+            .rack
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i, s.name.clone()))
+            .collect();
+        self.routing_graph.rebuild_serial_chain(&slots);
     }
 
     /// Activate a plugin slot, starting audio processing through the backend.
@@ -352,6 +412,10 @@ impl HostApp {
                 };
                 self.status_message =
                     format!("▶ '{}' active — processing audio.{}", name, staged_msg);
+
+                // Refresh presets for the newly activated plugin
+                self.refresh_presets();
+                self.current_preset_name = None;
             }
             Err(e) => {
                 self.status_message = format!("✗ Failed to activate '{}': {}", name, e);
@@ -534,6 +598,150 @@ impl HostApp {
             Err(e) => {
                 self.status_message = format!("✗ Load failed: {}", e);
             }
+        }
+    }
+
+    // ── Preset Management ─────────────────────────────────────────────────
+
+    /// Refresh the user preset list for the currently active plugin.
+    pub fn refresh_presets(&mut self) {
+        if let Some(idx) = self.backend.active_slot_index() {
+            if let Some(slot) = self.rack.get(idx) {
+                self.user_presets = presets::list_user_presets(&slot.name);
+            } else {
+                self.user_presets.clear();
+            }
+        } else {
+            self.user_presets.clear();
+        }
+    }
+
+    /// Save the current plugin state as a user preset.
+    pub fn save_preset(&mut self, name: &str) {
+        let Some(idx) = self.backend.active_slot_index() else {
+            self.status_message = "No active plugin — cannot save preset.".into();
+            return;
+        };
+
+        let slot = match self.rack.get(idx) {
+            Some(s) => s.clone(),
+            None => return,
+        };
+
+        let component_state = self.backend.get_component_state();
+        let controller_state = self.backend.get_controller_state();
+
+        let preset = presets::Preset {
+            name: name.to_string(),
+            plugin_cid: slot.cid,
+            component_state: if component_state.is_empty() {
+                None
+            } else {
+                Some(component_state)
+            },
+            controller_state: if controller_state.is_empty() {
+                None
+            } else {
+                Some(controller_state)
+            },
+        };
+
+        let dir = match presets::presets_dir(&slot.name) {
+            Some(d) => d,
+            None => {
+                self.status_message = "✗ Could not determine presets directory.".into();
+                return;
+            }
+        };
+
+        let filename = format!("{}.json", presets::sanitize_preset_name(name));
+        let path = dir.join(&filename);
+
+        match preset.save_to_file(&path) {
+            Ok(()) => {
+                self.current_preset_name = Some(name.to_string());
+                self.status_message = format!("💾 Preset '{}' saved.", name);
+                self.refresh_presets();
+            }
+            Err(e) => {
+                self.status_message = format!("✗ Preset save failed: {}", e);
+            }
+        }
+    }
+
+    /// Load a user preset by path.
+    pub fn load_preset(&mut self, path: &std::path::Path) {
+        let preset = match presets::Preset::load_from_file(path) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status_message = format!("✗ Preset load failed: {}", e);
+                return;
+            }
+        };
+
+        // Apply component state
+        if let Some(ref data) = preset.component_state {
+            self.backend.set_component_state(data);
+        }
+        if let Some(ref data) = preset.controller_state {
+            self.backend.set_controller_state(data);
+        }
+
+        // Refresh params to reflect new state
+        self.param_snapshots = self.backend.active_param_snapshots();
+        if let Some(idx) = self.backend.active_slot_index() {
+            if let Some(slot) = self.rack.get_mut(idx) {
+                slot.param_cache.clone_from(&self.param_snapshots);
+            }
+        }
+
+        self.current_preset_name = Some(preset.name.clone());
+        self.status_message = format!("🎛 Preset '{}' loaded.", preset.name);
+    }
+
+    /// Navigate to the next user preset.
+    pub fn next_preset(&mut self) {
+        if self.user_presets.is_empty() {
+            return;
+        }
+        let current_idx = self
+            .current_preset_name
+            .as_ref()
+            .and_then(|name| self.user_presets.iter().position(|(n, _)| n == name));
+        let next_idx = match current_idx {
+            Some(i) => (i + 1) % self.user_presets.len(),
+            None => 0,
+        };
+        let path = self.user_presets[next_idx].1.clone();
+        self.load_preset(&path);
+    }
+
+    /// Navigate to the previous user preset.
+    pub fn prev_preset(&mut self) {
+        if self.user_presets.is_empty() {
+            return;
+        }
+        let current_idx = self
+            .current_preset_name
+            .as_ref()
+            .and_then(|name| self.user_presets.iter().position(|(n, _)| n == name));
+        let prev_idx = match current_idx {
+            Some(0) => self.user_presets.len() - 1,
+            Some(i) => i - 1,
+            None => 0,
+        };
+        let path = self.user_presets[prev_idx].1.clone();
+        self.load_preset(&path);
+    }
+
+    /// Reset the plugin to its default state (deactivate and reactivate).
+    pub fn init_preset(&mut self) {
+        if let Some(idx) = self.backend.active_slot_index() {
+            self.current_preset_name = None;
+            // Deactivate and reactivate to get default state
+            self.deactivate_active();
+            self.activate_slot(idx);
+            self.status_message = "🔄 Plugin reset to default state.".into();
         }
     }
 
@@ -1182,6 +1390,9 @@ impl HostApp {
     ///   and applied on the next activation.
     /// - **Inactive plugin, no cache**: placeholder prompting the user to activate.
     pub(crate) fn show_param_panel(&mut self, ui: &mut egui::Ui) {
+        // Deferred preset navigation action (to avoid borrow conflicts)
+        let mut preset_nav: Option<PresetNav> = None;
+
         let Some(idx) = self.selected_slot else {
             // No slot selected — show placeholder
             ui.vertical_centered(|ui| {
@@ -1247,6 +1458,199 @@ impl HostApp {
                         .strong(),
                 );
             });
+
+            // ── Preset toolbar (only for active plugins) ─────────────────
+            ui.add_space(4.0);
+            let sep_rect = ui.available_rect_before_wrap();
+            ui.painter().line_segment(
+                [
+                    egui::pos2(sep_rect.min.x, sep_rect.min.y),
+                    egui::pos2(sep_rect.max.x, sep_rect.min.y),
+                ],
+                egui::Stroke::new(1.0, theme::SEPARATOR),
+            );
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("🎛  PRESETS")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(11.0)
+                        .strong(),
+                );
+            });
+            ui.add_space(2.0);
+
+            // Current preset name display
+            let preset_display = self.current_preset_name.as_deref().unwrap_or("(no preset)");
+
+            ui.horizontal(|ui| {
+                // Previous preset
+                let prev_btn = egui::Button::new(
+                    egui::RichText::new("◀")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(12.0),
+                )
+                .fill(theme::WIDGET_FILL)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(prev_btn).on_hover_text("Previous preset").clicked() {
+                    preset_nav = Some(PresetNav::Prev);
+                }
+
+                // Preset name label (centered, takes remaining width)
+                let available = ui.available_width() - 130.0;
+                ui.add_sized(
+                    [available.max(40.0), 22.0],
+                    egui::Label::new(
+                        egui::RichText::new(preset_display)
+                            .color(if self.current_preset_name.is_some() {
+                                theme::ACCENT
+                            } else {
+                                theme::TEXT_DISABLED
+                            })
+                            .size(12.0),
+                    )
+                    .truncate(),
+                );
+
+                // Next preset
+                let next_btn = egui::Button::new(
+                    egui::RichText::new("▶")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(12.0),
+                )
+                .fill(theme::WIDGET_FILL)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(next_btn).on_hover_text("Next preset").clicked() {
+                    preset_nav = Some(PresetNav::Next);
+                }
+
+                ui.add_space(4.0);
+
+                // Save preset button
+                let save_btn =
+                    egui::Button::new(egui::RichText::new("💾").color(theme::ACCENT).size(12.0))
+                        .fill(theme::WIDGET_FILL)
+                        .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                        .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(save_btn).on_hover_text("Save preset").clicked() {
+                    preset_nav = Some(PresetNav::ShowSaveDialog);
+                }
+
+                // Init button (reset to defaults)
+                let init_btn = egui::Button::new(
+                    egui::RichText::new("↺")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(12.0),
+                )
+                .fill(theme::WIDGET_FILL)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(init_btn).on_hover_text("Reset to default").clicked() {
+                    preset_nav = Some(PresetNav::Init);
+                }
+            });
+
+            // Preset save dialog (inline)
+            if self.show_save_preset_dialog {
+                ui.add_space(4.0);
+                egui::Frame {
+                    inner_margin: egui::Margin::symmetric(8, 6),
+                    corner_radius: theme::SMALL_CORNER_RADIUS,
+                    fill: theme::WIDGET_FILL,
+                    stroke: egui::Stroke::new(1.0, theme::ACCENT_DIM),
+                    ..Default::default()
+                }
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Name:")
+                                .color(theme::TEXT_SECONDARY)
+                                .small(),
+                        );
+                        theme::input_frame().show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.preset_save_name)
+                                    .hint_text("My Preset")
+                                    .desired_width(120.0)
+                                    .frame(false),
+                            );
+                        });
+                        let confirm_btn = egui::Button::new(
+                            egui::RichText::new("Save")
+                                .color(egui::Color32::WHITE)
+                                .small(),
+                        )
+                        .fill(theme::ACCENT_DIM)
+                        .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                        if ui.add(confirm_btn).clicked() && !self.preset_save_name.trim().is_empty()
+                        {
+                            preset_nav = Some(PresetNav::DoSave);
+                        }
+                        let cancel_btn = egui::Button::new(
+                            egui::RichText::new("Cancel")
+                                .color(theme::TEXT_SECONDARY)
+                                .small(),
+                        )
+                        .fill(egui::Color32::TRANSPARENT)
+                        .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                        if ui.add(cancel_btn).clicked() {
+                            preset_nav = Some(PresetNav::CancelSave);
+                        }
+                    });
+                });
+            }
+
+            // Preset list (collapsible)
+            if !self.user_presets.is_empty() {
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(format!("User Presets ({})", self.user_presets.len()))
+                        .color(theme::TEXT_SECONDARY)
+                        .small(),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    let presets_clone = self.user_presets.clone();
+                    for (name, _path) in &presets_clone {
+                        let is_current = self.current_preset_name.as_deref() == Some(name.as_str());
+                        let text_color = if is_current {
+                            theme::ACCENT
+                        } else {
+                            theme::TEXT_PRIMARY
+                        };
+                        let btn =
+                            egui::Button::new(egui::RichText::new(name).color(text_color).small())
+                                .fill(if is_current {
+                                    theme::ACCENT_MUTED
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                })
+                                .corner_radius(theme::SMALL_CORNER_RADIUS)
+                                .min_size(egui::vec2(ui.available_width(), 22.0));
+                        if ui.add(btn).clicked() {
+                            if let Some((_, path)) =
+                                self.user_presets.iter().find(|(n, _)| n == name)
+                            {
+                                preset_nav = Some(PresetNav::Load(path.clone()));
+                            }
+                        }
+                    }
+                });
+            }
+
+            ui.add_space(4.0);
+            let sep_rect2 = ui.available_rect_before_wrap();
+            ui.painter().line_segment(
+                [
+                    egui::pos2(sep_rect2.min.x, sep_rect2.min.y),
+                    egui::pos2(sep_rect2.max.x, sep_rect2.min.y),
+                ],
+                egui::Stroke::new(1.0, theme::SEPARATOR),
+            );
+            ui.add_space(4.0);
         } else if !self.param_snapshots.is_empty() {
             ui.horizontal(|ui| {
                 theme::status_dot(ui, theme::WARNING);
@@ -1423,6 +1827,37 @@ impl HostApp {
                 }
             }
         }
+
+        // Apply deferred preset navigation actions
+        if let Some(nav) = preset_nav {
+            match nav {
+                PresetNav::Prev => self.prev_preset(),
+                PresetNav::Next => self.next_preset(),
+                PresetNav::Init => self.init_preset(),
+                PresetNav::ShowSaveDialog => {
+                    self.show_save_preset_dialog = true;
+                    if self.preset_save_name.is_empty() {
+                        self.preset_save_name = self
+                            .current_preset_name
+                            .clone()
+                            .unwrap_or_else(|| "New Preset".into());
+                    }
+                }
+                PresetNav::DoSave => {
+                    let name = self.preset_save_name.trim().to_string();
+                    self.save_preset(&name);
+                    self.show_save_preset_dialog = false;
+                    self.preset_save_name.clear();
+                }
+                PresetNav::CancelSave => {
+                    self.show_save_preset_dialog = false;
+                    self.preset_save_name.clear();
+                }
+                PresetNav::Load(path) => {
+                    self.load_preset(&path);
+                }
+            }
+        }
     }
 
     /// Render the central plugin rack.
@@ -1436,6 +1871,32 @@ impl HostApp {
                     .strong(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Routing editor toggle
+                let routing_label = if self.show_routing_editor {
+                    "📋 List View"
+                } else {
+                    "🔀 Routing"
+                };
+                let routing_btn = egui::Button::new(
+                    egui::RichText::new(routing_label)
+                        .color(theme::TEXT_SECONDARY)
+                        .small(),
+                )
+                .fill(if self.show_routing_editor {
+                    theme::ACCENT_MUTED
+                } else {
+                    egui::Color32::TRANSPARENT
+                })
+                .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                if ui
+                    .add(routing_btn)
+                    .on_hover_text("Toggle routing editor")
+                    .clicked()
+                {
+                    self.show_routing_editor = !self.show_routing_editor;
+                }
+
+                ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!("{} slot(s)", self.rack.len()))
                         .color(theme::TEXT_DISABLED)
@@ -1443,6 +1904,17 @@ impl HostApp {
                 );
             });
         });
+
+        // Routing chain overview (always shown when rack has plugins)
+        if !self.rack.is_empty() {
+            ui.add_space(4.0);
+            super::routing::show_routing_overview(
+                ui,
+                &mut self.routing_graph,
+                self.backend.active_slot_index(),
+            );
+        }
+
         ui.add_space(8.0);
 
         if self.rack.is_empty() {
@@ -1477,7 +1949,30 @@ impl HostApp {
         let selected_slot = self.selected_slot;
         let active_slot = self.backend.active_slot_index();
         let has_editor = self.backend.active_has_editor();
+        let current_preset_name = self.current_preset_name.clone();
 
+        // Advanced routing editor view
+        if self.show_routing_editor {
+            ui.add_space(8.0);
+            let available_height = ui.available_height().max(200.0);
+            let (response, _painter) = ui.allocate_painter(
+                egui::vec2(ui.available_width(), available_height),
+                egui::Sense::hover(),
+            );
+            let editor_rect = response.rect;
+            let mut editor_ui = ui.new_child(egui::UiBuilder::new().max_rect(editor_rect));
+            super::routing::show_routing_editor(
+                &mut editor_ui,
+                &mut self.routing_graph,
+                active_slot,
+            );
+
+            // Still process rack actions
+            self.selected_slot = new_selected;
+            return;
+        }
+
+        // Standard rack list view
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
@@ -1563,6 +2058,13 @@ impl HostApp {
                                         if slot.bypassed {
                                             ui.add_space(4.0);
                                             theme::badge(ui, "BYPASS", theme::WARNING);
+                                        }
+                                        // Show current preset name if set and this is the active slot
+                                        if is_active {
+                                            if let Some(ref pname) = current_preset_name {
+                                                ui.add_space(4.0);
+                                                theme::badge(ui, pname, theme::ACCENT);
+                                            }
                                         }
                                     });
                                 })

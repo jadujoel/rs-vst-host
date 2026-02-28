@@ -4,6 +4,32 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.24.0] - 2026-02-28 — Preset Buttons & Multi-Plugin Routing (no perf impact)
+
+### Summary
+
+Phase 8.2 UI + Phase 8.3 implementation: preset management toolbar in parameter panel (prev/next/save/init buttons), routing graph data model (`audio/graph.rs` with AudioGraph DAG, topological sort, cycle detection), visual routing editor (`gui/routing.rs` with compact chain overview and advanced node editor). Integration into HostApp.
+
+**Changes to hot paths:** None. The routing graph and preset UI are purely data-model and GUI code. The audio `process()` loop is completely unaffected — no graph traversal runs in the audio callback yet (will be wired in a future phase). Preset load/save only triggers on user interaction.
+
+**New modules:** `audio/graph.rs` (in-memory DAG, not on any hot path), `gui/routing.rs` (GUI rendering only).
+
+### Session Serde Benchmarks (unchanged from v0.23.0)
+| Benchmark | Fastest | Median | Mean |
+|-----------|---------|--------|------|
+| capture/1 slot | 178 ns | 181 ns | 183 ns |
+| capture/16 slots | 1.53 µs | 1.54 µs | 1.62 µs |
+| restore/1 slot | 119 ns | 122 ns | 129 ns |
+| restore/16 slots | 1.55 µs | 1.56 µs | 1.68 µs |
+| serde_serialize/1 | 406 ns | 414 ns | 421 ns |
+| serde_serialize/16 | 3.02 µs | 3.17 µs | 3.29 µs |
+| serde_deserialize/1 | 584 ns | 667 ns | 726 ns |
+| serde_deserialize/16 | 6.58 µs | 6.83 µs | 7.27 µs |
+| serde_roundtrip/1 | 1.25 µs | 1.30 µs | 1.31 µs |
+| serde_roundtrip/16 | 11.4 µs | 11.8 µs | 12.4 µs |
+
+**No benchmark regressions.**
+
 ## [0.23.0] - 2026-02-28 — Plugin State Persistence & Presets (minimal perf impact)
 
 ### Summary
