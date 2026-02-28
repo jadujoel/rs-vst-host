@@ -153,14 +153,20 @@
 ### Documentation
 - `USER_GUIDE.md` — end-user guide covering installation, all CLI commands, plugin search paths, cache details, logging, and troubleshooting
 - `README.md` — project overview, architecture, dependencies, and roadmap
-- `CHANGELOG.md` — version history
-- `CODE_COVERAGE.md` — test coverage analysis by module
+- `docs/` — all documentation moved to `docs/` directory (except README.md and CLAUDE.md)
+- `docs/CHANGELOG.md` — version history
+- `docs/CODE_COVERAGE.md` — test coverage analysis by module
+- `docs/PHASE_8.md` — detailed Phase 8 plan (9 sub-phases)
 
 ### Next Steps (Phase 8 — Beyond MVP)
-- Full integration testing of plugin editor windows with real VST3 plugins
-- Preset/program management
-- Multiple simultaneous plugin instances and simple routing graph
-- Undo/redo for parameter changes
-- Plugin state persistence (component state save/load)
-- Drag-and-drop plugin reordering in rack
-- Linux/Windows editor window implementations
+
+See [PHASE_8.md](PHASE_8.md) for the full detailed plan. Summary:
+- **8.1** Plugin state persistence (IBStream, component state save/load)
+- **8.2** Preset/program management (IUnitInfo, preset files, browser panel)
+- **8.3** Multi-plugin routing graph (serial/parallel chains, visual editor)
+- **8.4** Undo/redo system (command pattern, parameter coalescing)
+- **8.5** Drag-and-drop rack reordering
+- **8.6** Cross-platform plugin editor windows (Linux X11/Wayland, Windows Win32)
+- **8.7** Performance hardening (lock-free queues, xrun tracking, CPU monitoring)
+- **8.8** Plugin compatibility improvements (bus fallbacks, latency compensation)
+- **8.9** Distribution and packaging (app bundles, CI/CD, installers)

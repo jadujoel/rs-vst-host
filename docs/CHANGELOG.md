@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.1] - 2026-02-28
+
+### Added
+- **Phase 8 detailed plan** (`docs/PHASE_8.md`): Comprehensive plan for Phase 8 (Beyond MVP) with 9 sub-phases covering plugin state persistence, preset management, multi-plugin routing graph, undo/redo, drag-and-drop rack reordering, cross-platform editor windows, performance hardening, plugin compatibility improvements, and distribution/packaging. Includes milestones M6–M13, priority ordering, risk mitigations, and dependency list.
+
+### Changed
+- **Documentation reorganization**: All documentation files (except `README.md` and `CLAUDE.md`) moved from project root into `docs/` directory. Updated all cross-references in `README.md`, `CLAUDE.md`, and `docs/STATUS.md` to reflect new paths.
+
 ## [0.19.0] - 2026-02-28
 
 ### Added

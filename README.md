@@ -211,9 +211,9 @@ cargo test --lib e2e_tests -- --test-threads=1
 
 618 tests (579 unit + 39 E2E integration) covering error types, GUI theme, GUI app state (safe mode, transport sync, editor integration, parameter search, parameter staging for inactive plugins), GUI backend (editor lifecycle, audio status, transport push, process isolation mode), GUI session, plugin editor window management, IPlugFrame COM, CLI parsing (incl. safe-mode, malloc-debug), scanner, cache I/O, COM struct layouts, IID UUID verification (incl. IPlugView/IPlugFrame), host context, process buffers, tone generation, audio device enumeration, MIDI receiver, MIDI-to-VST3 translation, event list COM, parameter registry, parameter changes, component handler, process context, interactive commands, CFBundleRef, plugin sandbox (signal recovery, crash isolation, nested sandboxing, crash-safe library unload, backtrace capture, heap integrity checks), diagnostics module (heap check, malloc env, profiler), crash-safe host object lifecycle (conditional leak/destroy), IPC messages (serialization, wire protocol), shared memory (create/open, audio transfer), worker process (state management, message handling), plugin process proxy (transport, shutdown), Miri dynamic analysis (COM vtable lifecycle, event byte roundtrip, buffer pointer chains, MIDI→ProcessData integration, thread safety), ASan memory safety (host_alloc lifecycle, COM objects, ProcessBuffers, shared memory, events, MIDI pipeline, sandbox non-crash, IPC, concurrent COM, full mock process), and concurrency. 619 tests with `--features debug-tools`. 39 of these are E2E integration tests that exercise real FabFilter VST3 plugins (Pro-MB and Pro-Q 4) covering the full pipeline: discovery, loading, metadata, instance creation, multi-block processing, parameter operations, editor queries, component handler installation, AudioEngine integration, scan-cache roundtrip, and multi-plugin lifecycle (loading multiple plugins simultaneously, random start/stop ordering, interleaved setup, stop-and-restart, duplicate instances, concurrent AudioEngine, rapid add/remove stress testing). 6 of the E2E tests are crash-resilience tests that verify the host survives plugin COM teardown crashes using subprocess isolation.
 
-109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. 564 pass under [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) for native memory error detection. See [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) for the full guide.
+109 of these tests also pass under [Miri](https://github.com/rust-lang/miri) for dynamic undefined behavior detection. 564 pass under [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) for native memory error detection. See [DYNAMIC_ANALYSIS.md](docs/DYNAMIC_ANALYSIS.md) for the full guide.
 
-See [CODE_COVERAGE.md](CODE_COVERAGE.md) for detailed per-module coverage analysis.
+See [CODE_COVERAGE.md](docs/CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
 ## Debugging
 
@@ -270,15 +270,16 @@ When a plugin crashes inside the sandbox, the signal handler captures a backtrac
 
 ## Documentation
 
-- [USER_GUIDE.md](USER_GUIDE.md) — Detailed usage guide with examples and troubleshooting
-- [PLAN.md](PLAN.md) — Development roadmap and phased implementation plan
-- [STATUS.md](STATUS.md) — Current project status and progress
-- [CHANGELOG.md](CHANGELOG.md) — Version history
-- [CODE_COVERAGE.md](CODE_COVERAGE.md) — Test coverage analysis by module
-- [DYNAMIC_ANALYSIS.md](DYNAMIC_ANALYSIS.md) — Guide to Miri-based dynamic analysis of unsafe code
-- [DEBUGGING.md](DEBUGGING.md) — Debug and profiling infrastructure plan
-- [PRD.md](PRD.md) — Product requirements for the GUI application
-- [USER_INTERACTION_PLAN.md](USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
+- [USER_GUIDE.md](docs/USER_GUIDE.md) — Detailed usage guide with examples and troubleshooting
+- [PLAN.md](docs/PLAN.md) — Development roadmap and phased implementation plan
+- [STATUS.md](docs/STATUS.md) — Current project status and progress
+- [CHANGELOG.md](docs/CHANGELOG.md) — Version history
+- [CODE_COVERAGE.md](docs/CODE_COVERAGE.md) — Test coverage analysis by module
+- [DYNAMIC_ANALYSIS.md](docs/DYNAMIC_ANALYSIS.md) — Guide to Miri-based dynamic analysis of unsafe code
+- [DEBUGGING.md](docs/DEBUGGING.md) — Debug and profiling infrastructure plan
+- [PRD.md](docs/PRD.md) — Product requirements for the GUI application
+- [USER_INTERACTION_PLAN.md](docs/USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
+- [PHASE_8.md](docs/PHASE_8.md) — Detailed plan for Phase 8 (Beyond MVP)
 
 ## Roadmap
 
@@ -292,7 +293,7 @@ When a plugin crashes inside the sandbox, the signal handler captures a backtrac
 - [x] Phase 7 Step 1 — GUI skeleton (plugin browser, rack, transport controls)
 - [x] Phase 7 Step 2 — Live audio integration in GUI (backend bridge, parameter view, device selection, session save/load)
 - [x] Phase 7 Step 3 — Plugin editor windows, transport sync, audio status, parameter search, safe mode
-- [ ] Phase 8 — Beyond MVP (presets, routing, multi-instance)
+- [ ] Phase 8 — Beyond MVP (presets, routing, multi-instance) — [detailed plan](docs/PHASE_8.md)
 
 ## License
 
