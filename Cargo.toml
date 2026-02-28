@@ -30,6 +30,9 @@ serde_json = "1"
 # Dynamic library loading
 libloading = "0.8"
 
+# VST3 SDK bindings (COM interfaces, types, smart pointers)
+vst3 = "0.3.0"
+
 # Platform directories
 dirs = "6"
 
