@@ -276,19 +276,21 @@ pub struct ParamInfo {
 pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB max
 
 /// Encode a message to bytes with a 4-byte length prefix.
+///
+/// Serializes directly into the output buffer to avoid an intermediate allocation.
 pub fn encode_message<T: Serialize>(msg: &T) -> Result<Vec<u8>, String> {
-    let json = serde_json::to_vec(msg).map_err(|e| format!("Serialize error: {}", e))?;
-    if json.len() > MAX_MESSAGE_SIZE {
+    // Write a placeholder length prefix, then serialize directly after it.
+    let mut buf = Vec::with_capacity(256);
+    buf.extend_from_slice(&[0u8; 4]);
+    serde_json::to_writer(&mut buf, msg).map_err(|e| format!("Serialize error: {}", e))?;
+    let json_len = buf.len() - 4;
+    if json_len > MAX_MESSAGE_SIZE {
         return Err(format!(
             "Message too large: {} bytes (max {})",
-            json.len(),
-            MAX_MESSAGE_SIZE
+            json_len, MAX_MESSAGE_SIZE
         ));
     }
-    let len = json.len() as u32;
-    let mut buf = Vec::with_capacity(4 + json.len());
-    buf.extend_from_slice(&len.to_le_bytes());
-    buf.extend_from_slice(&json);
+    buf[..4].copy_from_slice(&(json_len as u32).to_le_bytes());
     Ok(buf)
 }
 

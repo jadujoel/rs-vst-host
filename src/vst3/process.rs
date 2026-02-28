@@ -145,8 +145,16 @@ impl ProcessBuffers {
         self.input_bus.silence_flags = 0;
         self.output_bus.silence_flags = 0;
 
-        // Re-establish pointers (buffers haven't moved, but be safe)
-        self.update_ptrs();
+        // Refresh self-referential pointers (process_data.inputs/outputs point
+        // into this struct's own fields, so they become dangling after a move).
+        // The channel pointer arrays and their heap allocations are stable and
+        // do not need rebuilding.
+        if self.num_input_channels > 0 {
+            self.process_data.inputs = &mut self.input_bus;
+        }
+        if self.num_output_channels > 0 {
+            self.process_data.outputs = &mut self.output_bus;
+        }
     }
 
     /// Write interleaved input samples into the deinterleaved input buffers.
@@ -162,6 +170,22 @@ impl ProcessBuffers {
         let num_samples = self.process_data.num_samples as usize;
         let channels_to_write = num_channels.min(self.num_input_channels);
 
+        // Fast path: stereo — avoids inner loop and uses sequential reads
+        if channels_to_write == 2 && num_channels == 2 {
+            let total = num_samples * 2;
+            if total <= interleaved.len() {
+                let (left_bufs, rest) = self.input_buffers.split_at_mut(1);
+                let left = &mut left_bufs[0][..num_samples];
+                let right = &mut rest[0][..num_samples];
+                for (i, chunk) in interleaved[..total].chunks_exact(2).enumerate() {
+                    left[i] = chunk[0];
+                    right[i] = chunk[1];
+                }
+                return;
+            }
+        }
+
+        // General path
         for sample in 0..num_samples {
             for ch in 0..channels_to_write {
                 let interleaved_idx = sample * num_channels + ch;
@@ -184,6 +208,21 @@ impl ProcessBuffers {
         let num_samples = self.process_data.num_samples as usize;
         let channels_to_read = num_channels.min(self.num_output_channels);
 
+        // Fast path: stereo output to stereo interleaved — avoids inner loop
+        if channels_to_read == 2 && num_channels == 2 {
+            let total = num_samples * 2;
+            if total <= interleaved.len() {
+                let left = &self.output_buffers[0];
+                let right = &self.output_buffers[1];
+                for (i, chunk) in interleaved[..total].chunks_exact_mut(2).enumerate() {
+                    chunk[0] = left[i];
+                    chunk[1] = right[i];
+                }
+                return;
+            }
+        }
+
+        // General path
         for sample in 0..num_samples {
             for ch in 0..num_channels {
                 let interleaved_idx = sample * num_channels + ch;

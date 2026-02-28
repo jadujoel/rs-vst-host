@@ -612,6 +612,27 @@ rs-vst-host run --help
 
 ---
 
+## Performance Benchmarks
+
+The project includes a comprehensive Divan benchmark suite covering all hot paths. Run all benchmarks:
+
+```sh
+cargo bench
+```
+
+Run a specific suite:
+
+```sh
+cargo bench --bench audio_engine
+cargo bench --bench ipc_messages
+```
+
+Available suites: `audio_engine`, `process_buffers`, `event_list`, `param_changes`, `midi_translate`, `ipc_messages`, `process_context`, `host_alloc`, `diagnostics`, `session_serde`, `cache_serde`.
+
+See [PERFORMANCE_CHANGELOG.md](PERFORMANCE_CHANGELOG.md) for baseline results.
+
+---
+
 ## Troubleshooting
 
 ### "No plugin cache found. Run 'scan' first."

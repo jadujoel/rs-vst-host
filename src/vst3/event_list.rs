@@ -98,9 +98,10 @@ unsafe extern "system" fn host_event_list_query_interface(
         return K_INVALID_ARGUMENT;
     }
 
-    let iid_slice = unsafe { std::slice::from_raw_parts(iid, 16) };
+    // Direct 16-byte array comparison — avoids fat-pointer slice construction.
+    let iid_bytes: [u8; 16] = unsafe { *(iid as *const [u8; 16]) };
 
-    if iid_slice == IEVENT_LIST_IID || iid_slice == FUNKNOWN_IID {
+    if iid_bytes == IEVENT_LIST_IID || iid_bytes == FUNKNOWN_IID {
         unsafe { *obj = this };
         K_RESULT_OK
     } else {

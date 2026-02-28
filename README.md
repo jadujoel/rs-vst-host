@@ -215,6 +215,40 @@ cargo test --lib e2e_tests -- --test-threads=1
 
 See [CODE_COVERAGE.md](docs/CODE_COVERAGE.md) for detailed per-module coverage analysis.
 
+## Benchmarks
+
+Performance benchmarks use the [Divan](https://github.com/nvzqz/divan) framework. Run all benchmarks:
+
+```sh
+cargo bench
+```
+
+Run a specific benchmark:
+
+```sh
+cargo bench --bench audio_engine
+cargo bench --bench process_buffers
+cargo bench --bench event_list
+```
+
+11 benchmark suites covering all hot paths:
+
+| Benchmark | Module | What it measures |
+|-----------|--------|------------------|
+| `audio_engine` | `audio/engine.rs` | Tone generation, buffer fill at 44.1/96 kHz |
+| `process_buffers` | `vst3/process.rs` | Buffer creation, interleave/deinterleave, full cycle |
+| `event_list` | `vst3/event_list.rs` | Event add/clear, COM vtable operations |
+| `param_changes` | `vst3/param_changes.rs` | Parameter queueing, multi-param, worst-case scan |
+| `midi_translate` | `midi/translate.rs` | MIDI→VST3 translation, batch processing |
+| `ipc_messages` | `ipc/messages.rs` | Serialization encode/decode, roundtrip |
+| `process_context` | `vst3/process_context.rs` | Transport advance, tempo, time signature |
+| `host_alloc` | `vst3/host_alloc.rs` | system_alloc vs mimalloc Box allocation |
+| `diagnostics` | `diagnostics.rs` | Heap check, malloc env inspection |
+| `session_serde` | `gui/session.rs` | Session capture/restore/serde roundtrip |
+| `cache_serde` | `vst3/cache.rs` | ScanCache serde, module roundtrip |
+
+See [PERFORMANCE_CHANGELOG.md](docs/PERFORMANCE_CHANGELOG.md) for baseline results and regression tracking.
+
 ## Debugging
 
 The project includes optional diagnostic features for investigating heap corruption and performance issues, gated behind Cargo feature flags (zero-cost when disabled).
@@ -279,6 +313,7 @@ When a plugin crashes inside the sandbox, the signal handler captures a backtrac
 - [DEBUGGING.md](docs/DEBUGGING.md) — Debug and profiling infrastructure plan
 - [PRD.md](docs/PRD.md) — Product requirements for the GUI application
 - [USER_INTERACTION_PLAN.md](docs/USER_INTERACTION_PLAN.md) — GUI interaction plan for plugin parameter editing
+- [PERFORMANCE_CHANGELOG.md](docs/PERFORMANCE_CHANGELOG.md) — Benchmark results and regression tracking
 - [PHASE_8.md](docs/PHASE_8.md) — Detailed plan for Phase 8 (Beyond MVP)
 
 ## Roadmap

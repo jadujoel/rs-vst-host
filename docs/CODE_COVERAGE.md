@@ -1,6 +1,6 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.19.0 — Audio process separation: supervisor, audio worker, GUI in separate processes).
+Last updated: 2026-02-28 (v0.19.3 — Performance optimizations: stereo fast path, single-alloc encode, pre-alloc MIDI batch).
 
 ## Summary
 
@@ -232,3 +232,23 @@ No new tests added in this release (GUI Design Phase).
 | COM IID verification | 9 | UUID-to-bytes validation for all 7 IIDs (IComponent, IAudioProcessor, IHostApplication, FUnknown, IEditController, IEventList, IParameterChanges) plus helper function tests |
 | Module IID verification | 2 | UUID-to-bytes validation for IPluginFactory2 and IPluginFactory3 IIDs |
 | CFBundleRef | 3 | Null path handling, null release safety, system framework (CoreFoundation) validation |
+
+## Performance Benchmarks (Divan)
+
+11 benchmark suites with ~130+ individual benchmarks. Run with `cargo bench`.
+
+| Benchmark File | Target Module | Benchmarks | Description |
+|---------------|--------------|:----------:|-------------|
+| `benches/audio_engine.rs` | `audio/engine.rs` | ~15 | Tone generation, buffer fill at 44.1/96 kHz, sustained multi-block |
+| `benches/process_buffers.rs` | `vst3/process.rs` | ~12 | Buffer creation, prepare, interleave/deinterleave, full cycle |
+| `benches/event_list.rs` | `vst3/event_list.rs` | ~10 | Event add/clear, COM vtable get_event_count/get_event/add_event |
+| `benches/param_changes.rs` | `vst3/param_changes.rs` | ~12 | Single/multi-param, worst-case linear scan, block cycle |
+| `benches/midi_translate.rs` | `midi/translate.rs` | ~12 | Single MIDI events, batch 4–256, receiver push/drain |
+| `benches/ipc_messages.rs` | `ipc/messages.rs` | ~14 | Encode/decode all message types, param lists, roundtrip |
+| `benches/process_context.rs` | `vst3/process_context.rs` | ~12 | Advance, transport, tempo, time signature, full block update |
+| `benches/host_alloc.rs` | `vst3/host_alloc.rs` | ~10 | system_alloc vs Box (mimalloc), small/medium/large, batch |
+| `benches/diagnostics.rs` | `diagnostics.rs` | ~8 | heap_check, malloc env, allocator name, recommended vars |
+| `benches/session_serde.rs` | `gui/session.rs` | ~10 | Session capture/restore/serde roundtrip (1–16 rack slots) |
+| `benches/cache_serde.rs` | `vst3/cache.rs` | ~12 | Class/module/cache serde, roundtrip (4–64 modules) |
+
+See [PERFORMANCE_CHANGELOG.md](PERFORMANCE_CHANGELOG.md) for baseline results.

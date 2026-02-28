@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.3] - 2026-02-28
+
+### Changed
+- **Stereo interleave/deinterleave fast path** (`vst3/process.rs`): Special-cased stereo (2-channel) interleave/deinterleave using `chunks_exact`/`chunks_exact_mut`, eliminating the inner channel loop and per-sample bounds checks. `write_input_interleaved_stereo` **9.6× faster** (2,228→231 ns at 1024 samples), `read_output_interleaved_stereo` **3.2× faster** (2,228→687 ns), `full_cycle_stereo` **4.2× faster** (4,541→1,072 ns).
+- **Leaner `prepare()` in ProcessBuffers** (`vst3/process.rs`): Removed full `update_ptrs()` call from `prepare()` — only the two self-referential pointers (`process_data.inputs`/`outputs`) are refreshed each block instead of rebuilding all channel pointer arrays. Vec heap pointers are stable after construction.
+- **Single-allocation `encode_message`** (`ipc/messages.rs`): Replaced two-allocation serialisation (temp Vec + final Vec) with `serde_json::to_writer` into a single buffer. `encode_processed_response` **1.76× faster** (48.8→27.7 ns), `encode_load_plugin` **1.53× faster** (214→140 ns), `encode_transport_state` **1.19× faster** (152→128 ns).
+- **Pre-allocated `translate_midi_batch`** (`midi/translate.rs`): Replaced `.filter_map().collect()` with `Vec::with_capacity(messages.len())` + manual loop, avoiding dynamic reallocation. Batch notes **1.9× faster** at 16 events (171→90 ns), **1.43× faster** at 256 events (1,551→1,083 ns).
+- **Direct array cast in event_list `query_interface`** (`vst3/event_list.rs`): Replaced `std::slice::from_raw_parts(iid, 16)` fat-pointer slice comparison with direct `*(iid as *const [u8; 16])` 16-byte array comparison, matching the pattern used in `param_changes.rs`.
+
+## [0.19.2] - 2026-02-28
+
+### Added
+- **Divan performance benchmark suite**: 11 benchmark files with ~130+ individual benchmarks covering all hot paths in the audio processing pipeline. Benchmarks use the [Divan](https://github.com/nvzqz/divan) framework with `harness = false` for accurate measurement.
+  - `benches/audio_engine.rs` — TestToneGenerator: sample generation, buffer fill at 44.1/96 kHz, sustained multi-block
+  - `benches/process_buffers.rs` — ProcessBuffers: creation, prepare, interleave/deinterleave, full cycle for stereo/8ch
+  - `benches/event_list.rs` — HostEventList: add/clear/cycle, COM vtable operations (get_event_count, get_event, add_event)
+  - `benches/param_changes.rs` — HostParameterChanges: single/multi-param, worst-case linear scan, block cycle
+  - `benches/midi_translate.rs` — MIDI translation: single events, batch (4–256), receiver push/drain
+  - `benches/ipc_messages.rs` — IPC serialization: encode/decode all message types, param lists, roundtrip
+  - `benches/process_context.rs` — ProcessContext: advance, transport, tempo, time signature, full block update
+  - `benches/host_alloc.rs` — system_alloc vs Box (mimalloc): small/medium/large, batch alloc/free
+  - `benches/diagnostics.rs` — heap_check, malloc env, allocator name, recommended vars
+  - `benches/session_serde.rs` — Session: capture, restore, serde roundtrip (1–16 rack slots)
+  - `benches/cache_serde.rs` — ScanCache: class/module/cache serde, roundtrip (4–64 modules)
+- **Performance changelog**: New `docs/PERFORMANCE_CHANGELOG.md` tracking baseline benchmark results
+
 ## [0.19.1] - 2026-02-28
 
 ### Added

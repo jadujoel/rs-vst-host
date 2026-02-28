@@ -61,10 +61,13 @@ pub fn midi_to_vst3_event(msg: &RawMidiMessage, sample_offset: i32) -> Option<Ev
 /// midir timestamps don't directly map to sample offsets within a block.
 /// Future work: interpolate timestamps to provide sample-accurate offsets.
 pub fn translate_midi_batch(messages: &[RawMidiMessage]) -> Vec<Event> {
-    messages
-        .iter()
-        .filter_map(|msg| midi_to_vst3_event(msg, 0))
-        .collect()
+    let mut events = Vec::with_capacity(messages.len());
+    for msg in messages {
+        if let Some(event) = midi_to_vst3_event(msg, 0) {
+            events.push(event);
+        }
+    }
+    events
 }
 
 #[cfg(test)]

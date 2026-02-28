@@ -1,6 +1,6 @@
 [package]
 name = "rs-vst-host"
-version = "0.18.1"
+version = "0.19.3"
 edition = "2024"
 
 [features]
@@ -58,3 +58,50 @@ dhat = { version = "0.3", optional = true }
 # Optional: Chrome trace timeline output
 tracing-chrome = { version = "0.7", optional = true }
 mimalloc = "0.1.48"
+
+[dev-dependencies]
+divan = "0.1"
+
+[[bench]]
+name = "audio_engine"
+harness = false
+
+[[bench]]
+name = "process_buffers"
+harness = false
+
+[[bench]]
+name = "event_list"
+harness = false
+
+[[bench]]
+name = "param_changes"
+harness = false
+
+[[bench]]
+name = "midi_translate"
+harness = false
+
+[[bench]]
+name = "ipc_messages"
+harness = false
+
+[[bench]]
+name = "process_context"
+harness = false
+
+[[bench]]
+name = "host_alloc"
+harness = false
+
+[[bench]]
+name = "diagnostics"
+harness = false
+
+[[bench]]
+name = "session_serde"
+harness = false
+
+[[bench]]
+name = "cache_serde"
+harness = false
