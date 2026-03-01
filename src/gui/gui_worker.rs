@@ -2504,25 +2504,44 @@ mod tests {
 
         // Select slot 0
         let selected_slot = app.selected_slot;
-        let new_selected = if selected_slot == Some(0) { None } else { Some(0) };
+        let new_selected = if selected_slot == Some(0) {
+            None
+        } else {
+            Some(0)
+        };
         app.selected_slot = new_selected;
         assert_eq!(app.selected_slot, Some(0));
 
         // Toggle: click same slot 0 again => deselect
         let selected_slot = app.selected_slot;
-        let new_selected = if selected_slot == Some(0) { None } else { Some(0) };
+        let new_selected = if selected_slot == Some(0) {
+            None
+        } else {
+            Some(0)
+        };
         app.selected_slot = new_selected;
-        assert_eq!(app.selected_slot, None, "Re-clicking same slot should deselect");
+        assert_eq!(
+            app.selected_slot, None,
+            "Re-clicking same slot should deselect"
+        );
 
         // Select a different slot (1) while None
         let selected_slot = app.selected_slot;
-        let new_selected = if selected_slot == Some(1) { None } else { Some(1) };
+        let new_selected = if selected_slot == Some(1) {
+            None
+        } else {
+            Some(1)
+        };
         app.selected_slot = new_selected;
         assert_eq!(app.selected_slot, Some(1));
 
         // Select slot 0 while slot 1 is selected => switch
         let selected_slot = app.selected_slot;
-        let new_selected = if selected_slot == Some(0) { None } else { Some(0) };
+        let new_selected = if selected_slot == Some(0) {
+            None
+        } else {
+            Some(0)
+        };
         app.selected_slot = new_selected;
         assert_eq!(app.selected_slot, Some(0));
     }
