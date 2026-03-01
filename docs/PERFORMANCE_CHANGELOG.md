@@ -4,6 +4,16 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.26.2] - 2026-03-01 — Preset Loading & Layout Fix (no perf impact)
+
+### Summary
+
+Fixed preset loading (stale `ParameterRegistry.current_normalized` after state restore) and parameter panel layout (no max_width, no close button). All changes are in GUI/parameter code paths — no audio callback changes.
+
+**Changes to hot paths:** None. `ParameterRegistry::refresh_values()` is called only on explicit preset load (user action), not per-frame. The layout changes (max_width constraint, close button) affect only egui rendering, not the audio processing loop.
+
+**No benchmark regressions.**
+
 ## [0.26.1] - 2026-02-28 — GUI Worker Phase 8 Integration (no perf impact)
 
 ### Summary

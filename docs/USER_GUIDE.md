@@ -428,6 +428,7 @@ When a plugin slot is selected (clicked) in the rack, a right-side panel appears
 - **Active plugins**: Live parameter sliders with real-time feedback from the audio engine.
 - **Inactive plugins with cached params**: Parameter sliders are shown with a warning banner ("⚠ Plugin is inactive — changes will be applied on activation"). Edits are staged and automatically applied when the plugin is next activated.
 - **Never-activated plugins**: A placeholder prompts the user to activate the plugin to view parameters.
+- **Close button** — click the ✕ button at the top-right of the panel to dismiss it and reclaim rack space
 - **Search filter** — type to filter parameters by name (useful for plugins with many parameters)
 - **Sliders** — drag to adjust normalized parameter values (0.0–1.0)
 - **Display values** — formatted value text with units (e.g. "-3.0 dB")
@@ -435,7 +436,7 @@ When a plugin slot is selected (clicked) in the rack, a right-side panel appears
 - **Read-only parameters** — displayed as text only
 - **Double-click** any slider to reset to the parameter's default value
 
-Parameters are refreshed every frame, reflecting both user changes and plugin-initiated changes (e.g. from modulators or sidechain).
+The parameter panel has a maximum width of 420px and can be resized by dragging its left edge. Parameters are refreshed every frame, reflecting both user changes and plugin-initiated changes (e.g. from modulators or sidechain).
 
 ### Transport Controls
 

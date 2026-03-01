@@ -54,10 +54,7 @@ impl ParameterRegistry {
     /// # Safety
     /// The `controller` must be a valid IEditController COM pointer.
     /// If `owns` is true, the registry will release it on drop.
-    pub unsafe fn from_controller(
-        controller: *mut IEditController,
-        owns: bool,
-    ) -> Self {
+    pub unsafe fn from_controller(controller: *mut IEditController, owns: bool) -> Self {
         let mut registry = Self {
             controller,
             owns_controller: owns,
@@ -86,11 +83,7 @@ impl ParameterRegistry {
 
             for i in 0..count {
                 let mut info: ParameterInfo = std::mem::zeroed();
-                let result = (vtbl.getParameterInfo)(
-                    self.controller,
-                    i,
-                    &mut info,
-                );
+                let result = (vtbl.getParameterInfo)(self.controller, i, &mut info);
 
                 if result != K_RESULT_OK {
                     warn!(index = i, result, "getParameterInfo failed");
@@ -102,10 +95,7 @@ impl ParameterRegistry {
                 let units = utf16_to_string(&info.units);
 
                 // Get current normalized value
-                let current = (vtbl.getParamNormalized)(
-                    self.controller,
-                    info.id,
-                );
+                let current = (vtbl.getParamNormalized)(self.controller, info.id);
 
                 let entry = ParameterEntry {
                     id: info.id,
@@ -164,21 +154,14 @@ impl ParameterRegistry {
             let vtbl = &*(*self.controller).vtbl;
             let clamped = value.clamp(0.0, 1.0);
 
-            let result = (vtbl.setParamNormalized)(
-                self.controller,
-                id,
-                clamped,
-            );
+            let result = (vtbl.setParamNormalized)(self.controller, id, clamped);
 
             if result != K_RESULT_OK {
                 return Err(format!("setParamNormalized failed (result: {})", result));
             }
 
             // Read back the actual value
-            let actual = (vtbl.getParamNormalized)(
-                self.controller,
-                id,
-            );
+            let actual = (vtbl.getParamNormalized)(self.controller, id);
 
             // Update our local copy
             if let Some(param) = self.parameters.iter_mut().find(|p| p.id == id) {
@@ -199,12 +182,7 @@ impl ParameterRegistry {
             let vtbl = &*(*self.controller).vtbl;
             let mut buf: String128 = [0u16; 128];
 
-            let result = (vtbl.getParamStringByValue)(
-                self.controller,
-                id,
-                value,
-                &mut buf,
-            );
+            let result = (vtbl.getParamStringByValue)(self.controller, id, value, &mut buf);
 
             if result == K_RESULT_OK {
                 Some(utf16_to_string(&buf))
@@ -223,11 +201,7 @@ impl ParameterRegistry {
 
         unsafe {
             let vtbl = &*(*self.controller).vtbl;
-            (vtbl.normalizedParamToPlain)(
-                self.controller,
-                id,
-                normalized,
-            )
+            (vtbl.normalizedParamToPlain)(self.controller, id, normalized)
         }
     }
 
@@ -240,12 +214,29 @@ impl ParameterRegistry {
 
         unsafe {
             let vtbl = &*(*self.controller).vtbl;
-            (vtbl.plainParamToNormalized)(
-                self.controller,
-                id,
-                plain,
-            )
+            (vtbl.plainParamToNormalized)(self.controller, id, plain)
         }
+    }
+
+    /// Re-read all parameter values from the controller.
+    ///
+    /// Call this after restoring component/controller state so that the
+    /// cached `current_normalized` values match the plugin's actual state.
+    pub fn refresh_values(&mut self) {
+        if self.controller.is_null() {
+            return;
+        }
+        unsafe {
+            let vtbl = &*(*self.controller).vtbl;
+            for param in &mut self.parameters {
+                let current = (vtbl.getParamNormalized)(self.controller, param.id);
+                param.current_normalized = current;
+            }
+        }
+        debug!(
+            count = self.parameters.len(),
+            "Parameter values refreshed from controller"
+        );
     }
 
     /// Number of parameters.
@@ -264,7 +255,10 @@ impl ParameterRegistry {
             "  {:>6}  {:<30}  {:>8}  {:>8}  {:<8}  Flags",
             "ID", "Title", "Default", "Current", "Units"
         );
-        println!("  {:-<6}  {:-<30}  {:->8}  {:->8}  {:-<8}  {:-<10}", "", "", "", "", "", "");
+        println!(
+            "  {:-<6}  {:-<30}  {:->8}  {:->8}  {:-<8}  {:-<10}",
+            "", "", "", "", "", ""
+        );
 
         for param in &self.parameters {
             let flags = format!(
@@ -530,5 +524,45 @@ mod tests {
         };
         // Drop should be a no-op — not the owner
         drop(registry);
+    }
+
+    #[test]
+    fn test_refresh_values_with_null_controller() {
+        // refresh_values with a null controller should be a safe no-op
+        let mut registry = ParameterRegistry {
+            controller: std::ptr::null_mut(),
+            owns_controller: false,
+            parameters: vec![ParameterEntry {
+                id: 0,
+                title: "Gain".into(),
+                short_title: "G".into(),
+                units: "dB".into(),
+                step_count: 0,
+                default_normalized: 0.5,
+                current_normalized: 0.3,
+                can_automate: true,
+                is_read_only: false,
+                is_bypass: false,
+            }],
+        };
+
+        // Should not panic or change values (null controller → early return)
+        registry.refresh_values();
+        assert_eq!(
+            registry.parameters[0].current_normalized, 0.3,
+            "Values unchanged when controller is null"
+        );
+    }
+
+    #[test]
+    fn test_refresh_values_with_empty_params() {
+        // refresh_values with no parameters should be a safe no-op
+        let mut registry = ParameterRegistry {
+            controller: std::ptr::null_mut(),
+            owns_controller: false,
+            parameters: vec![],
+        };
+        registry.refresh_values();
+        assert!(registry.parameters.is_empty());
     }
 }

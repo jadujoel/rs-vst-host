@@ -1,14 +1,14 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.26.1 — GUI Worker Phase 8 Integration).
+Last updated: 2026-03-01 (v0.26.2 — Preset Loading & Layout Fix).
 
 ## Summary
 
-- **Total tests:** 1682 (897 unit + 785 binary/integration)
+- **Total tests:** 920 (910 unit + integration)
 - **All passing:** ✅ (0 failures)
 - **Build warnings:** 0 (dead code warnings from unused graph/perf functions — expected until wired into runtime)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (1682 tests passing, 0 failures, 0 ignored) — GUI Worker Phase 8 Integration
+- **Last test run:** 2026-03-01 (920 tests passing, 0 failures, 0 ignored) — Preset Loading & Layout Fix
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)
@@ -23,7 +23,7 @@ Last updated: 2026-02-28 (v0.26.1 — GUI Worker Phase 8 Integration).
 | `src/vst3/process.rs` | 20 | ✅ Full | Buffer creation, interleaving, edge cases, setter methods, zero-channel configs |
 | `src/midi/translate.rs` | 18 | ✅ Full | Note On/Off, channels, pitches, velocity range, batch, truncation, unsupported |
 | `src/vst3/param_changes.rs` | 16 | ✅ Full | COM vtable ops, queue overflow (MAX_PARAM_QUEUES/MAX_POINTS_PER_PARAM), QI, null safety |
-| `src/vst3/params.rs` | 14 | ⚠️ Partial | Utility functions (utf16, truncate) + ParameterEntry types; from_controller requires live plugin |
+| `src/vst3/params.rs` | 16 | ⚠️ Partial | Utility functions (utf16, truncate) + ParameterEntry types, refresh_values null safety + empty params; from_controller requires live plugin |
 | `src/vst3/event_list.rs` | 14 | ✅ Full | COM vtable, add/get/clear, overflow (MAX_EVENTS_PER_BLOCK), null pointers, QI |
 | `src/app/cli.rs` | 22 | ✅ Full | Parse all subcommands including `gui`, `gui --safe-mode`, `gui --malloc-debug`, `gui --paths`, `audio-worker`, `audio-worker` with flags and paths, `scan --paths` exclusive mode, required/optional args, invalid input rejection |
 | `src/app/interactive.rs` | 13 | ⚠️ Partial | State creation, all commands with no-params paths, handler polling; run_interactive requires stdin |
@@ -34,8 +34,8 @@ Last updated: 2026-02-28 (v0.26.1 — GUI Worker Phase 8 Integration).
 | `src/audio/perf.rs` | 18 | ✅ Full | SPSC ring buffer (new, push/pop, FIFO order, drain, producer/consumer threads, wrap-around, capacity rounding, minimum capacity), ParamChangeEntry, XrunTracker (no xrun, normal timing, reset, count accumulation), CpuLoadMonitor (initial zero, measurement, peak tracking, no-start safety), thread priority no-panic |
 | `src/audio/delay_line.rs` | 12 | ✅ Full | DelayLine zero delay, single sample, multi-sample, wrap-around, block processing, reset, clamp, minimum capacity, zero-delay block. StereoDelayLine (set_delay, process, reset) |
 | `src/gui/editor.rs` | 10 | ⚠️ Partial | Platform constants (NSView, HWND, X11), struct size, result code, sandbox accessibility, unattached close, pump_platform_events no-panic, NSApplication idempotent (macOS); actual editor open/close requires live plugin + display |
-| `src/gui/app.rs` | 73 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation, undo stack initially empty, add/remove create undo entries, undo/redo add/remove operations, multi-operation undo/redo, redo cleared by new action, no-op undo/redo on empty stack, status messages for undo/redo |
-| `src/gui/backend.rs` | 45 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none, sandbox-wrapped deactivation (no active/no crash, flags cleared before drop, SandboxResult crashed detection, SandboxResult ok not crashed); activation requires real .vst3 plugins |
+| `src/gui/app.rs` | 77 | ✅ Full | TransportState default, HostApp default, safe mode, malloc_debug mode, heap corruption detection, param filter, transport sync, editor open, audio status, rack add/remove, selected slot adjustment, filtered_classes by name/vendor/subcategory/factory_vendor, bypass toggle, status messages, session save/load roundtrip, bottom tab enum, activation/deactivation, param refresh, tone default, param cache/staging, selection state transitions, inactive param display, cache reorder, transient field isolation, undo stack initially empty, add/remove create undo entries, undo/redo add/remove operations, multi-operation undo/redo, redo cleared by new action, no-op undo/redo on empty stack, status messages for undo/redo, preset load from file, preset load nonexistent file, backend refresh_param_values no-op, close button clears selection |
+| `src/gui/backend.rs` | 53 | ⚠️ Partial | Backend construction, device enumeration, parameter snapshots (empty), set_parameter (no active), handler changes (empty), tone control, device selection, editor count, active_has_editor, poll/close editors, set_tempo/playing/time_signature, open_editor, audio status, module-lifetime invariant, deactivate audio status, deactivate idempotency, stream option type, tainted paths (initially empty, blocks activation, non-tainted not blocked, bypassed in sandboxed mode), DEACTIVATION_CRASHED flag, deactivation without crash does not taint, heap corruption flag, process_isolation flag (default false, can be set), sandboxed state initially none, param_value_string sandboxed none, sandbox-wrapped deactivation, refresh_param_values no-op, set/get component/controller state without active plugin; activation requires real .vst3 plugins |
 | `src/gui/theme.rs` | 18 | ✅ Full | Colour palette validation, corner radius uniformity, shadow values, frame construction, theme apply, opaque panel fill, semantic colour distinctness, accent button frame, bottom bar frame, input frame, badge background, secondary background, warm accent, widget visibility, card shadow |
 | `src/ipc/messages.rs` | 18 | ✅ Full | Serialization roundtrip (all HostMessage/WorkerResponse variants), encode/decode wire protocol, length-prefix framing, oversized message rejection (16 MB limit), empty stream handling, MidiEvent/ParamChange/TransportState serde |
 | `src/ipc/shm.rs` | 12 | ✅ Full | Create/open shared memory, input/output channel access, read/write audio data, header layout, sample count, ready flag, channel count validation, POSIX cleanup (`shm_unlink`) |

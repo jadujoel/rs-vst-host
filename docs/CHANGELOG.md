@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.2] - 2026-03-01
+
+### Fixed — Preset Loading & Parameter Panel Layout
+
+**Bug fix: Preset loading does nothing (v0.26.2):**
+After loading a preset via `set_component_state()` / `set_controller_state()`, the `ParameterRegistry.current_normalized` values were stale — they still held the old values from when parameters were first enumerated. `active_param_snapshots()` read from this stale cache, so the UI showed no change despite the plugin's internal state being updated.
+
+Fix: Added `ParameterRegistry::refresh_values()` which re-reads all parameter values from the controller via `getParamNormalized()`. Added `HostBackend::refresh_param_values()` to expose this to the GUI layer. `load_preset()` now calls `refresh_param_values()` after setting state and before reading snapshots.
+
+**Bug fix: Parameter panel takes over full view on activation (v0.26.2):**
+When pressing ▶ to activate a plugin, the right-side parameter panel appeared with no maximum width constraint and no way to dismiss it. On smaller windows or with persisted large panel widths, this could squeeze the central rack view to near-zero width.
+
+Fix: Added `max_width(420.0)` constraint to the right `SidePanel`, reduced default width from 340 to 320, and added a ✕ close button at the top of the parameter panel to dismiss it (sets `selected_slot = None`).
+
+**New tests:** 10 new tests — `refresh_values` null controller safety, empty params, backend `refresh_param_values` no-op, preset load from file, preset load nonexistent, backend state get/set without active plugin, close button behavior.
+
+**Results:** 920 tests passing (910 lib), 0 failures, no benchmark regressions.
+
 ## [0.26.1] - 2026-02-28
 
 ### Fixed — GUI Worker Phase 8 Integration

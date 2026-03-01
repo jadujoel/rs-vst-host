@@ -793,6 +793,22 @@ impl HostBackend {
         false
     }
 
+    /// Re-read all parameter values from the controller after a state change.
+    ///
+    /// This must be called after `set_component_state` / `set_controller_state`
+    /// so that `active_param_snapshots()` returns the updated values.
+    pub fn refresh_param_values(&mut self) {
+        if self.sandboxed.is_some() {
+            // Sandboxed mode uses cached defaults — no live refresh.
+            return;
+        }
+        if let Some(ref mut active) = self.active {
+            if let Some(ref mut params) = active.params {
+                params.refresh_values();
+            }
+        }
+    }
+
     /// Restore the controller state on the active plugin.
     ///
     /// `data` should be a blob previously obtained from [`get_controller_state`].
@@ -1497,5 +1513,63 @@ mod tests {
         let result: SandboxResult<()> = SandboxResult::Ok(());
         assert!(!result.is_crashed());
         assert!(!result.is_panicked());
+    }
+
+    // ── Refresh param values tests ──────────────────────────────────────
+
+    #[test]
+    fn test_backend_refresh_param_values_no_active() {
+        let mut backend = HostBackend::new();
+        // Should not panic when no plugin is active
+        backend.refresh_param_values();
+        assert!(!backend.is_active());
+    }
+
+    #[test]
+    fn test_backend_set_component_state_no_active() {
+        let mut backend = HostBackend::new();
+        let result = backend.set_component_state(&[1, 2, 3]);
+        assert!(!result, "Should return false with no active plugin");
+    }
+
+    #[test]
+    fn test_backend_set_controller_state_no_active() {
+        let mut backend = HostBackend::new();
+        let result = backend.set_controller_state(&[1, 2, 3]);
+        assert!(!result, "Should return false with no active plugin");
+    }
+
+    #[test]
+    fn test_backend_set_component_state_empty_data() {
+        let mut backend = HostBackend::new();
+        let result = backend.set_component_state(&[]);
+        assert!(!result, "Should return false for empty data");
+    }
+
+    #[test]
+    fn test_backend_set_controller_state_empty_data() {
+        let mut backend = HostBackend::new();
+        let result = backend.set_controller_state(&[]);
+        assert!(!result, "Should return false for empty data");
+    }
+
+    #[test]
+    fn test_backend_get_component_state_no_active() {
+        let backend = HostBackend::new();
+        let state = backend.get_component_state();
+        assert!(
+            state.is_empty(),
+            "Should return empty vec with no active plugin"
+        );
+    }
+
+    #[test]
+    fn test_backend_get_controller_state_no_active() {
+        let mut backend = HostBackend::new();
+        let state = backend.get_controller_state();
+        assert!(
+            state.is_empty(),
+            "Should return empty vec with no active plugin"
+        );
     }
 }

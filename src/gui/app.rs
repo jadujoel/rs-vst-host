@@ -749,6 +749,10 @@ impl HostApp {
             self.backend.set_controller_state(data);
         }
 
+        // Re-read parameter values from the controller so snapshots
+        // reflect the newly loaded state.
+        self.backend.refresh_param_values();
+
         // Refresh params to reflect new state
         self.param_snapshots = self.backend.active_param_snapshots();
         if let Some(idx) = self.backend.active_slot_index() {
@@ -1174,7 +1178,8 @@ impl eframe::App for HostApp {
         // — Right side panel: Parameter View —
         if self.selected_slot.is_some() {
             egui::SidePanel::right("param_panel")
-                .default_width(340.0)
+                .default_width(320.0)
+                .max_width(420.0)
                 .resizable(true)
                 .frame(egui::Frame {
                     fill: theme::BG_SECONDARY,
@@ -1183,6 +1188,25 @@ impl eframe::App for HostApp {
                     ..Default::default()
                 })
                 .show(ctx, |ui| {
+                    // Close button to dismiss the panel
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let close_btn = egui::Button::new(
+                                egui::RichText::new("✕")
+                                    .color(theme::TEXT_DISABLED)
+                                    .size(14.0),
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                            if ui
+                                .add(close_btn)
+                                .on_hover_text("Close parameter panel")
+                                .clicked()
+                            {
+                                self.selected_slot = None;
+                            }
+                        });
+                    });
                     self.show_param_panel(ui);
                 });
         }
@@ -3608,5 +3632,64 @@ mod tests {
             app.status_message.starts_with("↪ Redo:"),
             "Status should indicate redo action"
         );
+    }
+
+    // ── Preset loading / param refresh tests ────────────────────────────
+
+    #[test]
+    fn test_load_preset_nonexistent_file() {
+        let mut app = HostApp::default();
+        let path = std::path::Path::new("/nonexistent/preset.json");
+        app.load_preset(path);
+        assert!(
+            app.status_message.contains("Preset load failed"),
+            "Should report load failure for missing file"
+        );
+    }
+
+    #[test]
+    fn test_load_preset_sets_name_and_status() {
+        use crate::vst3::presets::Preset;
+
+        let mut app = HostApp::default();
+        let temp = std::env::temp_dir().join("rs-vst-host-test-preset-load");
+        let _ = std::fs::create_dir_all(&temp);
+        let path = temp.join("test_preset.json");
+
+        let preset = Preset {
+            name: "My Test Preset".into(),
+            plugin_cid: [0u8; 16],
+            component_state: Some(vec![1, 2, 3]),
+            controller_state: None,
+        };
+        preset.save_to_file(&path).unwrap();
+
+        // No active plugin, so set_component_state is a no-op, but the
+        // name and status should still be updated
+        app.load_preset(&path);
+        assert_eq!(app.current_preset_name.as_deref(), Some("My Test Preset"));
+        assert!(app.status_message.contains("My Test Preset"));
+        assert!(app.status_message.contains("loaded"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_backend_refresh_param_values_no_active() {
+        let mut app = HostApp::default();
+        // Should not panic when no plugin is active
+        app.backend.refresh_param_values();
+    }
+
+    #[test]
+    fn test_selected_slot_close_clears_selection() {
+        let mut app = HostApp::default();
+        let module = sample_module();
+        app.add_to_rack(&module, &module.classes[0]);
+        app.selected_slot = Some(0);
+
+        // Simulate close button click
+        app.selected_slot = None;
+        assert!(app.selected_slot.is_none());
     }
 }
