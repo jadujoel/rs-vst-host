@@ -645,11 +645,12 @@ impl eframe::App for GuiWorkerApp {
         // — Right: Parameter View —
         if self.selected_slot.is_some() {
             egui::SidePanel::right("param_panel")
-                .default_width(320.0)
+                .default_width(120.0)
+                .max_width(500.0)
                 .resizable(true)
                 .frame(egui::Frame {
                     fill: theme::BG_BASE,
-                    inner_margin: egui::Margin::same(12),
+                    inner_margin: egui::Margin::same(2),
                     ..Default::default()
                 })
                 .show(ctx, |ui| {
@@ -1116,6 +1117,41 @@ impl GuiWorkerApp {
             .unwrap_or_else(|| ("Parameters".into(), String::new()));
 
         let is_active = self.active_slot == Some(idx);
+
+        // Close button to return to rack view
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("← Back to Rack")
+                            .color(theme::TEXT_SECONDARY)
+                            .size(12.0),
+                    )
+                    .fill(egui::Color32::TRANSPARENT),
+                )
+                .on_hover_text("Close parameter panel")
+                .clicked()
+            {
+                self.selected_slot = None;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("✕")
+                                .color(theme::TEXT_SECONDARY)
+                                .size(14.0),
+                        )
+                        .fill(egui::Color32::TRANSPARENT),
+                    )
+                    .on_hover_text("Close parameter panel")
+                    .clicked()
+                {
+                    self.selected_slot = None;
+                }
+            });
+        });
+        ui.add_space(4.0);
 
         ui.heading(format!("🎛 {}", slot_name));
         if !slot_vendor.is_empty() {
@@ -1757,7 +1793,12 @@ impl GuiWorkerApp {
                                 .response;
 
                             if resp.clicked() {
-                                new_selected = Some(i);
+                                // Toggle: clicking the already-selected slot deselects it
+                                if selected_slot == Some(i) {
+                                    new_selected = None;
+                                } else {
+                                    new_selected = Some(i);
+                                }
                             }
 
                             ui.with_layout(
@@ -2407,5 +2448,101 @@ mod tests {
             Some(GuiAction::Shutdown) => {} // expected
             other => panic!("Expected Shutdown, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_selected_slot_can_be_cleared() {
+        // Verify that selected_slot can be set back to None (close param panel).
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        // Initially no selection
+        assert_eq!(app.selected_slot, None);
+
+        // Select a slot
+        app.selected_slot = Some(0);
+        assert_eq!(app.selected_slot, Some(0));
+
+        // Clear selection (simulates close button / toggle click)
+        app.selected_slot = None;
+        assert_eq!(app.selected_slot, None);
+    }
+
+    #[test]
+    fn test_toggle_slot_selection() {
+        // Verify toggle behavior: clicking the already-selected slot deselects it.
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut app = GuiWorkerApp::new(s1);
+
+        // Setup rack with two slots
+        app.rack = vec![
+            RackSlotState {
+                name: "PluginA".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: PathBuf::from("/a.vst3"),
+                cid: [0u8; 16],
+                bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+                component_state: None,
+                controller_state: None,
+            },
+            RackSlotState {
+                name: "PluginB".into(),
+                vendor: "V".into(),
+                category: "C".into(),
+                path: PathBuf::from("/b.vst3"),
+                cid: [1u8; 16],
+                bypassed: false,
+                param_cache: Vec::new(),
+                staged_changes: Vec::new(),
+                component_state: None,
+                controller_state: None,
+            },
+        ];
+
+        // Select slot 0
+        let selected_slot = app.selected_slot;
+        let new_selected = if selected_slot == Some(0) { None } else { Some(0) };
+        app.selected_slot = new_selected;
+        assert_eq!(app.selected_slot, Some(0));
+
+        // Toggle: click same slot 0 again => deselect
+        let selected_slot = app.selected_slot;
+        let new_selected = if selected_slot == Some(0) { None } else { Some(0) };
+        app.selected_slot = new_selected;
+        assert_eq!(app.selected_slot, None, "Re-clicking same slot should deselect");
+
+        // Select a different slot (1) while None
+        let selected_slot = app.selected_slot;
+        let new_selected = if selected_slot == Some(1) { None } else { Some(1) };
+        app.selected_slot = new_selected;
+        assert_eq!(app.selected_slot, Some(1));
+
+        // Select slot 0 while slot 1 is selected => switch
+        let selected_slot = app.selected_slot;
+        let new_selected = if selected_slot == Some(0) { None } else { Some(0) };
+        app.selected_slot = new_selected;
+        assert_eq!(app.selected_slot, Some(0));
+    }
+
+    #[test]
+    fn test_param_panel_only_shows_when_selected() {
+        // Verify that param panel visibility is controlled by selected_slot
+        let (s1, _s2) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let app = GuiWorkerApp::new(s1);
+
+        // No slot selected — param panel should not show
+        assert!(app.selected_slot.is_none());
+
+        // After selecting — it shows
+        let mut app2 = app;
+        app2.selected_slot = Some(0);
+        assert!(app2.selected_slot.is_some());
+
+        // After clearing — it hides again
+        app2.selected_slot = None;
+        assert!(app2.selected_slot.is_none());
     }
 }
