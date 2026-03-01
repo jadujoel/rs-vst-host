@@ -4,6 +4,16 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.26.1] - 2026-02-28 — GUI Worker Phase 8 Integration (no perf impact)
+
+### Summary
+
+Wired all Phase 8 UI features (presets, routing, undo/redo, drag-drop, perf metrics) into the real GUI worker process. Previously these features only existed in `HostApp` (headless test mode) and were invisible to users.
+
+**Changes to hot paths:** None. All changes are in the GUI rendering code (`gui/gui_worker.rs`), IPC message definitions (`gui/ipc.rs`), and audio worker action handlers (`gui/audio_worker.rs`). The audio `process()` loop is completely unaffected. New IPC messages (`ReorderRack`, `Undo`, `Redo`, `RoutingGraphUpdated`, `UndoState`, `PresetNameChanged`) use the existing length-prefixed JSON framing and are only sent on user interaction, not per-audio-block.
+
+**No benchmark regressions.**
+
 ## [0.26.0] - 2026-02-28 — Phase 8 Completion (no perf impact)
 
 ### Summary

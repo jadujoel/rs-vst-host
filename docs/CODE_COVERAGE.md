@@ -1,6 +1,6 @@
 # Code Coverage Report
 
-Last updated: 2026-02-28 (v0.26.0 — Phase 8 Completion).
+Last updated: 2026-02-28 (v0.26.1 — GUI Worker Phase 8 Integration).
 
 ## Summary
 
@@ -8,7 +8,7 @@ Last updated: 2026-02-28 (v0.26.0 — Phase 8 Completion).
 - **All passing:** ✅ (0 failures)
 - **Build warnings:** 0 (dead code warnings from unused graph/perf functions — expected until wired into runtime)
 - **Test stability:** Verified
-- **Last test run:** 2026-02-28 (1682 tests passing, 0 failures, 0 ignored) — Phase 8 Completion
+- **Last test run:** 2026-02-28 (1682 tests passing, 0 failures, 0 ignored) — GUI Worker Phase 8 Integration
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)

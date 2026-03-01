@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.1] - 2026-02-28
+
+### Fixed — GUI Worker Phase 8 Integration
+
+All Phase 8 UI features were only present in `HostApp` (used for headless tests). The actual user-facing GUI worker process (`gui/gui_worker.rs`) showed none of the Phase 8 functionality. This release wires all Phase 8 features into the real three-process supervised GUI.
+
+**New IPC Messages (`gui/ipc.rs`):**
+- `GuiAction::ReorderRack { from_index, to_index }` — drag-and-drop rack reorder
+- `GuiAction::Undo` / `GuiAction::Redo` — undo/redo commands
+- `SupervisorUpdate::RoutingGraphUpdated { graph_json }` — routing graph sync
+- `SupervisorUpdate::UndoState { can_undo, can_redo, undo_description, redo_description }` — undo state sync
+- `SupervisorUpdate::PresetNameChanged { name }` — current preset name sync
+- Added `cpu_load_pct: f32` and `xrun_count: u32` to `AudioStatusState`
+
+**Audio Worker Handlers (`gui/audio_worker.rs`):**
+- `ReorderRack` — removes and re-inserts rack slot, sends `RackUpdated`
+- `Undo` / `Redo` — stub handlers with status messages
+
+**GUI Worker UI (`gui/gui_worker.rs`):**
+- **Preset management**: Toolbar in parameter panel (◀ Prev / ▶ Next / 💾 Save / ↺ Init), save dialog with filename input, collapsible preset list with one-click loading, current preset name display
+- **Routing overview**: Compact pill chain in rack header (`▸ IN → [Plugin] → OUT ▸`), toggle for advanced routing editor
+- **Undo/redo**: Buttons (↩/↪) in bottom bar with tooltip previews, ⌘Z / ⌘⇧Z keyboard shortcuts
+- **Drag-and-drop reordering**: Grip handle (⠿) on each rack slot, hover-based insertion target with accent markers, slot move on drop
+- **Performance metrics**: CPU load percentage and xrun count displayed in transport bar
+
+**Results:** 1682 tests passing (897 lib + 785 bin), 0 failures, no benchmark regressions.
+
 ## [0.26.0] - 2026-02-28
 
 ### Added — Phase 8 Completion (8.3, 8.5, 8.6, 8.7, 8.8, 8.9)

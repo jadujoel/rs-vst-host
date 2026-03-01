@@ -81,6 +81,32 @@ pub struct GuiWorkerApp {
     /// When `true`, the GUI stops sending actions and displays a
     /// "supervisor lost" banner. The user should close and restart.
     supervisor_disconnected: bool,
+
+    // ── Phase 8 state fields ────────────────────────────────────────
+    /// Cached list of user presets for the active plugin.
+    user_presets: Vec<PresetInfo>,
+    /// Factory preset names for the active plugin.
+    factory_presets: Vec<String>,
+    /// Preset name input for "Save Preset" dialog.
+    preset_save_name: String,
+    /// Whether the save-preset dialog is open.
+    show_save_preset_dialog: bool,
+    /// Current preset name displayed in the rack slot (if a preset was loaded).
+    current_preset_name: Option<String>,
+    /// Audio routing graph for multi-plugin processing chains.
+    routing_graph: crate::audio::graph::AudioGraph,
+    /// Whether the advanced routing editor is visible (vs simple rack view).
+    show_routing_editor: bool,
+    /// Whether undo is available (from supervisor).
+    can_undo: bool,
+    /// Whether redo is available (from supervisor).
+    can_redo: bool,
+    /// Description of the undo action.
+    undo_description: Option<String>,
+    /// Description of the redo action.
+    redo_description: Option<String>,
+    /// Drag-and-drop state for rack reordering.
+    drag_state: crate::gui::app::DragReorderState,
 }
 
 impl GuiWorkerApp {
@@ -122,6 +148,19 @@ impl GuiWorkerApp {
             session_path: default_session_path,
             tainted_count: 0,
             supervisor_disconnected: false,
+            // Phase 8 fields
+            user_presets: Vec::new(),
+            factory_presets: Vec::new(),
+            preset_save_name: String::new(),
+            show_save_preset_dialog: false,
+            current_preset_name: None,
+            routing_graph: crate::audio::graph::AudioGraph::new(),
+            show_routing_editor: false,
+            can_undo: false,
+            can_redo: false,
+            undo_description: None,
+            redo_description: None,
+            drag_state: crate::gui::app::DragReorderState::default(),
         }
     }
 
@@ -279,9 +318,21 @@ impl GuiWorkerApp {
                 active_slot,
                 selected_slot,
             } => {
+                let old_active = self.active_slot;
                 self.rack = rack;
                 self.active_slot = active_slot;
                 self.selected_slot = selected_slot;
+                // Request preset list when active slot changes
+                if self.active_slot != old_active {
+                    self.current_preset_name = None;
+                    self.user_presets.clear();
+                    self.factory_presets.clear();
+                    if self.active_slot.is_some() {
+                        self.send_action(GuiAction::ListPresets);
+                    }
+                }
+                // Sync routing graph with rack
+                self.sync_routing_graph();
             }
 
             SupervisorUpdate::ParamsUpdated { snapshots } => {
@@ -343,9 +394,42 @@ impl GuiWorkerApp {
                 debug!("Received PluginStateCaptured (no GUI action needed)");
             }
 
-            SupervisorUpdate::PresetList { .. } => {
-                // TODO: Phase 8.2 — display preset list in GUI panel
-                debug!("Received PresetList (not yet implemented in GUI)");
+            SupervisorUpdate::PresetList {
+                factory_presets,
+                user_presets,
+            } => {
+                self.factory_presets = factory_presets;
+                self.user_presets = user_presets;
+                debug!(
+                    "Received PresetList ({} factory, {} user)",
+                    self.factory_presets.len(),
+                    self.user_presets.len()
+                );
+            }
+
+            SupervisorUpdate::RoutingGraphUpdated { graph_json } => {
+                if let Ok(graph) =
+                    serde_json::from_str::<crate::audio::graph::AudioGraph>(&graph_json)
+                {
+                    self.routing_graph = graph;
+                }
+                debug!("Received routing graph update");
+            }
+
+            SupervisorUpdate::UndoState {
+                can_undo,
+                can_redo,
+                undo_description,
+                redo_description,
+            } => {
+                self.can_undo = can_undo;
+                self.can_redo = can_redo;
+                self.undo_description = undo_description;
+                self.redo_description = redo_description;
+            }
+
+            SupervisorUpdate::PresetNameChanged { name } => {
+                self.current_preset_name = name;
             }
         }
     }
@@ -371,6 +455,47 @@ impl GuiWorkerApp {
                 time_sig_den: self.transport.time_sig_den,
             };
         }
+    }
+
+    /// Sync the routing graph to reflect the current rack state.
+    ///
+    /// Builds a serial chain: Input → Plugin 0 → Plugin 1 → ... → Output.
+    fn sync_routing_graph(&mut self) {
+        use crate::audio::graph::{AudioGraph, NodeKind};
+        let mut graph = AudioGraph::new();
+        let input_id = graph.add_node(NodeKind::Input, "Input".into());
+        let output_id = graph.add_node(NodeKind::Output, "Output".into());
+
+        if self.rack.is_empty() {
+            let _ = graph.connect(input_id, output_id);
+        } else {
+            let mut prev_id = input_id;
+            for (i, slot) in self.rack.iter().enumerate() {
+                let node_id = graph.add_node(NodeKind::Plugin { slot_index: i }, slot.name.clone());
+                if let Some(n) = graph.node_mut(node_id) {
+                    n.bypassed = slot.bypassed;
+                    // Auto-layout: spread nodes horizontally
+                    let count = self.rack.len() + 2; // +2 for input/output
+                    n.x = (i + 1) as f32 / count as f32;
+                    n.y = 0.5;
+                }
+                let _ = graph.connect(prev_id, node_id);
+                prev_id = node_id;
+            }
+            let _ = graph.connect(prev_id, output_id);
+        }
+
+        // Position input/output nodes
+        if let Some(n) = graph.node_mut(input_id) {
+            n.x = 0.05;
+            n.y = 0.5;
+        }
+        if let Some(n) = graph.node_mut(output_id) {
+            n.x = 0.95;
+            n.y = 0.5;
+        }
+
+        self.routing_graph = graph;
     }
 
     /// Get the filterd plugin classes for the browser.
@@ -438,11 +563,29 @@ impl eframe::App for GuiWorkerApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(33)); // ~30fps
 
         // Keyboard shortcuts
+        let mut undo_requested = false;
+        let mut redo_requested = false;
         ctx.input(|input| {
             if input.key_pressed(egui::Key::Space) {
                 self.transport.playing = !self.transport.playing;
             }
+            // Cmd+Z / Ctrl+Z → Undo
+            if input.modifiers.command && !input.modifiers.shift && input.key_pressed(egui::Key::Z)
+            {
+                undo_requested = true;
+            }
+            // Cmd+Shift+Z / Ctrl+Shift+Z → Redo
+            if input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::Z) {
+                redo_requested = true;
+            }
         });
+
+        if undo_requested {
+            self.send_action(GuiAction::Undo);
+        }
+        if redo_requested {
+            self.send_action(GuiAction::Redo);
+        }
 
         // — Supervisor Disconnected Banner —
         if self.supervisor_disconnected {
@@ -644,6 +787,9 @@ impl GuiWorkerApp {
     }
 
     fn show_bottom_bar(&mut self, ui: &mut egui::Ui) {
+        let mut do_undo = false;
+        let mut do_redo = false;
+
         ui.horizontal(|ui| {
             if ui
                 .selectable_label(
@@ -673,6 +819,55 @@ impl GuiWorkerApp {
                 self.bottom_tab = crate::gui::app::BottomTab::Session;
             }
 
+            // Undo/Redo buttons
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            let undo_color = if self.can_undo {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_DISABLED
+            };
+            let undo_btn = egui::Button::new(egui::RichText::new("↩").color(undo_color).size(14.0))
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+            let undo_tooltip = self
+                .undo_description
+                .as_ref()
+                .map(|d| format!("Undo: {} (⌘Z)", d))
+                .unwrap_or_else(|| "Nothing to undo".into());
+            if ui
+                .add_enabled(self.can_undo, undo_btn)
+                .on_hover_text(&undo_tooltip)
+                .clicked()
+            {
+                do_undo = true;
+            }
+
+            let redo_color = if self.can_redo {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_DISABLED
+            };
+            let redo_btn = egui::Button::new(egui::RichText::new("↪").color(redo_color).size(14.0))
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+            let redo_tooltip = self
+                .redo_description
+                .as_ref()
+                .map(|d| format!("Redo: {} (⌘⇧Z)", d))
+                .unwrap_or_else(|| "Nothing to redo".into());
+            if ui
+                .add_enabled(self.can_redo, redo_btn)
+                .on_hover_text(&redo_tooltip)
+                .clicked()
+            {
+                do_redo = true;
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(&self.status_message)
@@ -681,6 +876,14 @@ impl GuiWorkerApp {
                 );
             });
         });
+
+        // Apply deferred undo/redo
+        if do_undo {
+            self.send_action(GuiAction::Undo);
+        }
+        if do_redo {
+            self.send_action(GuiAction::Redo);
+        }
 
         ui.separator();
 
@@ -739,6 +942,34 @@ impl GuiWorkerApp {
 
             if self.audio_status.running {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Xrun indicator
+                    if self.audio_status.xrun_count > 0 {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "⚠ {} xruns",
+                                self.audio_status.xrun_count
+                            ))
+                            .color(theme::WARNING)
+                            .small(),
+                        );
+                        ui.add_space(8.0);
+                    }
+
+                    // CPU load indicator
+                    let cpu_color = if self.audio_status.cpu_load_pct > 80.0 {
+                        theme::ERROR
+                    } else if self.audio_status.cpu_load_pct > 50.0 {
+                        theme::WARNING
+                    } else {
+                        theme::TEXT_DISABLED
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("CPU {:.0}%", self.audio_status.cpu_load_pct))
+                            .color(cpu_color)
+                            .small(),
+                    );
+                    ui.add_space(8.0);
+
                     ui.label(
                         egui::RichText::new(format!(
                             "{} Hz • {} frames • {}",
@@ -857,6 +1088,15 @@ impl GuiWorkerApp {
     }
 
     fn show_param_panel(&mut self, ui: &mut egui::Ui) {
+        // Deferred preset navigation actions
+        let mut preset_load_path: Option<String> = None;
+        let mut preset_save_requested = false;
+        let mut preset_prev = false;
+        let mut preset_next = false;
+        let mut preset_init = false;
+        let mut show_save_dialog = false;
+        let mut cancel_save_dialog = false;
+
         let Some(idx) = self.selected_slot else {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
@@ -887,35 +1127,206 @@ impl GuiWorkerApp {
         }
         ui.add_space(4.0);
 
-        if !is_active {
-            if !self.param_snapshots.is_empty() {
+        if is_active {
+            // ── Preset toolbar (only for active plugins) ─────────────────
+            ui.add_space(4.0);
+            let sep_rect = ui.available_rect_before_wrap();
+            ui.painter().line_segment(
+                [
+                    egui::pos2(sep_rect.min.x, sep_rect.min.y),
+                    egui::pos2(sep_rect.max.x, sep_rect.min.y),
+                ],
+                egui::Stroke::new(1.0, theme::GLASS_BORDER),
+            );
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(
-                        "⚠ Plugin is inactive — changes will be applied on activation.",
-                    )
-                    .color(theme::WARNING)
-                    .small(),
+                    egui::RichText::new("🎛  PRESETS")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(11.0)
+                        .strong(),
                 );
+            });
+            ui.add_space(2.0);
+
+            // Current preset name display
+            let preset_display = self.current_preset_name.as_deref().unwrap_or("(no preset)");
+
+            ui.horizontal(|ui| {
+                // Previous preset
+                let prev_btn = egui::Button::new(
+                    egui::RichText::new("◀")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(12.0),
+                )
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(prev_btn).on_hover_text("Previous preset").clicked() {
+                    preset_prev = true;
+                }
+
+                // Preset name label (centered, takes remaining width)
+                let available = ui.available_width() - 130.0;
+                ui.add_sized(
+                    [available.max(40.0), 22.0],
+                    egui::Label::new(
+                        egui::RichText::new(preset_display)
+                            .color(if self.current_preset_name.is_some() {
+                                theme::ACCENT
+                            } else {
+                                theme::TEXT_DISABLED
+                            })
+                            .size(12.0),
+                    )
+                    .truncate(),
+                );
+
+                // Next preset
+                let next_btn = egui::Button::new(
+                    egui::RichText::new("▶")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(12.0),
+                )
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(next_btn).on_hover_text("Next preset").clicked() {
+                    preset_next = true;
+                }
+
                 ui.add_space(4.0);
-            } else {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(20.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Activate this plugin to view and edit its parameters.",
+
+                // Save preset button
+                let save_btn =
+                    egui::Button::new(egui::RichText::new("💾").color(theme::ACCENT).size(12.0))
+                        .fill(egui::Color32::TRANSPARENT)
+                        .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                        .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(save_btn).on_hover_text("Save preset").clicked() {
+                    show_save_dialog = true;
+                }
+
+                // Init button (reset to defaults)
+                let init_btn = egui::Button::new(
+                    egui::RichText::new("↺")
+                        .color(theme::TEXT_SECONDARY)
+                        .size(12.0),
+                )
+                .fill(egui::Color32::TRANSPARENT)
+                .corner_radius(theme::BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(24.0, 22.0));
+                if ui.add(init_btn).on_hover_text("Reset to default").clicked() {
+                    preset_init = true;
+                }
+            });
+
+            // Preset save dialog (inline)
+            if self.show_save_preset_dialog {
+                ui.add_space(4.0);
+                egui::Frame {
+                    inner_margin: egui::Margin::symmetric(8, 6),
+                    corner_radius: theme::SMALL_CORNER_RADIUS,
+                    fill: theme::PANEL_FILL,
+                    stroke: egui::Stroke::new(1.0, theme::ACCENT),
+                    ..Default::default()
+                }
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Name:")
+                                .color(theme::TEXT_SECONDARY)
+                                .small(),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.preset_save_name)
+                                .hint_text("My Preset")
+                                .desired_width(120.0),
+                        );
+                        if ui.button("Save").clicked() && !self.preset_save_name.trim().is_empty() {
+                            preset_save_requested = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_save_dialog = true;
+                        }
+                    });
+                });
+            }
+
+            // Preset list (collapsible)
+            if !self.user_presets.is_empty() {
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(format!("User Presets ({})", self.user_presets.len()))
+                        .color(theme::TEXT_SECONDARY)
+                        .small(),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    let presets_clone = self.user_presets.clone();
+                    for preset_info in &presets_clone {
+                        let is_current =
+                            self.current_preset_name.as_deref() == Some(preset_info.name.as_str());
+                        let text_color = if is_current {
+                            theme::ACCENT
+                        } else {
+                            theme::TEXT_PRIMARY
+                        };
+                        let btn = egui::Button::new(
+                            egui::RichText::new(&preset_info.name)
+                                .color(text_color)
+                                .small(),
                         )
+                        .fill(if is_current {
+                            egui::Color32::from_rgba_premultiplied(60, 80, 180, 30)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .corner_radius(theme::SMALL_CORNER_RADIUS)
+                        .min_size(egui::vec2(ui.available_width(), 22.0));
+                        if ui.add(btn).clicked() {
+                            preset_load_path = Some(preset_info.path.clone());
+                        }
+                    }
+                });
+            }
+
+            ui.add_space(4.0);
+            let sep_rect2 = ui.available_rect_before_wrap();
+            ui.painter().line_segment(
+                [
+                    egui::pos2(sep_rect2.min.x, sep_rect2.min.y),
+                    egui::pos2(sep_rect2.max.x, sep_rect2.min.y),
+                ],
+                egui::Stroke::new(1.0, theme::GLASS_BORDER),
+            );
+            ui.add_space(4.0);
+        } else if !self.param_snapshots.is_empty() {
+            ui.label(
+                egui::RichText::new(
+                    "⚠ Plugin is inactive — changes will be applied on activation.",
+                )
+                .color(theme::WARNING)
+                .small(),
+            );
+            ui.add_space(4.0);
+        } else {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    egui::RichText::new("Activate this plugin to view and edit its parameters.")
                         .color(theme::TEXT_SECONDARY)
                         .italics(),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("Click ▶ in the rack to activate.")
-                            .color(theme::TEXT_DISABLED)
-                            .small(),
-                    );
-                });
-                return;
-            }
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Click ▶ in the rack to activate.")
+                        .color(theme::TEXT_DISABLED)
+                        .small(),
+                );
+            });
+            return;
         }
 
         if self.param_snapshots.is_empty() {
@@ -1021,10 +1432,140 @@ impl GuiWorkerApp {
                 });
             }
         }
+
+        // Handle preset navigation
+        if show_save_dialog {
+            self.show_save_preset_dialog = true;
+        }
+        if cancel_save_dialog {
+            self.show_save_preset_dialog = false;
+            self.preset_save_name.clear();
+        }
+        if preset_save_requested {
+            // Build a preset file path from the plugin name and preset name
+            let plugin_name = self
+                .rack
+                .get(idx)
+                .map(|s| s.name.as_str())
+                .unwrap_or("unknown");
+            if let Some(presets_dir) = crate::vst3::presets::presets_dir(plugin_name) {
+                let filename = crate::vst3::presets::sanitize_filename(&self.preset_save_name);
+                let path = presets_dir.join(format!("{}.json", filename));
+                self.send_action(GuiAction::SavePreset {
+                    path: path.to_string_lossy().to_string(),
+                    name: self.preset_save_name.clone(),
+                });
+                self.current_preset_name = Some(self.preset_save_name.clone());
+                self.show_save_preset_dialog = false;
+                self.preset_save_name.clear();
+                // Refresh preset list
+                self.send_action(GuiAction::ListPresets);
+            }
+        }
+        if let Some(load_path) = preset_load_path {
+            self.send_action(GuiAction::LoadPreset {
+                path: load_path.clone(),
+            });
+            // Extract preset name from the PresetInfo list
+            if let Some(info) = self.user_presets.iter().find(|p| p.path == load_path) {
+                self.current_preset_name = Some(info.name.clone());
+            }
+        }
+        if preset_prev {
+            // Navigate to previous preset in the user_presets list
+            if !self.user_presets.is_empty() {
+                let current_idx = self
+                    .current_preset_name
+                    .as_ref()
+                    .and_then(|name| self.user_presets.iter().position(|p| &p.name == name));
+                let new_idx = match current_idx {
+                    Some(0) => self.user_presets.len() - 1,
+                    Some(i) => i - 1,
+                    None => 0,
+                };
+                let path = self.user_presets[new_idx].path.clone();
+                let name = self.user_presets[new_idx].name.clone();
+                self.send_action(GuiAction::LoadPreset { path });
+                self.current_preset_name = Some(name);
+            }
+        }
+        if preset_next {
+            // Navigate to next preset in the user_presets list
+            if !self.user_presets.is_empty() {
+                let current_idx = self
+                    .current_preset_name
+                    .as_ref()
+                    .and_then(|name| self.user_presets.iter().position(|p| &p.name == name));
+                let new_idx = match current_idx {
+                    Some(i) if i + 1 < self.user_presets.len() => i + 1,
+                    _ => 0,
+                };
+                let path = self.user_presets[new_idx].path.clone();
+                let name = self.user_presets[new_idx].name.clone();
+                self.send_action(GuiAction::LoadPreset { path });
+                self.current_preset_name = Some(name);
+            }
+        }
+        if preset_init {
+            // Reset by loading empty state — just deactivate and reactivate
+            self.current_preset_name = None;
+            // Re-activate to reset state
+            if let Some(slot_idx) = self.active_slot {
+                self.send_action(GuiAction::DeactivateSlot);
+                self.send_action(GuiAction::ActivateSlot { index: slot_idx });
+            }
+        }
     }
 
     fn show_rack(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Plugin Rack");
+        // Header with routing toggle
+        ui.horizontal(|ui| {
+            ui.heading("Plugin Rack");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Routing editor toggle
+                let routing_label = if self.show_routing_editor {
+                    "📋 List View"
+                } else {
+                    "🔀 Routing"
+                };
+                let routing_btn = egui::Button::new(
+                    egui::RichText::new(routing_label)
+                        .color(theme::TEXT_SECONDARY)
+                        .small(),
+                )
+                .fill(if self.show_routing_editor {
+                    egui::Color32::from_rgba_premultiplied(60, 80, 180, 30)
+                } else {
+                    egui::Color32::TRANSPARENT
+                })
+                .corner_radius(theme::BUTTON_CORNER_RADIUS);
+                if ui
+                    .add(routing_btn)
+                    .on_hover_text("Toggle routing editor")
+                    .clicked()
+                {
+                    self.show_routing_editor = !self.show_routing_editor;
+                }
+
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(format!("{} slot(s)", self.rack.len()))
+                        .color(theme::TEXT_DISABLED)
+                        .small(),
+                );
+            });
+        });
+
+        // Routing chain overview (always shown when rack has plugins)
+        if !self.rack.is_empty() {
+            ui.add_space(4.0);
+            crate::gui::routing::show_routing_overview(
+                ui,
+                &mut self.routing_graph,
+                self.active_slot,
+            );
+        }
+
         ui.add_space(8.0);
 
         if self.rack.is_empty() {
@@ -1052,6 +1593,32 @@ impl GuiWorkerApp {
         let selected_slot = self.selected_slot;
         let active_slot = self.active_slot;
         let has_editor = self.has_editor;
+        let current_preset_name = self.current_preset_name.clone();
+
+        // Advanced routing editor view
+        if self.show_routing_editor {
+            ui.add_space(8.0);
+            let available_height = ui.available_height().max(200.0);
+            let (response, _painter) = ui.allocate_painter(
+                egui::vec2(ui.available_width(), available_height),
+                egui::Sense::hover(),
+            );
+            let editor_rect = response.rect;
+            let mut editor_ui = ui.new_child(egui::UiBuilder::new().max_rect(editor_rect));
+            crate::gui::routing::show_routing_editor(
+                &mut editor_ui,
+                &mut self.routing_graph,
+                active_slot,
+            );
+
+            self.selected_slot = new_selected;
+            return;
+        }
+
+        // Standard rack list view with drag-and-drop reordering
+        let mut reorder_action: Option<(usize, usize)> = None;
+        let drag_source = self.drag_state.source_index;
+        let is_dragging = self.drag_state.dragging;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -1059,35 +1626,93 @@ impl GuiWorkerApp {
                 for (i, slot) in self.rack.iter_mut().enumerate() {
                     let is_selected = selected_slot == Some(i);
                     let is_active = active_slot == Some(i);
+                    let is_drag_source = is_dragging && drag_source == Some(i);
+                    let is_drag_target = is_dragging
+                        && self.drag_state.target_index == Some(i)
+                        && drag_source != Some(i);
 
-                    let frame = if is_active {
-                        egui::Frame {
-                            stroke: egui::Stroke::new(2.0, theme::SUCCESS),
-                            ..theme::glass_card_frame()
-                        }
+                    // Insertion marker above this slot (when dragging)
+                    if is_drag_target && drag_source.is_none_or(|s| s > i) {
+                        ui.horizontal(|ui| {
+                            let rect = egui::Rect::from_min_size(
+                                ui.cursor().min,
+                                egui::vec2(ui.available_width(), 3.0),
+                            );
+                            ui.painter().rect_filled(rect, 2.0, theme::ACCENT);
+                            ui.allocate_space(egui::vec2(ui.available_width(), 3.0));
+                        });
+                    }
+
+                    // Cards with distinct visual states
+                    let (card_fill, card_stroke) = if is_drag_source {
+                        (
+                            egui::Color32::from_rgba_premultiplied(40, 40, 50, 140),
+                            egui::Stroke::new(1.5, theme::ACCENT),
+                        )
+                    } else if is_active {
+                        (
+                            egui::Color32::from_rgb(22, 38, 28),
+                            egui::Stroke::new(1.5, theme::SUCCESS),
+                        )
                     } else if is_selected {
-                        egui::Frame {
-                            stroke: theme::accent_stroke(),
-                            ..theme::glass_card_frame()
-                        }
+                        (
+                            egui::Color32::from_rgba_premultiplied(60, 80, 180, 30),
+                            egui::Stroke::new(1.5, theme::ACCENT),
+                        )
                     } else {
-                        theme::glass_card_frame()
+                        (
+                            theme::PANEL_FILL,
+                            egui::Stroke::new(1.0, theme::GLASS_BORDER),
+                        )
                     };
 
-                    frame.show(ui, |ui| {
+                    let frame = egui::Frame {
+                        inner_margin: egui::Margin::symmetric(14, 10),
+                        outer_margin: egui::Margin::symmetric(0, 2),
+                        corner_radius: theme::CARD_CORNER_RADIUS,
+                        shadow: theme::CARD_SHADOW,
+                        fill: card_fill,
+                        stroke: card_stroke,
+                    };
+
+                    let frame_response = frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            // Drag handle (grip icon)
+                            let grip = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new("⠿")
+                                        .color(theme::TEXT_DISABLED)
+                                        .size(16.0),
+                                )
+                                .sense(egui::Sense::drag()),
+                            );
+
+                            // Handle drag start
+                            if grip.drag_started() {
+                                self.drag_state.dragging = true;
+                                self.drag_state.source_index = Some(i);
+                                self.drag_state.target_index = Some(i);
+                            }
+
+                            ui.add_space(4.0);
+
+                            // Slot number badge
+                            let badge_color = if is_active {
+                                theme::SUCCESS
+                            } else {
+                                theme::ACCENT
+                            };
+
                             ui.label(
                                 egui::RichText::new(format!("{:>2}", i + 1))
-                                    .color(if is_active {
-                                        theme::SUCCESS
-                                    } else {
-                                        theme::ACCENT_DIM
-                                    })
-                                    .monospace(),
+                                    .color(badge_color)
+                                    .monospace()
+                                    .strong(),
                             );
 
                             ui.separator();
 
+                            // Plugin info (clickable to select)
                             let resp = ui
                                 .vertical(|ui| {
                                     ui.label(
@@ -1095,16 +1720,39 @@ impl GuiWorkerApp {
                                             .color(theme::TEXT_PRIMARY)
                                             .strong(),
                                     );
-                                    let status_text = if is_active {
-                                        format!("{} • active", slot.vendor)
-                                    } else {
-                                        slot.vendor.clone()
-                                    };
-                                    ui.label(
-                                        egui::RichText::new(status_text)
-                                            .color(theme::TEXT_SECONDARY)
-                                            .small(),
-                                    );
+                                    ui.horizontal(|ui| {
+                                        let status_text = if is_active {
+                                            format!("{} • active", slot.vendor)
+                                        } else {
+                                            slot.vendor.clone()
+                                        };
+                                        ui.label(
+                                            egui::RichText::new(status_text)
+                                                .color(theme::TEXT_SECONDARY)
+                                                .small(),
+                                        );
+                                        if slot.bypassed {
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                egui::RichText::new("BYPASS")
+                                                    .color(theme::WARNING)
+                                                    .small()
+                                                    .strong(),
+                                            );
+                                        }
+                                        // Show current preset name if set and this is the active slot
+                                        if is_active {
+                                            if let Some(ref pname) = current_preset_name {
+                                                ui.add_space(4.0);
+                                                ui.label(
+                                                    egui::RichText::new(pname)
+                                                        .color(theme::ACCENT)
+                                                        .small()
+                                                        .strong(),
+                                                );
+                                            }
+                                        }
+                                    });
                                 })
                                 .response;
 
@@ -1119,13 +1767,18 @@ impl GuiWorkerApp {
                                         .add(
                                             egui::Button::new("✕").fill(egui::Color32::TRANSPARENT),
                                         )
+                                        .on_hover_text("Remove from rack")
                                         .clicked()
                                     {
                                         remove_index = Some(i);
                                     }
 
                                     let bypass_label = if slot.bypassed { "🔇" } else { "🔊" };
-                                    if ui.button(bypass_label).clicked() {
+                                    if ui
+                                        .button(bypass_label)
+                                        .on_hover_text("Toggle bypass")
+                                        .clicked()
+                                    {
                                         slot.bypassed = !slot.bypassed;
                                     }
 
@@ -1167,9 +1820,39 @@ impl GuiWorkerApp {
                         });
                     });
 
-                    ui.add_space(4.0);
+                    // Track which slot the cursor is hovering over during drag
+                    if is_dragging && frame_response.response.hovered() {
+                        self.drag_state.target_index = Some(i);
+                    }
+
+                    // Insertion marker below this slot (when dragging)
+                    if is_drag_target && drag_source.is_none_or(|s| s <= i) {
+                        ui.horizontal(|ui| {
+                            let rect = egui::Rect::from_min_size(
+                                ui.cursor().min,
+                                egui::vec2(ui.available_width(), 3.0),
+                            );
+                            ui.painter().rect_filled(rect, 2.0, theme::ACCENT);
+                            ui.allocate_space(egui::vec2(ui.available_width(), 3.0));
+                        });
+                    }
                 }
             });
+
+        // Handle drag release
+        if is_dragging {
+            let released = ui.input(|i| i.pointer.any_released());
+            if released {
+                if let (Some(src), Some(tgt)) =
+                    (self.drag_state.source_index, self.drag_state.target_index)
+                {
+                    if src != tgt {
+                        reorder_action = Some((src, tgt));
+                    }
+                }
+                self.drag_state = crate::gui::app::DragReorderState::default();
+            }
+        }
 
         // Handle selection change
         if new_selected != self.selected_slot {
@@ -1177,6 +1860,19 @@ impl GuiWorkerApp {
             self.send_action(GuiAction::SelectSlot {
                 index: new_selected,
             });
+        }
+
+        // Apply drag-and-drop reorder
+        if let Some((from, to)) = reorder_action {
+            let to_clamped = to.min(self.rack.len().saturating_sub(1));
+            self.send_action(GuiAction::ReorderRack {
+                from_index: from,
+                to_index: to_clamped,
+            });
+            // Update selected slot to follow the moved item
+            if self.selected_slot == Some(from) {
+                self.selected_slot = Some(to_clamped);
+            }
         }
 
         if let Some(idx) = remove_index {
@@ -1303,6 +1999,8 @@ mod tests {
                 buffer_size: 512,
                 device_name: "Built-in".into(),
                 running: true,
+                cpu_load_pct: 0.0,
+                xrun_count: 0,
             },
             audio_devices: vec![DeviceState {
                 name: "Built-in".into(),
@@ -1360,6 +2058,8 @@ mod tests {
                 buffer_size: 256,
                 device_name: "USB".into(),
                 running: true,
+                cpu_load_pct: 0.0,
+                xrun_count: 0,
             },
         });
         assert_eq!(app.audio_status.sample_rate, 48000);
@@ -1661,6 +2361,8 @@ mod tests {
             buffer_size: 256,
             device_name: "Test".into(),
             running: true,
+            cpu_load_pct: 0.0,
+            xrun_count: 0,
         };
         app.param_snapshots = vec![ParamSnapshot {
             id: 1,

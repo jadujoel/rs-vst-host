@@ -158,6 +158,20 @@ pub enum GuiAction {
     /// List available presets for the active plugin.
     ListPresets,
 
+    /// Reorder a rack slot via drag-and-drop.
+    ReorderRack {
+        /// Original slot index.
+        from_index: usize,
+        /// Destination slot index.
+        to_index: usize,
+    },
+
+    /// Undo the last action.
+    Undo,
+
+    /// Redo the last undone action.
+    Redo,
+
     /// GUI is shutting down normally (window closed).
     Shutdown,
 
@@ -280,6 +294,30 @@ pub enum SupervisorUpdate {
         user_presets: Vec<PresetInfo>,
     },
 
+    /// Routing graph state update.
+    RoutingGraphUpdated {
+        /// Serialized routing graph (JSON).
+        graph_json: String,
+    },
+
+    /// Undo/redo stack state update (for button enable/disable).
+    UndoState {
+        /// Whether undo is available.
+        can_undo: bool,
+        /// Whether redo is available.
+        can_redo: bool,
+        /// Description of the undo action.
+        undo_description: Option<String>,
+        /// Description of the redo action.
+        redo_description: Option<String>,
+    },
+
+    /// Current preset name changed.
+    PresetNameChanged {
+        /// The current preset name, or None if no preset is active.
+        name: Option<String>,
+    },
+
     /// Pong response to GUI's Ping.
     Pong,
 
@@ -338,6 +376,12 @@ pub struct AudioStatusState {
     pub device_name: String,
     /// Whether the audio engine is running.
     pub running: bool,
+    /// CPU load percentage (0..100), smoothed.
+    #[serde(default)]
+    pub cpu_load_pct: f32,
+    /// Total xrun (buffer underrun) count.
+    #[serde(default)]
+    pub xrun_count: u32,
 }
 
 /// Serializable audio device info.

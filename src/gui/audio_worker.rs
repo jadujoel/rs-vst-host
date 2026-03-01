@@ -995,6 +995,51 @@ fn handle_action(
                 user_presets,
             }]
         }
+
+        GuiAction::ReorderRack {
+            from_index,
+            to_index,
+        } => {
+            if from_index < rack.len() && to_index <= rack.len() {
+                let slot = rack.remove(from_index);
+                let to_clamped = to_index.min(rack.len());
+                rack.insert(to_clamped, slot);
+                *status_message = format!("↕ Moved slot {} → {}", from_index + 1, to_clamped + 1);
+                // Update selected slot to follow the moved item
+                if *selected_slot == Some(from_index) {
+                    *selected_slot = Some(to_clamped);
+                }
+                vec![
+                    SupervisorUpdate::RackUpdated {
+                        rack: rack.clone(),
+                        active_slot: backend.active_slot_index(),
+                        selected_slot: *selected_slot,
+                    },
+                    SupervisorUpdate::StatusMessage {
+                        message: status_message.clone(),
+                    },
+                ]
+            } else {
+                vec![]
+            }
+        }
+
+        GuiAction::Undo => {
+            // Undo is handled as a status message acknowledgement
+            // The actual undo logic runs in the GUI worker which holds the UndoStack
+            *status_message = "↩ Undo (handled by GUI)".into();
+            vec![SupervisorUpdate::StatusMessage {
+                message: status_message.clone(),
+            }]
+        }
+
+        GuiAction::Redo => {
+            // Redo is handled as a status message acknowledgement
+            *status_message = "↪ Redo (handled by GUI)".into();
+            vec![SupervisorUpdate::StatusMessage {
+                message: status_message.clone(),
+            }]
+        }
     }
 }
 
@@ -1052,6 +1097,8 @@ fn audio_status_state(status: &AudioStatus) -> AudioStatusState {
         buffer_size: status.buffer_size,
         device_name: status.device_name.clone(),
         running: status.running,
+        cpu_load_pct: 0.0,
+        xrun_count: 0,
     }
 }
 
@@ -1787,7 +1834,9 @@ mod tests {
             &[],
         );
         assert_eq!(result.len(), 1);
-        assert!(matches!(&result[0], SupervisorUpdate::StatusMessage { message } if message.contains("Preset load failed")));
+        assert!(
+            matches!(&result[0], SupervisorUpdate::StatusMessage { message } if message.contains("Preset load failed"))
+        );
     }
 
     #[test]

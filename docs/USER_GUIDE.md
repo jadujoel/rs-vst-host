@@ -491,10 +491,10 @@ Plugin rack slots can be reordered by dragging:
 
 ### Performance Monitoring
 
-The host includes infrastructure for monitoring audio performance:
+The host includes real-time performance monitoring displayed in the transport bar:
 
-- **Xrun detection** — Tracks buffer underruns by analyzing audio callback timing
-- **CPU load** — Measures plugin processing time as a percentage of the audio budget with exponential moving average smoothing
+- **CPU Load** — Shown as a percentage in the transport bar, measures plugin processing time relative to the audio budget with exponential moving average smoothing
+- **Xrun Count** — Displayed next to CPU load, tracks buffer underruns by analyzing audio callback timing
 - **Real-time thread priority** — Automatically sets audio thread to high priority (macOS: `QOS_CLASS_USER_INTERACTIVE`, Linux: `SCHED_FIFO`)
 
 ### Building & Distribution
