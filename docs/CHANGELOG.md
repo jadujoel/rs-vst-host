@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.5] - 2026-03-02
+
+### Fixed — CI Workflow & Rust 1.93 Clippy Cleanup
+
+**Fix: `dtolnay/rust-action` does not exist (v0.26.5):**
+GitHub Actions CI failed with "Unable to resolve action dtolnay/rust-action, repository not found". All 5 occurrences of `dtolnay/rust-action/setup@v1` replaced with the correct `dtolnay/rust-toolchain@stable`. Affected jobs: check, test, bench, fmt, bundle-macos.
+
+**Fix: ~60 clippy warnings from Rust 1.93 (v0.26.5):**
+Updated local Rust toolchain from 1.86.0 to 1.93.1 to match CI. Resolved all clippy warnings introduced by the newer compiler:
+- `collapsible-if`: Collapsed nested `if` blocks across ~20 locations (app.rs, engine.rs, instance.rs, worker.rs, etc.)
+- `derivable-impls`: Replaced manual `Default` impls with `#[derive(Default)]` where applicable
+- `manual-is-multiple-of`: Replaced `x % n == 0` with `.is_multiple_of()`
+- `unnecessary-cast`: Removed redundant `as i32` casts in com.rs
+- `missing-safety-doc`: Added `# Safety` docs to unsafe functions in com.rs
+- `question-mark`: Used `?` operator in instance.rs
+- `unnecessary-map-or`: Replaced `map_or(true, ...)` with `is_none_or(...)` in app.rs
+- `mut-from-ref`: Suppressed in shm.rs (interior mutability through raw pointers is intentional)
+- `cloned-ref-to-slice-refs`: Replaced `&[tmp.clone()]` with `std::slice::from_ref(&tmp)` in scanner.rs
+- `function-casts-as-integer`: Fixed function pointer casts
+- Dead code: Added `#![allow(dead_code)]` on future-use modules (delay_line, graph_engine, perf, graph) and per-item allows on GUI fields
+
+**Fix: CI restricted to macOS-only (v0.26.5):**
+Codebase uses Unix-specific APIs (UnixStream, POSIX shared memory, sigsetjmp/siglongjmp signal sandbox, CoreFoundation). Linux CI failed on missing `siglongjmp`/`sigsetjmp`/`sigjmp_buf` types; Windows CI failed on `std::os::unix` and POSIX APIs. Restricted check/test/bench jobs to `macos-latest` only. Formatting job remains platform-independent.
+
+**Results:** 1714 tests passing (913 lib + 801 bin), 0 failures, no benchmark regressions. CI fully green (all 5 jobs pass).
+
 ## [0.26.4] - 2026-03-02
 
 ### Fixed — CI Workflow Action Reference

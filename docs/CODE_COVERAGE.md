@@ -1,14 +1,15 @@
 # Code Coverage Report
 
-Last updated: 2026-03-02 (v0.26.4 — CI Workflow Fix).
+Last updated: 2026-03-02 (v0.26.5 — CI Workflow Fix & Rust 1.93 Clippy Cleanup).
 
 ## Summary
 
 - **Total tests:** 1714 (913 lib + 801 bin)
 - **All passing:** ✅ (0 failures)
-- **Build warnings:** 0 (dead code warnings from unused graph/perf functions — expected until wired into runtime)
+- **Build warnings:** 0 (clippy clean on Rust 1.93.1, dead code allows on future-use modules)
 - **Test stability:** Verified
-- **Last test run:** 2026-03-02 (1714 tests passing, 0 failures, 0 ignored) — CI Workflow Fix
+- **Last test run:** 2026-03-02 (1714 tests passing, 0 failures, 0 ignored) — CI fully green
+- **Rust toolchain:** 1.93.1 (stable)
 - **Miri coverage:** 21 miri_tests pass (all migrated to vst3-rs types)
 - **ASan coverage:** 671 tests pass under AddressSanitizer (16 skipped: signal/malloc_zone/sigaction conflicts)
 - **E2E coverage:** 39 tests pass with real FabFilter VST3 plugins (0 ignored — 6 crash-resilience tests use subprocess isolation, 10 multi-plugin lifecycle tests)

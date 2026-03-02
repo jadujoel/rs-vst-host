@@ -4,6 +4,16 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.26.5] - 2026-03-02 — CI Workflow Fix & Rust 1.93 Clippy Cleanup (no perf impact)
+
+### Summary
+
+Fixed GitHub Actions CI workflow, resolved ~60 clippy warnings for Rust 1.93 compatibility, restricted CI to macOS-only. All changes are code style/lint fixes and CI configuration — no algorithmic or hot-path changes.
+
+**Changes to hot paths:** None. Clippy auto-fixes (collapsible-if, derivable-impls, manual-is-multiple-of) are purely cosmetic refactors that produce identical machine code. The `mut_from_ref` and `cloned-ref-to-slice-refs` fixes in shm.rs/scanner.rs are lint suppressions or equivalent transformations with no runtime impact.
+
+**No benchmark regressions.**
+
 ## [0.26.4] - 2026-03-02 — CI Workflow Fix (no perf impact)
 
 ### Summary
