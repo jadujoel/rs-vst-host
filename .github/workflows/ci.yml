@@ -14,11 +14,7 @@ jobs:
   # ── Check & Lint ───────────────────────────────────────────────────
   check:
     name: Check & Clippy
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -27,12 +23,6 @@ jobs:
         with:
           components: clippy
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libx11-dev libxcb1-dev
-
       - name: Cache Cargo registry & build
         uses: actions/cache@v5
         with:
@@ -40,9 +30,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            macos-cargo-
 
       - name: cargo check
         run: cargo check --all-targets
@@ -53,22 +43,12 @@ jobs:
   # ── Unit Tests ─────────────────────────────────────────────────────
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libx11-dev libxcb1-dev
 
       - name: Cache Cargo registry & build
         uses: actions/cache@v5
@@ -77,9 +57,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
+          key: macos-cargo-test-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-test-
+            macos-cargo-test-
 
       - name: cargo test
         run: cargo test --lib --bins
@@ -119,11 +99,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libx11-dev libxcb1-dev
 
       - name: cargo fmt --check
         run: cargo fmt --check

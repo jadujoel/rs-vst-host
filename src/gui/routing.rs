@@ -20,6 +20,7 @@ const CURVE_TENSION: f32 = 60.0;
 
 /// State for an in-progress drag connection.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DragConnection {
     /// The source node ID.
     pub from_node: NodeId,
@@ -300,7 +301,6 @@ fn bezier_points(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::graph::AudioGraph;
 
     #[test]
     fn test_node_center_computation() {

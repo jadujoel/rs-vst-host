@@ -85,6 +85,7 @@ pub struct DragReorderState {
     /// The target insertion index (where the slot will be dropped).
     pub target_index: Option<usize>,
     /// Current drag offset from the original position.
+    #[allow(dead_code)]
     pub drag_offset: f32,
 }
 
@@ -2382,7 +2383,7 @@ impl HostApp {
                         && drag_source != Some(i);
 
                     // Insertion marker above this slot (when dragging)
-                    if is_drag_target && drag_source.map_or(true, |s| s > i) {
+                    if is_drag_target && drag_source.is_none_or(|s| s > i) {
                         ui.horizontal(|ui| {
                             let rect = egui::Rect::from_min_size(
                                 ui.cursor().min,
@@ -2605,7 +2606,7 @@ impl HostApp {
                     }
 
                     // Insertion marker below this slot (when dragging)
-                    if is_drag_target && drag_source.map_or(true, |s| s <= i) {
+                    if is_drag_target && drag_source.is_none_or(|s| s <= i) {
                         ui.horizontal(|ui| {
                             let rect = egui::Rect::from_min_size(
                                 ui.cursor().min,

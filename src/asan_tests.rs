@@ -31,10 +31,10 @@
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use crate::vst3::com::{
-        IEventList, IParameterChanges, K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT,
-        ProcessContext as VstProcessContext, event_as_note_off, event_as_note_on,
-        make_note_off_event, make_note_on_event,
+        IEventList, IParameterChanges, K_NOTE_ON_EVENT, ProcessContext as VstProcessContext,
+        event_as_note_off, event_as_note_on, make_note_off_event, make_note_on_event,
     };
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicU32, Ordering};

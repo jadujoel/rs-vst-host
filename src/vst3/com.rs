@@ -196,15 +196,15 @@ pub const K_NOTE_OFF_EVENT: u16 = EventTypes_::kNoteOffEvent as u16;
 pub const K_IS_LIVE: u16 = Event_::EventFlags_::kIsLive as u16;
 
 /// Parameter flag: can automate.
-pub const K_CAN_AUTOMATE: i32 = ParameterInfo_::ParameterFlags_::kCanAutomate as i32;
+pub const K_CAN_AUTOMATE: i32 = ParameterInfo_::ParameterFlags_::kCanAutomate;
 
 /// Parameter flag: read-only.
 #[allow(dead_code)]
-pub const K_IS_READ_ONLY: i32 = ParameterInfo_::ParameterFlags_::kIsReadOnly as i32;
+pub const K_IS_READ_ONLY: i32 = ParameterInfo_::ParameterFlags_::kIsReadOnly;
 
 /// Parameter flag: is bypass.
 #[allow(dead_code)]
-pub const K_IS_BYPASS: i32 = ParameterInfo_::ParameterFlags_::kIsBypass as i32;
+pub const K_IS_BYPASS: i32 = ParameterInfo_::ParameterFlags_::kIsBypass;
 
 /// Result code: not implemented.
 pub const K_NOT_IMPLEMENTED: i32 = kNotImplemented;
@@ -324,11 +324,19 @@ pub fn make_note_off_event(
 }
 
 /// Read a NoteOnEvent from an Event (unchecked).
+///
+/// # Safety
+///
+/// The caller must ensure `event.r#type` is `K_NOTE_ON_EVENT` before calling.
 pub unsafe fn event_as_note_on(event: &Event) -> &NoteOnEvent {
     unsafe { &event.__field0.noteOn }
 }
 
 /// Read a NoteOffEvent from an Event (unchecked).
+///
+/// # Safety
+///
+/// The caller must ensure `event.r#type` is `K_NOTE_OFF_EVENT` before calling.
 pub unsafe fn event_as_note_off(event: &Event) -> &NoteOffEvent {
     unsafe { &event.__field0.noteOff }
 }

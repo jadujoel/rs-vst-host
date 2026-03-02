@@ -6,7 +6,6 @@
 use divan::Bencher;
 use rs_vst_host::midi::device::RawMidiMessage;
 use rs_vst_host::midi::translate::{midi_to_vst3_event, translate_midi_batch};
-use rs_vst_host::vst3::com::Event;
 
 fn main() {
     divan::main();

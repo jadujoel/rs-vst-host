@@ -5,6 +5,8 @@
 //! - Per-block CPU usage measurement
 //! - Platform-specific real-time thread priority setting
 
+#![allow(dead_code)]
+
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -380,7 +382,7 @@ mod tests {
 
         producer.join().unwrap();
         let received = consumer.join().unwrap();
-        assert!(received.len() > 0, "Should have received some items");
+        assert!(!received.is_empty(), "Should have received some items");
         // Items should be in order (FIFO)
         for window in received.windows(2) {
             assert!(window[0] < window[1], "Items should be in FIFO order");

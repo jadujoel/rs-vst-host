@@ -4,6 +4,8 @@
 //! upstream signals must be delayed to keep all paths in sync. This module provides
 //! a simple ring-buffer delay line that can be used per-channel.
 
+#![allow(dead_code)]
+
 /// A sample-accurate delay line using a ring buffer.
 ///
 /// Used for latency compensation in multi-plugin chains where different

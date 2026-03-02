@@ -2,7 +2,7 @@
 
 use divan::Bencher;
 use rs_vst_host::gui::app::{PluginSlot, TransportState};
-use rs_vst_host::gui::session::{Session, SlotSnapshot};
+use rs_vst_host::gui::session::Session;
 use std::path::PathBuf;
 
 fn main() {

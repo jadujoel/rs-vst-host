@@ -403,16 +403,14 @@ impl Vst3Instance {
             "All bus arrangements rejected — using plugin defaults"
         );
         // Just activate the buses with whatever the plugin defaults to
-        if let Err(e) = self.set_bus_arrangements(
+        self.set_bus_arrangements(
             if desired_input_channels > 0 {
                 SPEAKER_STEREO
             } else {
                 0
             },
             SPEAKER_STEREO,
-        ) {
-            return Err(e);
-        }
+        )?;
         Ok(desired_output_channels)
     }
 
@@ -1287,9 +1285,8 @@ impl Vst3Instance {
                     debug!(plugin = %self.name, "Plugin does not provide an editor view");
                     return None;
                 }
-                let view = view_ptr as *mut IPlugView;
                 debug!(plugin = %self.name, "IPlugView created");
-                Some(view)
+                Some(view_ptr)
             }
             SandboxResult::Crashed(crash) => {
                 warn!(

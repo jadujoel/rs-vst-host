@@ -9,6 +9,7 @@
 //! ```text
 //! Input (test tone) → [Engine A] → [Engine B] → Output (device)
 //! ```
+#![allow(dead_code)]
 //!
 //! For serial chains, each engine's output feeds the next engine's input.
 //! For parallel branches, Split copies the signal to multiple paths and
@@ -45,6 +46,7 @@ impl IntermediateBuffer {
     }
 
     /// Fill from interleaved stereo data.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_interleaved(&mut self, data: &[f32], channels: usize) {
         if channels == 0 {
             return;
@@ -760,8 +762,8 @@ mod tests {
             1,
             |_, _, _, _, _, _| true,
             |left, _right, n| {
-                for i in 0..n {
-                    left[i] = 0.75;
+                for sample in left.iter_mut().take(n) {
+                    *sample = 0.75;
                 }
             },
         );

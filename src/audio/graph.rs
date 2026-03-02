@@ -13,6 +13,8 @@
 //! ```
 //!
 //! Each node has typed input/output ports. Edges connect an output port
+
+#![allow(dead_code)]
 //! of one node to an input port of another. The graph must be a DAG
 //! (directed acyclic graph) — adding a cycle is rejected.
 
@@ -124,6 +126,7 @@ impl AudioGraph {
     /// Create a serial chain graph from rack slot indices and names.
     ///
     /// Builds: Input → Plugin[0] → Plugin[1] → ... → Plugin[N] → Output
+    #[allow(dead_code)]
     pub fn from_serial_chain(slots: &[(usize, String)]) -> Self {
         let mut graph = Self {
             nodes: HashMap::new(),

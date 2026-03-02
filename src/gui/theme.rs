@@ -283,6 +283,7 @@ pub fn input_frame() -> egui::Frame {
 }
 
 /// Return an accent-styled stroke for highlighted elements.
+#[allow(dead_code)]
 pub fn accent_stroke() -> Stroke {
     Stroke::new(1.5, ACCENT)
 }
@@ -461,6 +462,7 @@ mod tests {
 
     #[test]
     fn test_card_shadow_exists() {
-        assert!(CARD_SHADOW.blur > 0);
+        let blur = CARD_SHADOW.blur;
+        assert!(blur > 0);
     }
 }
