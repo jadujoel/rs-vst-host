@@ -296,7 +296,7 @@ fn install_handlers_impl() -> Vec<(libc::c_int, libc::sigaction)> {
         unsafe {
             let mut old_action: libc::sigaction = std::mem::zeroed();
             let mut new_action: libc::sigaction = std::mem::zeroed();
-            new_action.sa_sigaction = sandbox_signal_handler as libc::sighandler_t;
+            new_action.sa_sigaction = sandbox_signal_handler as *const () as libc::sighandler_t;
             // SA_NODEFER: don't block the signal during handler execution.
             // This ensures siglongjmp-based recovery works reliably even on
             // ARM64 macOS where PAC-related faults may interact with signal

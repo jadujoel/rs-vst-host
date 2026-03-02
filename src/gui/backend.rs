@@ -747,10 +747,10 @@ impl HostBackend {
             }
             return Vec::new();
         }
-        if let Some(ref active) = self.active {
-            if let Ok(eng) = active.engine.lock() {
-                return eng.get_component_state();
-            }
+        if let Some(ref active) = self.active
+            && let Ok(eng) = active.engine.lock()
+        {
+            return eng.get_component_state();
         }
         Vec::new()
     }
@@ -764,10 +764,10 @@ impl HostBackend {
             // Sandboxed mode doesn't support separate controller state yet
             return Vec::new();
         }
-        if let Some(ref active) = self.active {
-            if let Ok(eng) = active.engine.lock() {
-                return eng.get_controller_state();
-            }
+        if let Some(ref active) = self.active
+            && let Ok(eng) = active.engine.lock()
+        {
+            return eng.get_controller_state();
         }
         Vec::new()
     }
@@ -785,10 +785,10 @@ impl HostBackend {
             }
             return false;
         }
-        if let Some(ref active) = self.active {
-            if let Ok(mut eng) = active.engine.lock() {
-                return eng.set_component_state(data);
-            }
+        if let Some(ref active) = self.active
+            && let Ok(mut eng) = active.engine.lock()
+        {
+            return eng.set_component_state(data);
         }
         false
     }
@@ -802,10 +802,10 @@ impl HostBackend {
             // Sandboxed mode uses cached defaults — no live refresh.
             return;
         }
-        if let Some(ref mut active) = self.active {
-            if let Some(ref mut params) = active.params {
-                params.refresh_values();
-            }
+        if let Some(ref mut active) = self.active
+            && let Some(ref mut params) = active.params
+        {
+            params.refresh_values();
         }
     }
 
@@ -819,10 +819,10 @@ impl HostBackend {
         if self.sandboxed.is_some() {
             return false;
         }
-        if let Some(ref active) = self.active {
-            if let Ok(mut eng) = active.engine.lock() {
-                return eng.set_controller_state(data);
-            }
+        if let Some(ref active) = self.active
+            && let Ok(mut eng) = active.engine.lock()
+        {
+            return eng.set_controller_state(data);
         }
         false
     }
@@ -893,25 +893,25 @@ impl HostBackend {
     /// When true, the engine is outputting silence and the plugin should
     /// be deactivated by the GUI to clean up resources.
     pub fn is_crashed(&self) -> bool {
-        if let Some(ref sandboxed) = self.sandboxed {
-            if let Ok(proc) = sandboxed.process.lock() {
-                return proc.is_crashed();
-            }
+        if let Some(ref sandboxed) = self.sandboxed
+            && let Ok(proc) = sandboxed.process.lock()
+        {
+            return proc.is_crashed();
         }
-        if let Some(ref active) = self.active {
-            if let Ok(eng) = active.engine.lock() {
-                return eng.is_crashed();
-            }
+        if let Some(ref active) = self.active
+            && let Ok(eng) = active.engine.lock()
+        {
+            return eng.is_crashed();
         }
         false
     }
 
     /// Set the test tone enabled/disabled on the active engine.
     pub fn set_tone_enabled(&self, enabled: bool) {
-        if let Some(ref active) = self.active {
-            if let Ok(mut eng) = active.engine.lock() {
-                eng.tone().enabled = enabled;
-            }
+        if let Some(ref active) = self.active
+            && let Ok(mut eng) = active.engine.lock()
+        {
+            eng.tone().enabled = enabled;
         }
     }
 
@@ -981,43 +981,43 @@ impl HostBackend {
 
     /// Update the audio engine's tempo.
     pub fn set_tempo(&self, bpm: f64) {
-        if let Some(ref sandboxed) = self.sandboxed {
-            if let Ok(mut proc) = sandboxed.process.lock() {
-                proc.set_tempo(bpm);
-            }
+        if let Some(ref sandboxed) = self.sandboxed
+            && let Ok(mut proc) = sandboxed.process.lock()
+        {
+            proc.set_tempo(bpm);
         }
-        if let Some(ref active) = self.active {
-            if let Ok(mut eng) = active.engine.lock() {
-                eng.set_tempo(bpm);
-            }
+        if let Some(ref active) = self.active
+            && let Ok(mut eng) = active.engine.lock()
+        {
+            eng.set_tempo(bpm);
         }
     }
 
     /// Update the audio engine's playing state.
     pub fn set_playing(&self, playing: bool) {
-        if let Some(ref sandboxed) = self.sandboxed {
-            if let Ok(mut proc) = sandboxed.process.lock() {
-                proc.set_playing(playing);
-            }
+        if let Some(ref sandboxed) = self.sandboxed
+            && let Ok(mut proc) = sandboxed.process.lock()
+        {
+            proc.set_playing(playing);
         }
-        if let Some(ref active) = self.active {
-            if let Ok(mut eng) = active.engine.lock() {
-                eng.set_playing(playing);
-            }
+        if let Some(ref active) = self.active
+            && let Ok(mut eng) = active.engine.lock()
+        {
+            eng.set_playing(playing);
         }
     }
 
     /// Update the audio engine's time signature.
     pub fn set_time_signature(&self, numerator: u32, denominator: u32) {
-        if let Some(ref sandboxed) = self.sandboxed {
-            if let Ok(mut proc) = sandboxed.process.lock() {
-                proc.set_time_signature(numerator, denominator);
-            }
+        if let Some(ref sandboxed) = self.sandboxed
+            && let Ok(mut proc) = sandboxed.process.lock()
+        {
+            proc.set_time_signature(numerator, denominator);
         }
-        if let Some(ref active) = self.active {
-            if let Ok(mut eng) = active.engine.lock() {
-                eng.set_time_signature(numerator, denominator);
-            }
+        if let Some(ref active) = self.active
+            && let Ok(mut eng) = active.engine.lock()
+        {
+            eng.set_time_signature(numerator, denominator);
         }
     }
 

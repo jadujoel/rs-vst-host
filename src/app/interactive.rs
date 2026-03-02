@@ -266,16 +266,16 @@ fn poll_handler_changes(state: &InteractiveState) {
         let changes = HostComponentHandler::drain_changes(state.component_handler);
         if !changes.is_empty() {
             for change in &changes {
-                if let Some(params) = &state.params {
-                    if let Some(param) = params.get(change.id) {
-                        let display = params
-                            .value_to_string(change.id, change.value)
-                            .unwrap_or_else(|| format!("{:.4}", change.value));
-                        println!(
-                            "  [plugin] {} = {} [normalized: {:.4}]",
-                            param.title, display, change.value
-                        );
-                    }
+                if let Some(params) = &state.params
+                    && let Some(param) = params.get(change.id)
+                {
+                    let display = params
+                        .value_to_string(change.id, change.value)
+                        .unwrap_or_else(|| format!("{:.4}", change.value));
+                    println!(
+                        "  [plugin] {} = {} [normalized: {:.4}]",
+                        param.title, display, change.value
+                    );
                 }
             }
         }

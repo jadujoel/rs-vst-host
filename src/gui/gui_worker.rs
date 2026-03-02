@@ -1777,16 +1777,14 @@ impl GuiWorkerApp {
                                             );
                                         }
                                         // Show current preset name if set and this is the active slot
-                                        if is_active {
-                                            if let Some(ref pname) = current_preset_name {
-                                                ui.add_space(4.0);
-                                                ui.label(
-                                                    egui::RichText::new(pname)
-                                                        .color(theme::ACCENT)
-                                                        .small()
-                                                        .strong(),
-                                                );
-                                            }
+                                        if is_active && let Some(ref pname) = current_preset_name {
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                egui::RichText::new(pname)
+                                                    .color(theme::ACCENT)
+                                                    .small()
+                                                    .strong(),
+                                            );
                                         }
                                     });
                                 })
@@ -1886,10 +1884,9 @@ impl GuiWorkerApp {
             if released {
                 if let (Some(src), Some(tgt)) =
                     (self.drag_state.source_index, self.drag_state.target_index)
+                    && src != tgt
                 {
-                    if src != tgt {
-                        reorder_action = Some((src, tgt));
-                    }
+                    reorder_action = Some((src, tgt));
                 }
                 self.drag_state = crate::gui::app::DragReorderState::default();
             }

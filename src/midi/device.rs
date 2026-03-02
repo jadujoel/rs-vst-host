@@ -51,10 +51,10 @@ impl MidiDevice {
         let name_lower = name.to_lowercase();
         let ports = self.midi_in.ports();
         for port in &ports {
-            if let Ok(port_name) = self.midi_in.port_name(port) {
-                if port_name.to_lowercase().contains(&name_lower) {
-                    return Some(port.clone());
-                }
+            if let Ok(port_name) = self.midi_in.port_name(port)
+                && port_name.to_lowercase().contains(&name_lower)
+            {
+                return Some(port.clone());
             }
         }
         None

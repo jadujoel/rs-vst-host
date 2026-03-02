@@ -220,6 +220,7 @@ impl ShmAudioBuffer {
     ///
     /// # Safety
     /// Caller must ensure exclusive write access (via ready_flag protocol).
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn input_channel_mut(&self, channel: usize) -> Option<&mut [f32]> {
         if channel >= self.input_channels {
             return None;
@@ -233,6 +234,7 @@ impl ShmAudioBuffer {
     ///
     /// # Safety
     /// Caller must ensure exclusive write access (via ready_flag protocol).
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn output_channel_mut(&self, channel: usize) -> Option<&mut [f32]> {
         if channel >= self.output_channels {
             return None;
@@ -336,10 +338,10 @@ impl Drop for ShmAudioBuffer {
             if !self.ptr.is_null() {
                 libc::munmap(self.ptr as *mut libc::c_void, self.size);
             }
-            if self.is_owner {
-                if let Ok(c_name) = CString::new(self.name.as_str()) {
-                    libc::shm_unlink(c_name.as_ptr());
-                }
+            if self.is_owner
+                && let Ok(c_name) = CString::new(self.name.as_str())
+            {
+                libc::shm_unlink(c_name.as_ptr());
             }
         }
     }

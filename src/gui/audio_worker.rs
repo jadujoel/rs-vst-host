@@ -310,20 +310,20 @@ fn run_audio_loop(
         }
 
         // 4. Periodically refresh parameters for active plugin
-        if state.backend.is_active() {
-            if let Some(idx) = state.selected_slot {
-                let is_active = state.backend.active_slot_index() == Some(idx);
-                if is_active {
-                    let new_snapshots = state.backend.active_param_snapshots();
-                    if new_snapshots != state.param_snapshots {
-                        state.param_snapshots = new_snapshots;
-                        let _ = send_update(
-                            stream,
-                            &SupervisorUpdate::ParamsUpdated {
-                                snapshots: state.param_snapshots.clone(),
-                            },
-                        );
-                    }
+        if state.backend.is_active()
+            && let Some(idx) = state.selected_slot
+        {
+            let is_active = state.backend.active_slot_index() == Some(idx);
+            if is_active {
+                let new_snapshots = state.backend.active_param_snapshots();
+                if new_snapshots != state.param_snapshots {
+                    state.param_snapshots = new_snapshots;
+                    let _ = send_update(
+                        stream,
+                        &SupervisorUpdate::ParamsUpdated {
+                            snapshots: state.param_snapshots.clone(),
+                        },
+                    );
                 }
             }
         }
@@ -411,42 +411,42 @@ fn handle_action(
             module_index,
             class_index,
         } => {
-            if let Some(module) = plugin_modules.get(module_index) {
-                if let Some(class) = module.classes.get(class_index) {
-                    let vendor = class
-                        .vendor
-                        .as_deref()
-                        .or(module.factory_vendor.as_deref())
-                        .unwrap_or("Unknown")
-                        .to_string();
+            if let Some(module) = plugin_modules.get(module_index)
+                && let Some(class) = module.classes.get(class_index)
+            {
+                let vendor = class
+                    .vendor
+                    .as_deref()
+                    .or(module.factory_vendor.as_deref())
+                    .unwrap_or("Unknown")
+                    .to_string();
 
-                    let slot = RackSlotState {
-                        name: class.name.clone(),
-                        vendor,
-                        category: class.category.clone(),
-                        path: module.path.clone(),
-                        cid: class.cid,
-                        bypassed: false,
-                        param_cache: Vec::new(),
-                        staged_changes: Vec::new(),
-                        component_state: None,
-                        controller_state: None,
-                    };
+                let slot = RackSlotState {
+                    name: class.name.clone(),
+                    vendor,
+                    category: class.category.clone(),
+                    path: module.path.clone(),
+                    cid: class.cid,
+                    bypassed: false,
+                    param_cache: Vec::new(),
+                    staged_changes: Vec::new(),
+                    component_state: None,
+                    controller_state: None,
+                };
 
-                    *status_message = format!("Added '{}' to the rack.", slot.name);
-                    rack.push(slot);
+                *status_message = format!("Added '{}' to the rack.", slot.name);
+                rack.push(slot);
 
-                    return vec![
-                        SupervisorUpdate::RackUpdated {
-                            rack: rack.clone(),
-                            active_slot: backend.active_slot_index(),
-                            selected_slot: *selected_slot,
-                        },
-                        SupervisorUpdate::StatusMessage {
-                            message: status_message.clone(),
-                        },
-                    ];
-                }
+                return vec![
+                    SupervisorUpdate::RackUpdated {
+                        rack: rack.clone(),
+                        active_slot: backend.active_slot_index(),
+                        selected_slot: *selected_slot,
+                    },
+                    SupervisorUpdate::StatusMessage {
+                        message: status_message.clone(),
+                    },
+                ];
             }
             vec![SupervisorUpdate::StatusMessage {
                 message: "Invalid module/class index.".into(),
@@ -466,10 +466,10 @@ fn handle_action(
                 if *selected_slot == Some(index) {
                     *selected_slot = None;
                     param_snapshots.clear();
-                } else if let Some(sel) = *selected_slot {
-                    if sel > index {
-                        *selected_slot = Some(sel - 1);
-                    }
+                } else if let Some(sel) = *selected_slot
+                    && sel > index
+                {
+                    *selected_slot = Some(sel - 1);
                 }
                 *status_message = format!("Removed '{}' from the rack.", name);
             }
@@ -503,10 +503,10 @@ fn handle_action(
 
                         // Apply saved plugin state from session before staged changes
                         let mut state_restored = false;
-                        if let Some(comp_data) = rack[index].component_state.as_ref() {
-                            if backend.set_component_state(comp_data) {
-                                state_restored = true;
-                            }
+                        if let Some(comp_data) = rack[index].component_state.as_ref()
+                            && backend.set_component_state(comp_data)
+                        {
+                            state_restored = true;
                         }
                         if let Some(ctrl_data) = rack[index].controller_state.as_ref() {
                             backend.set_controller_state(ctrl_data);
@@ -573,10 +573,10 @@ fn handle_action(
 
         GuiAction::DeactivateSlot => {
             // Cache params before deactivating
-            if let Some(active_idx) = backend.active_slot_index() {
-                if let Some(slot) = rack.get_mut(active_idx) {
-                    slot.param_cache = param_snapshots.clone();
-                }
+            if let Some(active_idx) = backend.active_slot_index()
+                && let Some(slot) = rack.get_mut(active_idx)
+            {
+                slot.param_cache = param_snapshots.clone();
             }
 
             let tainted_before = backend.tainted_paths.len();
@@ -719,16 +719,16 @@ fn handle_action(
 
         GuiAction::SaveSession { path } => {
             // Capture live plugin state before saving
-            if let Some(sel) = *selected_slot {
-                if sel < rack.len() {
-                    let comp_state = backend.get_component_state();
-                    let ctrl_state = backend.get_controller_state();
-                    if !comp_state.is_empty() {
-                        rack[sel].component_state = Some(comp_state);
-                    }
-                    if !ctrl_state.is_empty() {
-                        rack[sel].controller_state = Some(ctrl_state);
-                    }
+            if let Some(sel) = *selected_slot
+                && sel < rack.len()
+            {
+                let comp_state = backend.get_component_state();
+                let ctrl_state = backend.get_controller_state();
+                if !comp_state.is_empty() {
+                    rack[sel].component_state = Some(comp_state);
+                }
+                if !ctrl_state.is_empty() {
+                    rack[sel].controller_state = Some(ctrl_state);
                 }
             }
 

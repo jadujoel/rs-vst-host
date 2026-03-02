@@ -626,10 +626,10 @@ impl AudioGraph {
     /// index decremented by 1.
     pub fn adjust_slot_indices_after_remove(&mut self, removed_index: usize) {
         for node in self.nodes.values_mut() {
-            if let NodeKind::Plugin { ref mut slot_index } = node.kind {
-                if *slot_index > removed_index {
-                    *slot_index -= 1;
-                }
+            if let NodeKind::Plugin { ref mut slot_index } = node.kind
+                && *slot_index > removed_index
+            {
+                *slot_index -= 1;
             }
         }
     }

@@ -242,7 +242,7 @@ mod tests {
         let _ = std::fs::create_dir_all(tmp.join("Alpha.vst3"));
         let _ = std::fs::create_dir_all(tmp.join("Middle.vst3"));
 
-        let bundles = discover_bundles(&[tmp.clone()]);
+        let bundles = discover_bundles(std::slice::from_ref(&tmp));
         let names: Vec<_> = bundles
             .iter()
             .filter_map(|b| b.file_name().map(|n| n.to_string_lossy().to_string()))

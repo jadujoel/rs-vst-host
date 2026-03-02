@@ -209,7 +209,7 @@ mod tests {
 
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = abort_handler as libc::sighandler_t;
+            action.sa_sigaction = abort_handler as *const () as libc::sighandler_t;
             action.sa_flags = libc::SA_NODEFER; // Don't block SIGABRT during handler
             libc::sigemptyset(&mut action.sa_mask);
             libc::sigaction(libc::SIGABRT, &action, std::ptr::null_mut());
@@ -939,10 +939,10 @@ mod tests {
         assert!(bundles.len() >= 2);
         let mut modules: Vec<PluginModuleInfo> = Vec::new();
         for bundle_path in &bundles {
-            if let Ok(module) = Vst3Module::load(bundle_path) {
-                if let Ok(info) = module.get_info() {
-                    modules.push(info);
-                }
+            if let Ok(module) = Vst3Module::load(bundle_path)
+                && let Ok(info) = module.get_info()
+            {
+                modules.push(info);
             }
         }
         assert!(modules.len() >= 2);
@@ -1143,10 +1143,10 @@ mod tests {
         }
 
         fn process_block(&mut self, buffers: &mut crate::vst3::process::ProcessBuffers) -> bool {
-            if let Some(ref mut inst) = self.instance {
-                if self.active {
-                    return unsafe { inst.process(buffers.process_data_ptr()) };
-                }
+            if let Some(ref mut inst) = self.instance
+                && self.active
+            {
+                return unsafe { inst.process(buffers.process_data_ptr()) };
             }
             false
         }

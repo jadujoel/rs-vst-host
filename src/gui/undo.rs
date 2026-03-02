@@ -346,45 +346,40 @@ impl UndoStack {
             old_value,
             ..
         } = &action
+            && let Some(last) = self.undo_stack.last_mut()
+            && let UndoableAction::SetParameter {
+                slot_index: last_slot,
+                param_id: last_param,
+                old_value: last_old,
+                ..
+            } = &last.action
         {
-            if let Some(last) = self.undo_stack.last_mut() {
-                if let UndoableAction::SetParameter {
-                    slot_index: last_slot,
-                    param_id: last_param,
-                    old_value: last_old,
-                    ..
-                } = &last.action
-                {
-                    let elapsed = now.duration_since(last.timestamp).as_millis() as u64;
-                    if *last_slot == *slot_index
-                        && *last_param == *param_id
-                        && elapsed <= self.coalesce_window_ms
-                    {
-                        // Coalesce: keep the original old_value, update new_value and timestamp
-                        let preserved_old = *last_old;
-                        let _ = old_value; // suppress unused warning
-                        last.action = UndoableAction::SetParameter {
-                            slot_index: *slot_index,
-                            param_id: *param_id,
-                            old_value: preserved_old,
-                            new_value: match &action {
-                                UndoableAction::SetParameter { new_value, .. } => *new_value,
-                                _ => unreachable!(),
-                            },
-                            param_name: match &action {
-                                UndoableAction::SetParameter { param_name, .. } => {
-                                    param_name.clone()
-                                }
-                                _ => unreachable!(),
-                            },
-                        };
-                        last.timestamp = now;
+            let elapsed = now.duration_since(last.timestamp).as_millis() as u64;
+            if *last_slot == *slot_index
+                && *last_param == *param_id
+                && elapsed <= self.coalesce_window_ms
+            {
+                // Coalesce: keep the original old_value, update new_value and timestamp
+                let preserved_old = *last_old;
+                let _ = old_value; // suppress unused warning
+                last.action = UndoableAction::SetParameter {
+                    slot_index: *slot_index,
+                    param_id: *param_id,
+                    old_value: preserved_old,
+                    new_value: match &action {
+                        UndoableAction::SetParameter { new_value, .. } => *new_value,
+                        _ => unreachable!(),
+                    },
+                    param_name: match &action {
+                        UndoableAction::SetParameter { param_name, .. } => param_name.clone(),
+                        _ => unreachable!(),
+                    },
+                };
+                last.timestamp = now;
 
-                        // Clear redo on coalesced edit too
-                        self.redo_stack.clear();
-                        return;
-                    }
-                }
+                // Clear redo on coalesced edit too
+                self.redo_stack.clear();
+                return;
             }
         }
 

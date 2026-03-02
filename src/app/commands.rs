@@ -428,11 +428,11 @@ fn resolve_plugin(plugin: &str) -> anyhow::Result<(Vst3Module, String, [u8; 16])
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
-        if stem == plugin_lower || stem.contains(&plugin_lower) {
-            if let Some(class) = module_info.classes.first() {
-                let module = Vst3Module::load(&module_info.path)?;
-                return Ok((module, class.name.clone(), class.cid));
-            }
+        if (stem == plugin_lower || stem.contains(&plugin_lower))
+            && let Some(class) = module_info.classes.first()
+        {
+            let module = Vst3Module::load(&module_info.path)?;
+            return Ok((module, class.name.clone(), class.cid));
         }
     }
 

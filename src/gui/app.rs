@@ -90,17 +90,12 @@ pub struct DragReorderState {
 }
 
 /// Which bottom-bar tab is active.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BottomTab {
+    #[default]
     Transport,
     Devices,
     Session,
-}
-
-impl Default for BottomTab {
-    fn default() -> Self {
-        Self::Transport
-    }
 }
 
 /// Deferred preset navigation action (used internally in param panel rendering).
@@ -391,10 +386,10 @@ impl HostApp {
             if self.selected_slot == Some(index) {
                 self.selected_slot = None;
                 self.param_snapshots.clear();
-            } else if let Some(sel) = self.selected_slot {
-                if sel > index {
-                    self.selected_slot = Some(sel - 1);
-                }
+            } else if let Some(sel) = self.selected_slot
+                && sel > index
+            {
+                self.selected_slot = Some(sel - 1);
             }
             // Update routing graph
             self.sync_routing_graph();
@@ -487,14 +482,14 @@ impl HostApp {
         let tainted_after = self.backend.tainted_paths.len();
 
         // Check if the plugin crashed during deactivation and is now tainted
-        if tainted_after > tainted_before {
-            if let Some(name) = &active_name {
-                self.status_message = format!(
-                    "⚠ '{}' crashed during deactivation — restart the host to reuse this plugin.",
-                    name
-                );
-                return;
-            }
+        if tainted_after > tainted_before
+            && let Some(name) = &active_name
+        {
+            self.status_message = format!(
+                "⚠ '{}' crashed during deactivation — restart the host to reuse this plugin.",
+                name
+            );
+            return;
         }
 
         // param_snapshots retained for display; refresh_params will load from cache
@@ -756,10 +751,10 @@ impl HostApp {
 
         // Refresh params to reflect new state
         self.param_snapshots = self.backend.active_param_snapshots();
-        if let Some(idx) = self.backend.active_slot_index() {
-            if let Some(slot) = self.rack.get_mut(idx) {
-                slot.param_cache.clone_from(&self.param_snapshots);
-            }
+        if let Some(idx) = self.backend.active_slot_index()
+            && let Some(slot) = self.rack.get_mut(idx)
+        {
+            slot.param_cache.clone_from(&self.param_snapshots);
         }
 
         self.current_preset_name = Some(preset.name.clone());
@@ -894,10 +889,8 @@ impl HostApp {
             } => {
                 let target = if is_redo { *new_value } else { *old_value };
                 let is_active = self.backend.is_active();
-                if is_active {
-                    if let Err(e) = self.backend.set_parameter(*param_id, target) {
-                        tracing::warn!(param_id, error = %e, "undo/redo param set failed");
-                    }
+                if is_active && let Err(e) = self.backend.set_parameter(*param_id, target) {
+                    tracing::warn!(param_id, error = %e, "undo/redo param set failed");
                 }
             }
 
@@ -938,10 +931,10 @@ impl HostApp {
                         if self.selected_slot == Some(remove_idx) {
                             self.selected_slot = None;
                             self.param_snapshots.clear();
-                        } else if let Some(sel) = self.selected_slot {
-                            if sel > remove_idx {
-                                self.selected_slot = Some(sel - 1);
-                            }
+                        } else if let Some(sel) = self.selected_slot
+                            && sel > remove_idx
+                        {
+                            self.selected_slot = Some(sel - 1);
                         }
                         self.sync_routing_graph();
                     }
@@ -971,10 +964,10 @@ impl HostApp {
                         if self.selected_slot == Some(remove_idx) {
                             self.selected_slot = None;
                             self.param_snapshots.clear();
-                        } else if let Some(sel) = self.selected_slot {
-                            if sel > remove_idx {
-                                self.selected_slot = Some(sel - 1);
-                            }
+                        } else if let Some(sel) = self.selected_slot
+                            && sel > remove_idx
+                        {
+                            self.selected_slot = Some(sel - 1);
                         }
                         self.sync_routing_graph();
                     }
@@ -2007,12 +2000,11 @@ impl HostApp {
                                 })
                                 .corner_radius(theme::SMALL_CORNER_RADIUS)
                                 .min_size(egui::vec2(ui.available_width(), 22.0));
-                        if ui.add(btn).clicked() {
-                            if let Some((_, path)) =
+                        if ui.add(btn).clicked()
+                            && let Some((_, path)) =
                                 self.user_presets.iter().find(|(n, _)| n == name)
-                            {
-                                preset_nav = Some(PresetNav::Load(path.clone()));
-                            }
+                        {
+                            preset_nav = Some(PresetNav::Load(path.clone()));
                         }
                     }
                 });
@@ -2498,11 +2490,9 @@ impl HostApp {
                                             theme::badge(ui, "BYPASS", theme::WARNING);
                                         }
                                         // Show current preset name if set and this is the active slot
-                                        if is_active {
-                                            if let Some(ref pname) = current_preset_name {
-                                                ui.add_space(4.0);
-                                                theme::badge(ui, pname, theme::ACCENT);
-                                            }
+                                        if is_active && let Some(ref pname) = current_preset_name {
+                                            ui.add_space(4.0);
+                                            theme::badge(ui, pname, theme::ACCENT);
                                         }
                                     });
                                 })
@@ -2625,10 +2615,9 @@ impl HostApp {
             if released {
                 if let (Some(src), Some(tgt)) =
                     (self.drag_state.source_index, self.drag_state.target_index)
+                    && src != tgt
                 {
-                    if src != tgt {
-                        reorder_action = Some((src, tgt));
-                    }
+                    reorder_action = Some((src, tgt));
                 }
                 self.drag_state = DragReorderState::default();
             }

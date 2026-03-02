@@ -118,10 +118,10 @@ pub fn list_user_presets(plugin_name: &str) -> Vec<(String, PathBuf)> {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json") {
                 // Try to read just the name field without parsing the full state
-                if let Ok(data) = std::fs::read_to_string(&path) {
-                    if let Ok(preset) = serde_json::from_str::<Preset>(&data) {
-                        presets.push((preset.name, path));
-                    }
+                if let Ok(data) = std::fs::read_to_string(&path)
+                    && let Ok(preset) = serde_json::from_str::<Preset>(&data)
+                {
+                    presets.push((preset.name, path));
                 }
             }
         }

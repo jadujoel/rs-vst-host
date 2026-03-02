@@ -1054,10 +1054,8 @@ impl Vst3Instance {
         };
 
         // Sync the component state to the controller
-        if ok {
-            if let Some(controller) = self.get_controller() {
-                self.sync_component_state_to_controller(controller);
-            }
+        if ok && let Some(controller) = self.get_controller() {
+            self.sync_component_state_to_controller(controller);
         }
 
         ok
