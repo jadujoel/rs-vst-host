@@ -65,7 +65,10 @@ pub fn run_interactive(state: &mut InteractiveState) {
             "tempo" | "t" => cmd_tempo(&parts[1..]),
             "status" => cmd_status(state),
             _ => {
-                println!("Unknown command: '{}'. Type 'help' for available commands.", cmd);
+                println!(
+                    "Unknown command: '{}'. Type 'help' for available commands.",
+                    cmd
+                );
             }
         }
 
@@ -209,7 +212,10 @@ fn cmd_set(state: &mut InteractiveState, args: &[&str]) {
             let display = params
                 .value_to_string(param_id, actual)
                 .unwrap_or_else(|| format!("{:.4}", actual));
-            println!("  {} = {} [normalized: {:.4}]", entry.title, display, actual);
+            println!(
+                "  {} = {} [normalized: {:.4}]",
+                entry.title, display, actual
+            );
         }
         Err(e) => println!("Failed to set parameter: {}", e),
     }
@@ -232,15 +238,14 @@ fn cmd_tempo(args: &[&str]) {
     // Note: tempo changes are applied at the engine level but we don't
     // have direct access to the engine from here. We just report it.
     // A future enhancement could add a shared tempo value.
-    println!("  Tempo: {:.1} BPM (note: requires engine access to apply)", bpm);
+    println!(
+        "  Tempo: {:.1} BPM (note: requires engine access to apply)",
+        bpm
+    );
 }
 
 fn cmd_status(state: &InteractiveState) {
-    let param_count = state
-        .params
-        .as_ref()
-        .map(|p| p.count())
-        .unwrap_or(0);
+    let param_count = state.params.as_ref().map(|p| p.count()).unwrap_or(0);
     let handler_status = if state.component_handler.is_null() {
         "not installed"
     } else {
@@ -248,10 +253,7 @@ fn cmd_status(state: &InteractiveState) {
     };
     println!("  Parameters: {}", param_count);
     println!("  Component handler: {}", handler_status);
-    println!(
-        "  Running: {}",
-        state.running.load(Ordering::Relaxed)
-    );
+    println!("  Running: {}", state.running.load(Ordering::Relaxed));
 }
 
 /// Poll the component handler for plugin-initiated parameter changes.

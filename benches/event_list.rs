@@ -4,7 +4,7 @@
 //! and through the COM vtable (as plugins would call them).
 
 use divan::Bencher;
-use rs_vst_host::vst3::com::{make_note_on_event, Event, IEventList, IEventListVtbl};
+use rs_vst_host::vst3::com::{Event, IEventList, IEventListVtbl, make_note_on_event};
 use rs_vst_host::vst3::event_list::HostEventList;
 
 fn main() {
@@ -150,7 +150,10 @@ fn vtable_add_events(bencher: Bencher, count: usize) {
             HostEventList::clear(*list);
             let vt = vtbl(*list);
             for event in events.iter() {
-                (vt.addEvent)(*list as *mut IEventList, event as *const Event as *mut Event);
+                (vt.addEvent)(
+                    *list as *mut IEventList,
+                    event as *const Event as *mut Event,
+                );
             }
         });
 }

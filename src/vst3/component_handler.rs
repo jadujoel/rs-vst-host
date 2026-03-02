@@ -7,8 +7,8 @@
 use crate::vst3::com::*;
 use crate::vst3::host_alloc;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{debug, warn};
 
 /// A parameter change notification from the plugin.
@@ -178,10 +178,7 @@ unsafe extern "system" fn handler_perform_edit(
     K_RESULT_OK
 }
 
-unsafe extern "system" fn handler_end_edit(
-    _this: *mut IComponentHandler,
-    id: ParamID,
-) -> tresult {
+unsafe extern "system" fn handler_end_edit(_this: *mut IComponentHandler, id: ParamID) -> tresult {
     debug!(param_id = id, "Plugin: endEdit");
     K_RESULT_OK
 }

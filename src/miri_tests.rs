@@ -158,8 +158,11 @@ mod tests {
             let mut obj: *mut c_void = std::ptr::null_mut();
 
             // QI for IEventList
-            let result =
-                (vtbl.base.queryInterface)(list as *mut FUnknown, IEVENT_LIST_IID.as_ptr() as *const _, &mut obj);
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                IEVENT_LIST_IID.as_ptr() as *const _,
+                &mut obj,
+            );
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(obj, list as *mut c_void);
 
@@ -167,8 +170,11 @@ mod tests {
             assert_eq!(HostEventList::event_count(list), 1);
 
             // QI for FUnknown
-            let result =
-                (vtbl.base.queryInterface)(list as *mut FUnknown, FUNKNOWN_IID.as_ptr() as *const _, &mut obj);
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                FUNKNOWN_IID.as_ptr() as *const _,
+                &mut obj,
+            );
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(HostEventList::event_count(list), 1);
 
@@ -543,7 +549,9 @@ mod tests {
 
         // Wire everything into ProcessData
         bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_input_parameter_changes(
+            HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges
+        );
         bufs.set_process_context(process_ctx.as_ptr() as *mut ProcessContext);
 
         // Write input audio

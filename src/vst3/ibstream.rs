@@ -14,8 +14,8 @@ use std::sync::atomic::AtomicU32;
 
 use super::host_alloc;
 use crate::vst3::com::{
-    FUnknown, FUnknownVtbl, IBStream, IBStreamVtbl, TUID,
-    FUNKNOWN_IID, IBSTREAM_IID, K_RESULT_OK, K_RESULT_FALSE, K_INVALID_ARGUMENT,
+    FUNKNOWN_IID, FUnknown, FUnknownVtbl, IBSTREAM_IID, IBStream, IBStreamVtbl, K_INVALID_ARGUMENT,
+    K_RESULT_FALSE, K_RESULT_OK, TUID,
 };
 
 /// Seek origin constants (matching VST3 SDK).
@@ -385,8 +385,11 @@ mod tests {
 
             // Query for IBStream IID should succeed
             {
-                let result =
-                    host_bstream_query_interface(stream as *mut FUnknown, IBSTREAM_IID.as_ptr() as *const TUID, &mut obj);
+                let result = host_bstream_query_interface(
+                    stream as *mut FUnknown,
+                    IBSTREAM_IID.as_ptr() as *const TUID,
+                    &mut obj,
+                );
                 assert_eq!(result, K_RESULT_OK);
                 assert_eq!(obj, stream as *mut c_void);
                 // Release the extra ref from QI
@@ -395,8 +398,11 @@ mod tests {
 
             // Query for FUnknown should succeed
             {
-                let result =
-                    host_bstream_query_interface(stream as *mut FUnknown, FUNKNOWN_IID.as_ptr() as *const TUID, &mut obj);
+                let result = host_bstream_query_interface(
+                    stream as *mut FUnknown,
+                    FUNKNOWN_IID.as_ptr() as *const TUID,
+                    &mut obj,
+                );
                 assert_eq!(result, K_RESULT_OK);
                 host_bstream_release(stream as *mut FUnknown);
             }

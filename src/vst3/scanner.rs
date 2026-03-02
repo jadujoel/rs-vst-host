@@ -117,14 +117,12 @@ fn resolve_macos_binary(bundle_path: &Path) -> Option<PathBuf> {
     }
 
     // Fallback: first file in MacOS directory
-    std::fs::read_dir(&macos_dir)
-        .ok()
-        .and_then(|mut entries| {
-            entries.find_map(|e| {
-                let path = e.ok()?.path();
-                path.is_file().then_some(path)
-            })
+    std::fs::read_dir(&macos_dir).ok().and_then(|mut entries| {
+        entries.find_map(|e| {
+            let path = e.ok()?.path();
+            path.is_file().then_some(path)
         })
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -309,11 +307,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&macos_dir);
 
         // Create a binary with the "stem" name: the bundle is "rs-vst-host-test-macos-bundle"
-        let stem = tmp
-            .file_stem()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let stem = tmp.file_stem().unwrap().to_string_lossy().to_string();
         let binary_path = macos_dir.join(&stem);
         std::fs::write(&binary_path, b"fake binary").unwrap();
 

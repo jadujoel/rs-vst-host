@@ -242,8 +242,16 @@ mod tests {
     fn test_process_context_size_reasonable() {
         // The struct should be a reasonable size
         let size = mem::size_of::<ProcessContext>();
-        assert!(size >= 100, "ProcessContext should be at least 100 bytes, got {}", size);
-        assert!(size <= 200, "ProcessContext should not exceed 200 bytes, got {}", size);
+        assert!(
+            size >= 100,
+            "ProcessContext should be at least 100 bytes, got {}",
+            size
+        );
+        assert!(
+            size <= 200,
+            "ProcessContext should not exceed 200 bytes, got {}",
+            size
+        );
     }
 
     #[test]

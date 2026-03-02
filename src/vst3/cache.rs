@@ -238,7 +238,12 @@ mod tests {
     fn test_timestamp_format() {
         let ts = timestamp_now();
         // Should be in ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-        assert!(ts.len() == 20, "Timestamp '{}' has unexpected length {}", ts, ts.len());
+        assert!(
+            ts.len() == 20,
+            "Timestamp '{}' has unexpected length {}",
+            ts,
+            ts.len()
+        );
         assert!(ts.ends_with('Z'));
         assert_eq!(&ts[4..5], "-");
         assert_eq!(&ts[7..8], "-");

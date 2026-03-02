@@ -31,13 +31,13 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::vst3::com::{
+        IEventList, IParameterChanges, K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT,
+        ProcessContext as VstProcessContext, event_as_note_off, event_as_note_on,
+        make_note_off_event, make_note_on_event,
+    };
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicU32, Ordering};
-    use crate::vst3::com::{
-        make_note_on_event, make_note_off_event, event_as_note_on, event_as_note_off,
-        K_NOTE_ON_EVENT, K_NOTE_OFF_EVENT,
-        IEventList, IParameterChanges, ProcessContext as VstProcessContext,
-    };
 
     // ═══════════════════════════════════════════════════════════════════
     // host_alloc: system malloc lifecycle (libc::malloc / libc::free)
@@ -401,19 +401,29 @@ mod tests {
             let mut obj: *mut c_void = std::ptr::null_mut();
 
             // QI for IEventList
-            let result =
-                (vtbl.base.queryInterface)(list as *mut FUnknown, IEVENT_LIST_IID.as_ptr() as *const _, &mut obj);
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                IEVENT_LIST_IID.as_ptr() as *const _,
+                &mut obj,
+            );
             assert_eq!(result, K_RESULT_OK);
             assert_eq!(obj, list as *mut c_void);
 
             // QI for FUnknown
-            let result =
-                (vtbl.base.queryInterface)(list as *mut FUnknown, FUNKNOWN_IID.as_ptr() as *const _, &mut obj);
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                FUNKNOWN_IID.as_ptr() as *const _,
+                &mut obj,
+            );
             assert_eq!(result, K_RESULT_OK);
 
             // QI for unknown IID should fail
             let fake_iid: [u8; 16] = [0xFF; 16];
-            let result = (vtbl.base.queryInterface)(list as *mut FUnknown, fake_iid.as_ptr() as *const _, &mut obj);
+            let result = (vtbl.base.queryInterface)(
+                list as *mut FUnknown,
+                fake_iid.as_ptr() as *const _,
+                &mut obj,
+            );
             assert_ne!(result, K_RESULT_OK);
 
             HostEventList::destroy(list);
@@ -987,7 +997,13 @@ mod tests {
 
         let mut events = Vec::new();
         for i in 0..256 {
-            events.push(make_note_on_event(i, (i % 16) as i16, (i % 128) as i16, 0.8, i));
+            events.push(make_note_on_event(
+                i,
+                (i % 16) as i16,
+                (i % 128) as i16,
+                0.8,
+                i,
+            ));
             events.push(make_note_off_event(
                 i + 1,
                 (i % 16) as i16,
@@ -1072,7 +1088,9 @@ mod tests {
         let mut bufs = ProcessBuffers::new(2, 2, 512);
         bufs.prepare(256);
         bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_input_parameter_changes(
+            HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges
+        );
         bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         // Write audio input
@@ -1401,7 +1419,9 @@ mod tests {
 
         // Wire everything together
         bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_input_parameter_changes(
+            HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges
+        );
         bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         // Generate input audio
@@ -1446,7 +1466,9 @@ mod tests {
         // Second block
         bufs.prepare(512);
         bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
-        bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+        bufs.set_input_parameter_changes(
+            HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges
+        );
         bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
         unsafe {
@@ -1511,7 +1533,9 @@ mod tests {
 
             bufs.prepare(512);
             bufs.set_input_events(HostEventList::as_ptr(event_list) as *mut IEventList);
-            bufs.set_input_parameter_changes(HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges);
+            bufs.set_input_parameter_changes(
+                HostParameterChanges::as_ptr(param_changes) as *mut IParameterChanges
+            );
             bufs.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
 
             // Generate sine wave input

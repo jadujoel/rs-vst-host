@@ -25,10 +25,7 @@ fn sample_class(i: usize) -> PluginClassInfo {
 
 fn sample_module(i: usize, classes_per_module: usize) -> PluginModuleInfo {
     PluginModuleInfo {
-        path: PathBuf::from(format!(
-            "/Library/Audio/Plug-Ins/VST3/Module{}.vst3",
-            i
-        )),
+        path: PathBuf::from(format!("/Library/Audio/Plug-Ins/VST3/Module{}.vst3", i)),
         factory_vendor: Some(format!("Vendor {}", i)),
         factory_url: Some("https://example.com".to_string()),
         factory_email: Some("test@example.com".to_string()),

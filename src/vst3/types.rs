@@ -47,7 +47,10 @@ mod tests {
             vendor: Some("TestVendor".into()),
             version: Some("1.0.0".into()),
             sdk_version: Some("VST 3.7".into()),
-            cid: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10],
+            cid: [
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+                0x0F, 0x10,
+            ],
         }
     }
 
@@ -68,7 +71,10 @@ mod tests {
         let deserialized: PluginClassInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "TestSynth");
         assert_eq!(deserialized.category, "Audio Module Class");
-        assert_eq!(deserialized.subcategories.as_deref(), Some("Instrument|Synth"));
+        assert_eq!(
+            deserialized.subcategories.as_deref(),
+            Some("Instrument|Synth")
+        );
         assert_eq!(deserialized.vendor.as_deref(), Some("TestVendor"));
         assert_eq!(deserialized.version.as_deref(), Some("1.0.0"));
         assert_eq!(deserialized.sdk_version.as_deref(), Some("VST 3.7"));
@@ -82,8 +88,14 @@ mod tests {
         let deserialized: PluginModuleInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.path, info.path);
         assert_eq!(deserialized.factory_vendor.as_deref(), Some("TestVendor"));
-        assert_eq!(deserialized.factory_url.as_deref(), Some("https://example.com"));
-        assert_eq!(deserialized.factory_email.as_deref(), Some("test@example.com"));
+        assert_eq!(
+            deserialized.factory_url.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            deserialized.factory_email.as_deref(),
+            Some("test@example.com")
+        );
         assert_eq!(deserialized.classes.len(), 1);
         assert_eq!(deserialized.classes[0].name, "TestSynth");
     }

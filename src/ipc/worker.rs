@@ -12,7 +12,10 @@
 
 use crate::ipc::messages::*;
 use crate::ipc::shm::ShmAudioBuffer;
-use crate::vst3::com::{IEventList, IParameterChanges, ProcessContext as VstProcessContext, make_note_off_event, make_note_on_event};
+use crate::vst3::com::{
+    IEventList, IParameterChanges, ProcessContext as VstProcessContext, make_note_off_event,
+    make_note_on_event,
+};
 use crate::vst3::component_handler::HostComponentHandler;
 use crate::vst3::event_list::HostEventList;
 use crate::vst3::instance::Vst3Instance;
@@ -45,8 +48,8 @@ pub fn run_worker(socket_path: &str) -> Result<(), String> {
     let mut state = WorkerState::new();
 
     loop {
-        let msg: Option<HostMessage> = decode_message(&mut stream)
-            .map_err(|e| format!("Failed to read message: {}", e))?;
+        let msg: Option<HostMessage> =
+            decode_message(&mut stream).map_err(|e| format!("Failed to read message: {}", e))?;
 
         let msg = match msg {
             Some(m) => m,
@@ -61,8 +64,8 @@ pub fn run_worker(socket_path: &str) -> Result<(), String> {
         // Check for any plugin-initiated parameter changes and queue them
         // (we'll send them along with the response or after it)
 
-        let bytes = encode_message(&response)
-            .map_err(|e| format!("Failed to encode response: {}", e))?;
+        let bytes =
+            encode_message(&response).map_err(|e| format!("Failed to encode response: {}", e))?;
         stream
             .write_all(&bytes)
             .map_err(|e| format!("Failed to write response: {}", e))?;
@@ -178,7 +181,7 @@ impl WorkerState {
             Err(e) => {
                 return WorkerResponse::Error {
                     message: format!("Failed to load module: {}", e),
-                }
+                };
             }
         };
 
@@ -187,7 +190,7 @@ impl WorkerState {
             Err(e) => {
                 return WorkerResponse::Error {
                     message: format!("Failed to create instance: {}", e),
-                }
+                };
             }
         };
 
@@ -221,7 +224,7 @@ impl WorkerState {
             None => {
                 return WorkerResponse::Error {
                     message: "No plugin loaded".into(),
-                }
+                };
             }
         };
 
@@ -302,7 +305,7 @@ impl WorkerState {
             None => {
                 return WorkerResponse::Error {
                     message: "No plugin loaded".into(),
-                }
+                };
             }
         };
 
@@ -347,7 +350,7 @@ impl WorkerState {
             None => {
                 return WorkerResponse::Error {
                     message: "No plugin loaded".into(),
-                }
+                };
             }
         };
 
@@ -364,7 +367,7 @@ impl WorkerState {
             None => {
                 return WorkerResponse::Error {
                     message: "Not configured".into(),
-                }
+                };
             }
         };
 
@@ -373,7 +376,7 @@ impl WorkerState {
             None => {
                 return WorkerResponse::Error {
                     message: "No shared memory".into(),
-                }
+                };
             }
         };
 
@@ -384,9 +387,9 @@ impl WorkerState {
 
         // Copy input from shared memory into process buffers
         for ch in 0..buffers.num_input_channels() {
-            if let (Some(input_buf), Some(shm_buf)) =
-                (buffers.input_buffer_mut(ch), unsafe { shm.input_channel(ch) })
-            {
+            if let (Some(input_buf), Some(shm_buf)) = (buffers.input_buffer_mut(ch), unsafe {
+                shm.input_channel(ch)
+            }) {
                 let n = num_samples as usize;
                 input_buf[..n].copy_from_slice(&shm_buf[..n]);
             }
@@ -420,17 +423,16 @@ impl WorkerState {
                     pc.value,
                 );
             }
-            buffers.set_input_parameter_changes(HostParameterChanges::as_ptr(self.param_changes) as *mut IParameterChanges);
+            buffers.set_input_parameter_changes(
+                HostParameterChanges::as_ptr(self.param_changes) as *mut IParameterChanges
+            );
         }
 
         // Set process context
         if let Some(ref mut ctx) = self.process_context {
             ctx.set_playing(transport.playing);
             ctx.set_tempo(transport.tempo);
-            ctx.set_time_signature(
-                transport.time_sig_numerator,
-                transport.time_sig_denominator,
-            );
+            ctx.set_time_signature(transport.time_sig_numerator, transport.time_sig_denominator);
             buffers.set_process_context(ctx.as_ptr() as *mut VstProcessContext);
         }
 
@@ -514,16 +516,16 @@ impl WorkerState {
             })
             .collect();
 
-        WorkerResponse::Parameters {
-            params: param_list,
-        }
+        WorkerResponse::Parameters { params: param_list }
     }
 
     fn get_state(&self) -> WorkerResponse {
         match &self.instance {
             Some(instance) => {
                 let component_state = instance.get_component_state();
-                WorkerResponse::State { data: component_state }
+                WorkerResponse::State {
+                    data: component_state,
+                }
             }
             None => WorkerResponse::State { data: vec![] },
         }
@@ -552,9 +554,7 @@ impl WorkerState {
             .as_mut()
             .map(|i| i.has_editor())
             .unwrap_or(false);
-        WorkerResponse::EditorAvailable {
-            has_editor: has,
-        }
+        WorkerResponse::EditorAvailable { has_editor: has }
     }
 
     fn shutdown(&mut self) -> WorkerResponse {
@@ -737,11 +737,7 @@ mod tests {
     #[test]
     fn test_worker_load_nonexistent_plugin() {
         let mut state = WorkerState::new();
-        let response = state.load_plugin(
-            "/nonexistent/path/Test.vst3",
-            &[0; 16],
-            "NonExistent",
-        );
+        let response = state.load_plugin("/nonexistent/path/Test.vst3", &[0; 16], "NonExistent");
         match response {
             WorkerResponse::Error { message } => {
                 assert!(

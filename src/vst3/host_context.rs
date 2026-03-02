@@ -4,8 +4,8 @@
 //! We implement the bare minimum: host name query and stub `createInstance`.
 
 use crate::vst3::com::{
-    FUnknown, FUnknownVtbl, IHostApplication, IHostApplicationVtbl, String128, TUID,
-    FUNKNOWN_IID, IHOST_APPLICATION_IID, K_NOT_IMPLEMENTED, K_RESULT_OK,
+    FUNKNOWN_IID, FUnknown, FUnknownVtbl, IHOST_APPLICATION_IID, IHostApplication,
+    IHostApplicationVtbl, K_NOT_IMPLEMENTED, K_RESULT_OK, String128, TUID,
 };
 use crate::vst3::host_alloc;
 use std::ffi::c_void;
@@ -114,10 +114,7 @@ unsafe extern "system" fn host_release(this: *mut FUnknown) -> u32 {
     }
 }
 
-unsafe extern "system" fn host_get_name(
-    _this: *mut IHostApplication,
-    name: *mut String128,
-) -> i32 {
+unsafe extern "system" fn host_get_name(_this: *mut IHostApplication, name: *mut String128) -> i32 {
     if name.is_null() {
         return K_NOT_IMPLEMENTED;
     }
@@ -181,8 +178,10 @@ mod tests {
         let host = HostApplication::new();
         let mut name_buf: String128 = [0u16; 128];
         unsafe {
-            let result =
-                host_get_name(host as *mut IHostApplication, &mut name_buf as *mut String128);
+            let result = host_get_name(
+                host as *mut IHostApplication,
+                &mut name_buf as *mut String128,
+            );
             assert_eq!(result, K_RESULT_OK);
 
             // Find null terminator

@@ -237,11 +237,9 @@ impl ShmAudioBuffer {
         if channel >= self.output_channels {
             return None;
         }
-        let input_size =
-            self.input_channels * self.max_block_size * std::mem::size_of::<f32>();
-        let offset = HEADER_SIZE
-            + input_size
-            + channel * self.max_block_size * std::mem::size_of::<f32>();
+        let input_size = self.input_channels * self.max_block_size * std::mem::size_of::<f32>();
+        let offset =
+            HEADER_SIZE + input_size + channel * self.max_block_size * std::mem::size_of::<f32>();
         let ptr = unsafe { self.ptr.add(offset) as *mut f32 };
         Some(unsafe { std::slice::from_raw_parts_mut(ptr, self.max_block_size) })
     }
@@ -254,11 +252,9 @@ impl ShmAudioBuffer {
         if channel >= self.output_channels {
             return None;
         }
-        let input_size =
-            self.input_channels * self.max_block_size * std::mem::size_of::<f32>();
-        let offset = HEADER_SIZE
-            + input_size
-            + channel * self.max_block_size * std::mem::size_of::<f32>();
+        let input_size = self.input_channels * self.max_block_size * std::mem::size_of::<f32>();
+        let offset =
+            HEADER_SIZE + input_size + channel * self.max_block_size * std::mem::size_of::<f32>();
         let ptr = unsafe { self.ptr.add(offset) as *const f32 };
         Some(unsafe { std::slice::from_raw_parts(ptr, self.max_block_size) })
     }

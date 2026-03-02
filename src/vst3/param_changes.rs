@@ -70,14 +70,12 @@ static PARAM_VALUE_QUEUE_VTBL: IParamValueQueueVtbl = IParamValueQueueVtbl {
 /// IParamValueQueue IID: {01263A18-ED07-4F6F-98C9-D3564686F9BA}
 #[cfg(not(target_os = "windows"))]
 const IPARAM_VALUE_QUEUE_IID: [u8; 16] = [
-    0x01, 0x26, 0x3A, 0x18, 0xED, 0x07, 0x4F, 0x6F, 0x98, 0xC9, 0xD3, 0x56, 0x46, 0x86, 0xF9,
-    0xBA,
+    0x01, 0x26, 0x3A, 0x18, 0xED, 0x07, 0x4F, 0x6F, 0x98, 0xC9, 0xD3, 0x56, 0x46, 0x86, 0xF9, 0xBA,
 ];
 
 #[cfg(target_os = "windows")]
 const IPARAM_VALUE_QUEUE_IID: [u8; 16] = [
-    0x18, 0x3A, 0x26, 0x01, 0x6F, 0x4F, 0x07, 0xED, 0x98, 0xC9, 0xD3, 0x56, 0x46, 0x86, 0xF9,
-    0xBA,
+    0x18, 0x3A, 0x26, 0x01, 0x6F, 0x4F, 0x07, 0xED, 0x98, 0xC9, 0xD3, 0x56, 0x46, 0x86, 0xF9, 0xBA,
 ];
 
 /// Host-side IParamValueQueue COM object.
@@ -224,8 +222,7 @@ struct IParameterChangesVtbl {
     release: unsafe extern "system" fn(this: *mut c_void) -> u32,
     // IParameterChanges
     get_parameter_count: unsafe extern "system" fn(this: *mut c_void) -> i32,
-    get_parameter_data:
-        unsafe extern "system" fn(this: *mut c_void, index: i32) -> *mut c_void,
+    get_parameter_data: unsafe extern "system" fn(this: *mut c_void, index: i32) -> *mut c_void,
     add_parameter_data: unsafe extern "system" fn(
         this: *mut c_void,
         id: *const u32,
@@ -533,11 +530,7 @@ mod tests {
             let param_id: u32 = 55;
             let mut idx: i32 = -1;
 
-            let queue_ptr = (vtbl.add_parameter_data)(
-                changes as *mut c_void,
-                &param_id,
-                &mut idx,
-            );
+            let queue_ptr = (vtbl.add_parameter_data)(changes as *mut c_void, &param_id, &mut idx);
             assert!(!queue_ptr.is_null());
             assert_eq!(idx, 0);
 
@@ -586,18 +579,12 @@ mod tests {
             );
             assert_eq!(result, K_RESULT_OK);
 
-            let result = (vtbl.query_interface)(
-                changes as *mut c_void,
-                FUNKNOWN_IID.as_ptr(),
-                &mut obj,
-            );
+            let result =
+                (vtbl.query_interface)(changes as *mut c_void, FUNKNOWN_IID.as_ptr(), &mut obj);
             assert_eq!(result, K_RESULT_OK);
 
-            let result = (vtbl.query_interface)(
-                changes as *mut c_void,
-                ICOMPONENT_IID.as_ptr(),
-                &mut obj,
-            );
+            let result =
+                (vtbl.query_interface)(changes as *mut c_void, ICOMPONENT_IID.as_ptr(), &mut obj);
             assert_ne!(result, K_RESULT_OK);
 
             HostParameterChanges::destroy(changes);
@@ -619,8 +606,7 @@ mod tests {
             );
 
             // One more unique parameter should fail
-            let result =
-                HostParameterChanges::add_change(changes, MAX_PARAM_QUEUES as u32, 0, 0.5);
+            let result = HostParameterChanges::add_change(changes, MAX_PARAM_QUEUES as u32, 0, 0.5);
             assert!(!result, "Should fail when MAX_PARAM_QUEUES exceeded");
             assert_eq!(
                 HostParameterChanges::change_count(changes),
@@ -670,27 +656,16 @@ mod tests {
             let mut obj: *mut c_void = std::ptr::null_mut();
 
             // Should succeed for IPARAM_VALUE_QUEUE_IID
-            let result = (q_vtbl.query_interface)(
-                queue_ptr,
-                IPARAM_VALUE_QUEUE_IID.as_ptr(),
-                &mut obj,
-            );
+            let result =
+                (q_vtbl.query_interface)(queue_ptr, IPARAM_VALUE_QUEUE_IID.as_ptr(), &mut obj);
             assert_eq!(result, K_RESULT_OK);
 
             // Should succeed for FUnknown
-            let result = (q_vtbl.query_interface)(
-                queue_ptr,
-                FUNKNOWN_IID.as_ptr(),
-                &mut obj,
-            );
+            let result = (q_vtbl.query_interface)(queue_ptr, FUNKNOWN_IID.as_ptr(), &mut obj);
             assert_eq!(result, K_RESULT_OK);
 
             // Should fail for an unrelated IID
-            let result = (q_vtbl.query_interface)(
-                queue_ptr,
-                ICOMPONENT_IID.as_ptr(),
-                &mut obj,
-            );
+            let result = (q_vtbl.query_interface)(queue_ptr, ICOMPONENT_IID.as_ptr(), &mut obj);
             assert_ne!(result, K_RESULT_OK);
             assert!(obj.is_null());
 
@@ -759,21 +734,13 @@ mod tests {
             let mut idx: i32 = -1;
 
             // Add first time
-            let queue1 = (vtbl.add_parameter_data)(
-                changes as *mut c_void,
-                &param_id,
-                &mut idx,
-            );
+            let queue1 = (vtbl.add_parameter_data)(changes as *mut c_void, &param_id, &mut idx);
             assert!(!queue1.is_null());
             assert_eq!(idx, 0);
 
             // Add same param again — should return same queue
             let mut idx2: i32 = -1;
-            let queue2 = (vtbl.add_parameter_data)(
-                changes as *mut c_void,
-                &param_id,
-                &mut idx2,
-            );
+            let queue2 = (vtbl.add_parameter_data)(changes as *mut c_void, &param_id, &mut idx2);
             assert_eq!(queue1, queue2, "Should reuse existing queue");
             assert_eq!(idx2, 0);
 
@@ -792,11 +759,8 @@ mod tests {
             let vtbl = &*(*changes).vtbl;
             let mut idx: i32 = -1;
 
-            let queue = (vtbl.add_parameter_data)(
-                changes as *mut c_void,
-                std::ptr::null(),
-                &mut idx,
-            );
+            let queue =
+                (vtbl.add_parameter_data)(changes as *mut c_void, std::ptr::null(), &mut idx);
             assert!(queue.is_null());
 
             HostParameterChanges::destroy(changes);

@@ -541,7 +541,10 @@ mod tests {
         let json = serde_json::to_string(&session).unwrap();
         let loaded: Session = serde_json::from_str(&json).unwrap();
         let (_, restored) = loaded.restore();
-        assert_eq!(restored[0].component_state.as_ref().unwrap().len(), 1_000_000);
+        assert_eq!(
+            restored[0].component_state.as_ref().unwrap().len(),
+            1_000_000
+        );
         assert_eq!(restored[0].component_state.as_ref().unwrap(), &large_state);
     }
 

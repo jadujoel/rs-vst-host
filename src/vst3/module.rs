@@ -5,10 +5,9 @@
 
 use crate::error::Vst3Error;
 use crate::vst3::com::{
-    char8_to_string, iid_as_tuid_ptr, tuid_to_bytes, FUnknown, IPluginFactory,
-    IPluginFactory2, IPluginFactory3,
-    PClassInfo, PClassInfo2, PFactoryInfo,
-    K_RESULT_OK, IPLUGIN_FACTORY2_IID, IPLUGIN_FACTORY3_IID,
+    FUnknown, IPLUGIN_FACTORY2_IID, IPLUGIN_FACTORY3_IID, IPluginFactory, IPluginFactory2,
+    IPluginFactory3, K_RESULT_OK, PClassInfo, PClassInfo2, PFactoryInfo, char8_to_string,
+    iid_as_tuid_ptr, tuid_to_bytes,
 };
 use crate::vst3::types::{PluginClassInfo, PluginModuleInfo};
 use libloading::{Library, Symbol};
@@ -200,9 +199,7 @@ impl Vst3Module {
     }
 
     /// Attempt to QueryInterface for IPluginFactory3 (host context support).
-    fn query_factory3_raw(
-        factory: *mut IPluginFactory,
-    ) -> Option<*mut IPluginFactory3> {
+    fn query_factory3_raw(factory: *mut IPluginFactory) -> Option<*mut IPluginFactory3> {
         let vtbl = unsafe { &*(*factory).vtbl };
         let mut obj: *mut c_void = std::ptr::null_mut();
 
@@ -417,7 +414,7 @@ fn non_empty(s: String) -> Option<String> {
 mod tests {
     use super::*;
     use crate::vst3::com::{
-        IPluginFactoryVtbl, IPluginFactory2Vtbl, IPluginFactory3Vtbl, PClassInfoW,
+        IPluginFactory2Vtbl, IPluginFactory3Vtbl, IPluginFactoryVtbl, PClassInfoW,
     };
 
     #[test]
