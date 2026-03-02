@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.4] - 2026-03-02
+
+### Fixed — CI Workflow Action Reference
+
+**Fix: `dtolnay/rust-action` does not exist (v0.26.4):**
+GitHub Actions CI failed with "Unable to resolve action dtolnay/rust-action, repository not found". All 5 occurrences of `dtolnay/rust-action/setup@v1` replaced with the correct `dtolnay/rust-toolchain@stable`. The `toolchain: stable` input is no longer needed since it's encoded in the tag. Affected jobs: check, test, bench, fmt, bundle-macos.
+
+**Results:** 1714 tests passing (913 lib + 801 bin), 0 failures, no benchmark regressions.
+
+## [0.26.3] - 2026-03-01
+
+### Fixed — Parameter Panel Navigation
+
+**Bug fix: Parameter panel traps user with no way to return to rack (v0.26.3):**
+When clicking a plugin slot in the rack, the parameter panel opened on the right side but could grow to fill the entire central area, completely hiding the rack view. There was no close button, no back navigation, and clicking the same slot again did not deselect it — the user was stuck.
+
+Fix: Three changes:
+1. Added a "← Back to Rack" button and ✕ close button at the top of the parameter panel header. Both set `selected_slot = None`, closing the panel.
+2. Clicking an already-selected rack slot now toggles it off (deselects), which also closes the param panel.
+3. Added `max_width(400.0)` constraint on the right `SidePanel` to prevent it from consuming the entire central area.
+
+**New tests:** 3 new tests — `test_selected_slot_can_be_cleared`, `test_toggle_slot_selection`, `test_param_panel_only_shows_when_selected`.
+
+**Results:** 1714 tests passing (913 lib + 801 bin), 0 failures, no benchmark regressions.
+
 ## [0.26.2] - 2026-03-01
 
 ### Fixed — Preset Loading & Parameter Panel Layout

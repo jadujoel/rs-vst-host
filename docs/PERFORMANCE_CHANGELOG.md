@@ -4,6 +4,26 @@ All performance benchmark results are tracked here. Benchmarks use [Divan](https
 
 Run benchmarks: `cargo bench`
 
+## [0.26.4] - 2026-03-02 — CI Workflow Fix (no perf impact)
+
+### Summary
+
+Fixed GitHub Actions CI workflow — replaced non-existent `dtolnay/rust-action/setup@v1` with `dtolnay/rust-toolchain@stable` in all 5 jobs. No source code changes.
+
+**Changes to hot paths:** None. CI-only change.
+
+**No benchmark regressions.**
+
+## [0.26.3] - 2026-03-01 — Param Panel Navigation Fix (no perf impact)
+
+### Summary
+
+Fixed param panel trapping users with no way to return to the rack view. Added close/back buttons and toggle-deselect behavior. Added `max_width(400.0)` constraint on the right SidePanel. All changes are in GUI rendering code — no audio callback changes.
+
+**Changes to hot paths:** None. Close button click and toggle logic only set `selected_slot = None`, a trivial state assignment. The `max_width` constraint affects only egui layout, not audio processing.
+
+**No benchmark regressions.**
+
 ## [0.26.2] - 2026-03-01 — Preset Loading & Layout Fix (no perf impact)
 
 ### Summary
